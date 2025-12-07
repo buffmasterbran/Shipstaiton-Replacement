@@ -1,0 +1,24 @@
+// This is your Prisma schema file for Supabase PostgreSQL
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model OrderLog {
+  id          String   @id @default(cuid())
+  orderNumber String   @map("order_number")
+  status      String   @default("RECEIVED")
+  rawPayload  Json     @map("raw_payload")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("order_logs")
+  @@index([createdAt])
+  @@index([orderNumber])
+}
+
+
