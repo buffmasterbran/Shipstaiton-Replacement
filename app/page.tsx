@@ -78,41 +78,57 @@ export default async function Dashboard() {
                 >
                   {/* Order Header - Always Visible */}
                   <summary className="cursor-pointer list-none">
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-gray-200 hover:from-blue-100 hover:to-indigo-100 transition-colors">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-3">
-                          <h2 className="text-xl font-bold text-gray-900">
-                            Order #{order?.orderNumber || log.orderNumber}
-                          </h2>
-                          <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                            {log.status}
-                          </span>
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-gray-200">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <h2 className="text-xl font-bold text-gray-900">
+                              Order #{order?.orderNumber || log.orderNumber}
+                            </h2>
+                            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                              {log.status}
+                            </span>
+                            <span className="text-gray-400 group-open:hidden">
+                              ▼
+                            </span>
+                            <span className="text-gray-400 hidden group-open:inline">
+                              ▲
+                            </span>
+                          </div>
+                          <div className="mt-2 text-sm text-gray-600">
+                            <span className="font-medium">Received:</span>{' '}
+                            {new Date(log.createdAt).toLocaleString()}
+                            {order?.orderDate && (
+                              <>
+                                {' • '}
+                                <span className="font-medium">Order Date:</span>{' '}
+                                {new Date(order.orderDate).toLocaleDateString()}
+                              </>
+                            )}
+                            {order?.items && (
+                              <>
+                                {' • '}
+                                <span className="font-medium">{order.items.length} item(s)</span>
+                              </>
+                            )}
+                            {order?.amountPaid && (
+                              <>
+                                {' • '}
+                                <span className="font-medium">
+                                  {formatCurrency(order.amountPaid)}
+                                </span>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <div className="mt-2 text-sm text-gray-600">
-                          <span className="font-medium">Received:</span>{' '}
-                          {new Date(log.createdAt).toLocaleString()}
-                          {order?.orderDate && (
-                            <>
-                              {' • '}
-                              <span className="font-medium">Order Date:</span>{' '}
-                              {new Date(order.orderDate).toLocaleDateString()}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      {order?.orderKey && (
-                        <div className="text-sm text-gray-600">
-                          <span className="font-medium">NetSuite ID:</span>{' '}
-                          {order.orderKey}
-                        </div>
-                      )}
-                      <div className="text-sm text-gray-500 mt-2 sm:mt-0">
-                        <span className="group-open:hidden">Click to expand</span>
-                        <span className="hidden group-open:inline">Click to collapse</span>
+                        {order?.orderKey && (
+                          <div className="text-sm text-gray-600">
+                            <span className="font-medium">NetSuite ID:</span>{' '}
+                            {order.orderKey}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
                   </summary>
 
                   {/* Order Details Grid - Collapsible Content */}
@@ -320,7 +336,7 @@ export default async function Dashboard() {
                       </div>
                     </details>
                   </div>
-                </details>
+                </div>
               )
             })}
           </div>
