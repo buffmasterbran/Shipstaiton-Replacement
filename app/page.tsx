@@ -68,9 +68,8 @@ export default async function Dashboard() {
         ) : (
           <div className="space-y-6">
             {logs.map((log) => {
-              const order = Array.isArray(log.rawPayload)
-                ? log.rawPayload[0]
-                : log.rawPayload
+              const payload = log.rawPayload as any
+              const order = Array.isArray(payload) ? payload[0] : payload
 
               return (
                 <div
