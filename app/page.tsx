@@ -66,18 +66,19 @@ export default async function Dashboard() {
             </p>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {logs.map((log) => {
               const payload = log.rawPayload as any
               const order = Array.isArray(payload) ? payload[0] : payload
 
               return (
-                <div
+                <details
                   key={log.id}
-                  className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow"
+                  className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow group"
                 >
-                  {/* Order Header */}
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-gray-200">
+                  {/* Order Header - Always Visible */}
+                  <summary className="cursor-pointer list-none">
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-gray-200 hover:from-blue-100 hover:to-indigo-100 transition-colors">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div>
                         <div className="flex items-center gap-3">
@@ -106,10 +107,15 @@ export default async function Dashboard() {
                           {order.orderKey}
                         </div>
                       )}
+                      <div className="text-sm text-gray-500 mt-2 sm:mt-0">
+                        <span className="group-open:hidden">Click to expand</span>
+                        <span className="hidden group-open:inline">Click to collapse</span>
+                      </div>
                     </div>
                   </div>
+                  </summary>
 
-                  {/* Order Details Grid */}
+                  {/* Order Details Grid - Collapsible Content */}
                   <div className="p-6">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       {/* Shipping Address */}
@@ -314,7 +320,7 @@ export default async function Dashboard() {
                       </div>
                     </details>
                   </div>
-                </div>
+                </details>
               )
             })}
           </div>
