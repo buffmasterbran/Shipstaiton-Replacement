@@ -336,7 +336,7 @@ export default async function Dashboard() {
                       </div>
                     </details>
                   </div>
-                </div>
+                </details>
               )
             })}
           </div>
