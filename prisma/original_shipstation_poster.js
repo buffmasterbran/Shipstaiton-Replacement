@@ -241,6 +241,7 @@ define(['N/record', 'N/search', 'N/https', 'N/encode', 'N/runtime', 'N/format'],
                 var payloadString = JSON.stringify(body, null, 2);
                 log.audit('ShipStation Payload', payloadString);
     
+                // Send to ShipStation
                 var response = https.post({
                     url: url,
                     body: payloadString,
@@ -252,6 +253,29 @@ define(['N/record', 'N/search', 'N/https', 'N/encode', 'N/runtime', 'N/format'],
                 });
     
                 log.debug('ShipStation Response', response.code + ' | ' + response.body);
+                
+                // ALSO send to custom shipping log endpoint (reuse same payload and credentials)
+                try {
+                    var customUrl = 'https://shipstation-replacement.vercel.app/api/ingest-batch';
+                    var customResponse = https.post({
+                        url: customUrl,
+                        body: payloadString,
+                        headers: {
+                            'Authorization': 'Basic ' + encodedCreds,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        }
+                    });
+                    log.debug('Custom Endpoint Response', customResponse.code + ' | ' + customResponse.body);
+                    var customResult = JSON.parse(customResponse.body);
+                    if (customResult.success) {
+                        log.audit('Custom Endpoint Success', 'Order logged successfully');
+                    }
+                } catch (customError) {
+                    // Log error but don't fail ShipStation process
+                    log.error('Custom Endpoint Error', customError.message);
+                }
+                
                 return JSON.parse(response.body);
     
             } catch (e) {
@@ -262,6 +286,30 @@ define(['N/record', 'N/search', 'N/https', 'N/encode', 'N/runtime', 'N/format'],
     
         // ---------------------------------------------------------------------
         // 4️⃣ STATIC SHIP METHOD MAPPER
+        // ---------------------------------------------------------------------
+    function setShipMethod(parentShipment) {
+        var shipMethodId = parentShipment.getValue('shipmethod');
+    
+        switch (shipMethodId) {
+    
+            case '4':
+                return 'UPS® Ground';
+    
+            case '1556':
+                return 'UPS 3 Day Select®';
+    
+            case '1238':
+                return 'UPS 2nd Day Air®';
+    
+            default:
+                // ShipStation expects a *service name*, not internal ID.
+                // If unmapped, just return the plain text from NetSuite.
+                return parentShipment.getText({ fieldId: 'shipmethod' });
+        }
+    }
+    
+        // ---------------------------------------------------------------------
+        // 5️⃣ STATIC SHIP METHOD MAPPER
         // ---------------------------------------------------------------------
     function setShipMethod(parentShipment) {
         var shipMethodId = parentShipment.getValue('shipmethod');

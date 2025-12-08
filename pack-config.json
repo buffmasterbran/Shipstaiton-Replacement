@@ -1,0 +1,77 @@
+{
+  "packSizes": {
+    "single": {
+      "name": "Single",
+      "maxItems": 1,
+      "combinations": [
+        ["DPT10"],
+        ["DPT16"],
+        ["DPT26"]
+      ]
+    },
+    "4pack": {
+      "name": "4 Pack",
+      "maxItems": 4,
+      "combinations": [
+        ["DPT16", "DPT16", "DPT16", "DPT16"],
+        ["DPT16", "DPT16", "DPT16", "DPT10"],
+        ["DPT16", "DPT16", "DPT10", "DPT10"],
+        ["DPT16", "DPT16", "DPT10", "DPT16"],
+        ["DPT16", "DPT10", "DPT10", "DPT10"],
+        ["DPT16", "DPT10", "DPT16", "DPT10"],
+        ["DPT16", "DPT10", "DPT16", "DPT16"],
+        ["DPT16", "DPT10", "DPT10", "DPT16"],
+        ["DPT10", "DPT10", "DPT10", "DPT10"],
+        ["DPT10", "DPT10", "DPT16", "DPT26"],
+        ["DPT10", "DPT16", "DPT26", "DPT26"],
+        ["DPT10", "DPT10", "DPT16", "DPT26"],
+        ["DPT16", "DPT26", "DPT26", "DPT26"],
+        ["DPT10", "DPT26"],
+        ["DPT26", "DPT26"],
+        ["DPT16", "DPT16"],
+        ["DPT10", "DPT10"],
+        ["DPT10", "DPT16"]
+      ]
+    },
+    "5pack": {
+      "name": "5 Pack",
+      "maxItems": 5,
+      "combinations": [
+        ["DPT10", "DPT10", "DPT10", "DPT10", "DPT10"],
+        ["DPT16", "DPT16", "DPT16", "DPT16", "DPT16"],
+        ["DPT10", "DPT10", "DPT16", "DPT16", "DPT16"],
+        ["DPT10", "DPT16", "DPT16", "DPT16", "DPT26"],
+        ["DPT10", "DPT10", "DPT10", "DPT16", "DPT26"]
+      ]
+    },
+    "8pack": {
+      "name": "8 Pack",
+      "maxItems": 8,
+      "combinations": [
+        ["DPT10", "DPT10", "DPT10", "DPT10", "DPT10", "DPT10", "DPT10", "DPT10"],
+        ["DPT16", "DPT16", "DPT16", "DPT16", "DPT16", "DPT16", "DPT16", "DPT16"],
+        ["DPT10", "DPT10", "DPT16", "DPT16", "DPT16", "DPT16", "DPT26", "DPT26"],
+        ["DPT10", "DPT16", "DPT16", "DPT16", "DPT16", "DPT26", "DPT26", "DPT26"]
+      ]
+    }
+  },
+  "productSizes": {
+    "DPT10": {
+      "name": "10oz",
+      "size": 10,
+      "displayName": "DPT10"
+    },
+    "DPT16": {
+      "name": "16oz", 
+      "size": 16,
+      "displayName": "DPT16"
+    },
+    "DPT26": {
+      "name": "26oz",
+      "size": 26,
+      "displayName": "DPT26"
+    }
+  },
+  "lastUpdated": "2025-10-02T14:35:00.000Z",
+  "version": "1.0.0"
+}

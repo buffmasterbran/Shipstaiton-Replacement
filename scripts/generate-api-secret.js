@@ -20,3 +20,5 @@ console.log('\n📋 Add this to Vercel Environment Variables:');
 console.log(`API_SECRET = ${secret}`);
 console.log('\n');
 
+
+

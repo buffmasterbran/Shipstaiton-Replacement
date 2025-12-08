@@ -1,0 +1,814 @@
+'use client'
+
+import { useState, useMemo, useEffect, useRef } from 'react'
+import OrderDialog from './OrderDialog'
+import BulkOrderProcessDialog from './BulkOrderProcessDialog'
+import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
+import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
+
+interface OrderLog {
+  id: string
+  orderNumber: string
+  status: string
+  rawPayload: any
+  createdAt: Date
+  updatedAt: Date
+}
+
+interface BulkOrdersTableProps {
+  orders: OrderLog[]
+}
+
+interface BulkOrderGroup {
+  signature: string
+  items: Array<{
+    sku: string
+    name: string
+    quantity: number
+    size: string
+    color: string
+  }>
+  orders: Array<{
+    log: OrderLog
+    order: any
+    customerName: string
+    orderDate: string
+  }>
+  totalOrders: number
+}
+
+interface ShippingRate {
+  groupId: string
+  price: string
+  service: string
+}
+
+interface LabelInfo {
+  carrier: string
+  service: string
+  packaging: string
+  weight: string
+  dimensions: {
+    length: string
+    width: string
+    height: string
+  }
+}
+
+export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isBulkProcessDialogOpen, setIsBulkProcessDialogOpen] = useState(false)
+  const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
+  const [selectedGroup, setSelectedGroup] = useState<BulkOrderGroup | null>(null)
+  const [packageInfo, setPackageInfo] = useState<PackageInfo | null>(null)
+  const [shippingRates, setShippingRates] = useState<Map<string, ShippingRate>>(new Map())
+  const [rateShoppingActive, setRateShoppingActive] = useState(false)
+  const rateShoppingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const isFetchingRatesRef = useRef<boolean>(false)
+
+  // Group orders by identical product combinations
+  const bulkGroups = useMemo(() => {
+    const groupMap = new Map<string, BulkOrderGroup>()
+
+    orders.forEach((log) => {
+      const payload = log.rawPayload as any
+      const order = Array.isArray(payload) ? payload[0] : payload
+      const items = order?.items || []
+
+      // Filter out shipping insurance items
+      const nonInsuranceItems = items.filter(
+        (item: any) => !isShippingInsurance(item.sku || '', item.name || '')
+      )
+
+      // Skip single-item orders (those belong in Singles)
+      if (nonInsuranceItems.length <= 1) return
+
+      // Create signature: sorted SKU:quantity pairs
+      const signature = nonInsuranceItems
+        .map((item: any) => `${item.sku || 'N/A'}:${item.quantity || 1}`)
+        .sort()
+        .join('|')
+
+      if (!groupMap.has(signature)) {
+        // Create group with item details
+        const groupItems = nonInsuranceItems.map((item: any) => ({
+          sku: item.sku || 'N/A',
+          name: item.name || 'Unknown',
+          quantity: item.quantity || 1,
+          size: getSizeFromSku(item.sku || ''),
+          color: getColorFromSku(item.sku || '', item.name),
+        }))
+
+        groupMap.set(signature, {
+          signature,
+          items: groupItems,
+          orders: [],
+          totalOrders: 0,
+        })
+      }
+
+      const group = groupMap.get(signature)!
+      const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
+      const orderDate = order?.orderDate || log.createdAt
+
+      group.orders.push({
+        log,
+        order,
+        customerName,
+        orderDate: typeof orderDate === 'string' ? orderDate : orderDate.toISOString(),
+      })
+      group.totalOrders++
+    })
+
+    // Filter to only groups with 2+ orders and sort by count descending
+    return Array.from(groupMap.values())
+      .filter((group) => group.totalOrders >= 2)
+      .sort((a, b) => b.totalOrders - a.totalOrders)
+  }, [orders])
+
+  // Check if selected group has shipping rates
+  const selectedGroupHasRates = useMemo(() => {
+    if (!selectedGroup) return false
+    if (rateShoppingActive) {
+      const rate = shippingRates.get(selectedGroup.signature)
+      return rate && rate.price && rate.service
+    }
+    return true
+  }, [selectedGroup, shippingRates, rateShoppingActive])
+
+  const handleRowClick = (group: BulkOrderGroup) => {
+    // Show first order in dialog for now
+    if (group.orders.length > 0) {
+      const firstOrder = group.orders[0]
+      setSelectedOrder({
+        orderNumber: firstOrder.log.orderNumber,
+        orderKey: firstOrder.log.orderNumber,
+        ...firstOrder.order,
+      })
+      setIsDialogOpen(true)
+    }
+  }
+
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false)
+    setSelectedOrder(null)
+  }
+
+  const handleProcessClick = (group: BulkOrderGroup) => {
+    setSelectedGroup(group)
+    setIsBulkProcessDialogOpen(true)
+  }
+
+  // Mock function to simulate rate shopping API call
+  const fetchShippingRate = async (group: BulkOrderGroup, packageInfo: PackageInfo): Promise<ShippingRate> => {
+    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000))
+
+    const mockRates = [
+      { carrier: 'USPS', service: 'First Class', price: (4.50 + Math.random() * 2).toFixed(2), days: 3 },
+      { carrier: 'USPS', service: 'Priority Mail', price: (7.50 + Math.random() * 3).toFixed(2), days: 2 },
+      { carrier: 'UPS', service: 'Ground', price: (8.00 + Math.random() * 4).toFixed(2), days: 5 },
+      { carrier: 'UPS', service: '2nd Day Air', price: (15.00 + Math.random() * 5).toFixed(2), days: 2 },
+      { carrier: 'FedEx', service: 'Ground', price: (9.00 + Math.random() * 4).toFixed(2), days: 4 },
+      { carrier: 'FedEx', service: '2Day', price: (18.00 + Math.random() * 6).toFixed(2), days: 2 },
+    ]
+
+    let selectedRate: typeof mockRates[0] | undefined
+
+    if (packageInfo.carrier === 'Rate Shopper - Cheapest') {
+      selectedRate = mockRates.reduce((min, rate) =>
+        parseFloat(rate.price) < parseFloat(min.price) ? rate : min
+      )
+    } else if (packageInfo.carrier === 'Rate Shopper - Fastest') {
+      selectedRate = mockRates.reduce((fastest, rate) =>
+        rate.days < fastest.days ? fastest : fastest
+      )
+    } else {
+      selectedRate = mockRates.find(rate =>
+        rate.carrier === packageInfo.carrier && rate.service === packageInfo.service
+      )
+      if (!selectedRate) {
+        selectedRate = mockRates.find(rate => rate.carrier === packageInfo.carrier) || mockRates[0]
+      }
+    }
+
+    return {
+      groupId: group.signature,
+      price: `$${selectedRate.price}`,
+      service: `${selectedRate.carrier} ${selectedRate.service}`,
+    }
+  }
+
+  const handleSavePackageInfo = (info: PackageInfo) => {
+    setPackageInfo(info)
+
+    if (!selectedGroup) return
+
+    if (rateShoppingIntervalRef.current) {
+      clearInterval(rateShoppingIntervalRef.current)
+      rateShoppingIntervalRef.current = null
+    }
+
+    const isRateShoppingMode = !!info.carrier && !!info.packaging && !!info.weight && !!info.dimensions.length && !!info.dimensions.width && !!info.dimensions.height
+
+    if (isRateShoppingMode) {
+      setRateShoppingActive(true)
+
+      const fetchRatesForGroup = async () => {
+        if (isFetchingRatesRef.current) return
+
+        isFetchingRatesRef.current = true
+
+        try {
+          const rate = await fetchShippingRate(selectedGroup, info)
+          setShippingRates((prevRates) => {
+            const updatedRates = new Map(prevRates)
+            updatedRates.set(rate.groupId, rate)
+            return updatedRates
+          })
+        } finally {
+          isFetchingRatesRef.current = false
+        }
+      }
+
+      fetchRatesForGroup()
+
+      rateShoppingIntervalRef.current = setInterval(() => {
+        fetchRatesForGroup()
+      }, 3000)
+    } else {
+      if (rateShoppingIntervalRef.current) {
+        clearInterval(rateShoppingIntervalRef.current)
+        rateShoppingIntervalRef.current = null
+      }
+      setRateShoppingActive(false)
+      setShippingRates(new Map())
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (rateShoppingIntervalRef.current) {
+        clearInterval(rateShoppingIntervalRef.current)
+      }
+    }
+  }, [])
+
+  const handleProceed = () => {
+    if (!selectedGroup || !packageInfo) return
+
+    const labelInfo: LabelInfo = {
+      carrier: packageInfo.carrier,
+      service: packageInfo.service,
+      packaging: packageInfo.packaging,
+      weight: packageInfo.weight,
+      dimensions: packageInfo.dimensions,
+    }
+    generatePickListAndLabels(selectedGroup, labelInfo)
+  }
+
+  const generatePickListAndLabels = (group: BulkOrderGroup, labelInfo: LabelInfo) => {
+    // Aggregate items for pick list
+    const itemMap = new Map<string, { sku: string; name: string; totalQty: number; size: string; color: string }>()
+    
+    group.orders.forEach(orderData => {
+      const payload = orderData.log.rawPayload as any
+      const order = Array.isArray(payload) ? payload[0] : payload
+      const items = order?.items || []
+      
+      items.forEach((item: any) => {
+        if (isShippingInsurance(item.sku || '', item.name || '')) return
+        
+        const sku = item.sku || 'N/A'
+        const existing = itemMap.get(sku)
+        const qty = item.quantity || 1
+        
+        if (existing) {
+          existing.totalQty += qty * group.totalOrders // Multiply by number of orders
+        } else {
+          itemMap.set(sku, {
+            sku,
+            name: item.name || 'N/A',
+            totalQty: qty * group.totalOrders,
+            size: getSizeFromSku(sku),
+            color: getColorFromSku(sku, item.name),
+          })
+        }
+      })
+    })
+    
+    const aggregatedItems = Array.from(itemMap.values())
+    const totalItems = aggregatedItems.reduce((sum, item) => sum + item.totalQty, 0)
+
+    // Generate tracking number helper
+    const generateTrackingNumber = (orderNumber: string) => {
+      const randomDigits = orderNumber.padStart(22, '0').slice(-22)
+      return `420 ${randomDigits.slice(0, 5)} ${randomDigits.slice(5, 9)} ${randomDigits.slice(9, 13)} ${randomDigits.slice(13, 17)} ${randomDigits.slice(17, 21)} ${randomDigits.slice(21, 22)}`
+    }
+
+    const getServiceIndicator = (service: string) => {
+      if (service.includes('Express')) return 'E'
+      if (service.includes('Priority')) return 'P'
+      if (service.includes('First Class')) return 'FC'
+      return 'P'
+    }
+
+    const getServiceName = (service: string) => {
+      if (service.includes('Express')) return 'USPS PRIORITY MAIL EXPRESS®'
+      if (service.includes('Priority')) return 'USPS PRIORITY MAIL®'
+      if (service.includes('First Class')) return 'USPS FIRST-CLASS MAIL®'
+      return 'USPS PRIORITY MAIL®'
+    }
+
+    const getCurrentDate = () => {
+      const now = new Date()
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const day = String(now.getDate()).padStart(2, '0')
+      const year = String(now.getFullYear()).slice(-2)
+      return `${month}/${day}/${year}`
+    }
+
+    const pickListHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Pick List & Shipping Labels</title>
+  <style>
+    @page {
+      size: 4in 6in;
+      margin: 0;
+    }
+    * {
+      color: #000 !important;
+    }
+    .usps-service-banner {
+      background: #000 !important;
+      color: #fff !important;
+    }
+    body { 
+      font-family: Arial, Helvetica, sans-serif; 
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .page {
+      width: 4in;
+      height: 6in;
+      padding: 8px;
+      box-sizing: border-box;
+      page-break-after: always;
+      page-break-inside: avoid;
+      border: 1px solid #000;
+    }
+    .label { 
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .pick-label {
+      border: 2px solid #000;
+      padding: 10px;
+    }
+    .pick-label-header {
+      font-weight: bold;
+      font-size: 18px;
+      text-align: center;
+      border-bottom: 2px solid #000;
+      padding-bottom: 6px;
+      margin-bottom: 8px;
+    }
+    .pick-label-content {
+      font-size: 11px;
+      line-height: 1.4;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .pick-list-item {
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #000;
+    }
+    .pick-list-item:last-child {
+      border-bottom: none;
+    }
+    .usps-label {
+      border: 2px solid #000;
+      padding: 0;
+      position: relative;
+      height: 100%;
+      width: 100%;
+    }
+    .usps-top-left {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      font-size: 9px;
+      line-height: 1.2;
+    }
+    .usps-service-indicator-large {
+      font-size: 48px;
+      font-weight: bold;
+      line-height: 1;
+      margin-bottom: 2px;
+    }
+    .usps-date-from {
+      font-size: 8px;
+      margin-top: 2px;
+    }
+    .usps-top-right {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      text-align: right;
+      font-size: 8px;
+      line-height: 1.3;
+      max-width: 1.2in;
+    }
+    .usps-postage-paid {
+      font-weight: bold;
+      margin-bottom: 2px;
+    }
+    .usps-2d-barcode {
+      border: 1px solid #000;
+      width: 0.8in;
+      height: 0.8in;
+      margin: 4px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 6px;
+      font-family: 'Courier New', monospace;
+    }
+    .usps-service-banner {
+      position: absolute;
+      top: 0.5in;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 12px;
+      font-weight: bold;
+      padding: 3px 0;
+      letter-spacing: 0.5px;
+    }
+    .usps-sender-address {
+      position: absolute;
+      top: 0.75in;
+      left: 0.5in;
+      font-size: 9px;
+      line-height: 1.3;
+      max-width: 2in;
+    }
+    .usps-ship-to-label {
+      position: absolute;
+      top: 1.3in;
+      left: 0.5in;
+      font-size: 8px;
+      font-weight: bold;
+      margin-bottom: 2px;
+    }
+    .usps-delivery-address {
+      position: absolute;
+      top: 1.45in;
+      left: 0.5in;
+      font-size: 11px;
+      line-height: 1.4;
+      font-weight: bold;
+      max-width: 2.5in;
+    }
+    .usps-delivery-name {
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+    .usps-delivery-street {
+      margin-bottom: 1px;
+    }
+    .usps-delivery-city-state {
+      margin-top: 2px;
+    }
+    .usps-barcode-section {
+      position: absolute;
+      bottom: 0.6in;
+      left: 0.2in;
+      right: 0.2in;
+    }
+    .usps-barcode-label {
+      font-size: 7px;
+      margin-bottom: 2px;
+      text-align: center;
+    }
+    .usps-linear-barcode {
+      border: 2px solid #000;
+      height: 0.5in;
+      margin: 2px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: repeating-linear-gradient(
+        90deg,
+        #000 0px,
+        #000 2px,
+        transparent 2px,
+        transparent 4px
+      );
+      background-size: 4px 100%;
+    }
+    .usps-tracking-number {
+      font-family: 'Courier New', monospace;
+      font-size: 9px;
+      text-align: center;
+      margin-top: 2px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+    }
+    .usps-footer {
+      position: absolute;
+      bottom: 0.1in;
+      left: 0.2in;
+      right: 0.2in;
+      font-size: 7px;
+      text-align: center;
+      border-top: 1px solid #000;
+      padding-top: 2px;
+    }
+    @media print {
+      .page {
+        page-break-after: always;
+      }
+      .label {
+        page-break-inside: avoid;
+      }
+      * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Single Pick List for All Orders -->
+  <div class="page">
+    <div class="label pick-label">
+      <div class="pick-label-header">PICK LIST</div>
+      <div class="pick-label-content">
+        <div style="font-size: 18px; font-weight: bold; text-align: center; margin-bottom: 10px;">
+          Total Orders: ${group.totalOrders}
+        </div>
+        <div style="font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 12px;">
+          Total Items: ${totalItems}
+        </div>
+        ${aggregatedItems.map(item => `
+          <div class="pick-list-item">
+            <div style="font-weight: bold; font-size: 13px; margin-bottom: 4px;">
+              <span style="font-family: monospace;">${item.sku}</span>
+            </div>
+            <div style="font-size: 11px; margin-bottom: 2px;">
+              ${item.name}
+            </div>
+            <div style="font-size: 10px; margin-bottom: 4px;">
+              Size: ${item.size} | Color: ${item.color}
+            </div>
+            <div style="font-size: 16px; font-weight: bold; text-align: center;">
+              Qty: ${item.totalQty}
+            </div>
+          </div>
+        `).join('')}
+        <div style="margin-top: auto; border-top: 2px solid #000; padding-top: 6px; font-size: 10px;">
+          <strong>Shipping Info:</strong><br>
+          ${labelInfo.carrier} ${labelInfo.service} | ${labelInfo.packaging}<br>
+          ${labelInfo.weight} lbs | ${labelInfo.dimensions.length}"×${labelInfo.dimensions.width}"×${labelInfo.dimensions.height}"
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Shipping Labels for Each Order -->
+  ${group.orders.map((orderData) => {
+    const payload = orderData.log.rawPayload as any
+    const order = Array.isArray(payload) ? payload[0] : payload
+    const shipTo = order?.shipTo || {}
+    const billTo = order?.billTo || {}
+    const trackingNumber = generateTrackingNumber(orderData.log.orderNumber)
+    const serviceIndicator = getServiceIndicator(labelInfo.service)
+    
+    const senderName = billTo.name || 'Your Company'
+    const senderCompany = billTo.company || ''
+    const senderStreet = billTo.street1 || '123 Main Street'
+    const senderCity = billTo.city || 'City'
+    const senderState = billTo.state || 'ST'
+    const senderZip = billTo.postalCode || '12345'
+    const fromZip = senderZip.slice(0, 5) || '12345'
+    
+    const recipientName = shipTo.name || 'N/A'
+    const recipientCompany = shipTo.company || ''
+    const recipientStreet1 = shipTo.street1 || ''
+    const recipientStreet2 = shipTo.street2 || ''
+    const recipientCity = shipTo.city || ''
+    const recipientState = shipTo.state || ''
+    const recipientZip = shipTo.postalCode || ''
+    
+    const currentDate = getCurrentDate()
+    const serviceName = getServiceName(labelInfo.service)
+    const identifier = orderData.log.orderNumber.padStart(15, '0').slice(-15)
+    const approvalNumber = orderData.log.orderNumber.padStart(9, '0').slice(-9)
+    
+    return `
+  <div class="page">
+    <div class="label usps-label">
+      <div class="usps-top-left">
+        <div class="usps-service-indicator-large">${serviceIndicator}</div>
+        <div class="usps-date-from">${currentDate}</div>
+        <div class="usps-date-from">From ${fromZip}</div>
+      </div>
+      <div class="usps-top-right">
+        <div class="usps-postage-paid">US POSTAGE PAID</div>
+        <div>${labelInfo.carrier}</div>
+        <div>${labelInfo.packaging}</div>
+        <div class="usps-2d-barcode">
+          <div>2D<br>BARCODE</div>
+        </div>
+        <div style="font-family: 'Courier New', monospace; font-size: 7px; margin-top: 2px;">${identifier}</div>
+      </div>
+      <div class="usps-service-banner">
+        ${serviceName}
+      </div>
+      <div class="usps-sender-address">
+        ${senderName}<br>
+        ${senderCompany ? senderCompany + '<br>' : ''}${senderStreet}<br>
+        ${senderCity} ${senderState} ${senderZip}
+      </div>
+      <div class="usps-ship-to-label">SHIP TO:</div>
+      <div class="usps-delivery-address">
+        <div class="usps-delivery-name">${recipientName}</div>
+        ${recipientCompany ? `<div class="usps-delivery-street">${recipientCompany}</div>` : ''}
+        ${recipientStreet1 ? `<div class="usps-delivery-street">${recipientStreet1}</div>` : ''}
+        ${recipientStreet2 ? `<div class="usps-delivery-street">${recipientStreet2}</div>` : ''}
+        <div class="usps-delivery-city-state">
+          ${recipientCity}${recipientState ? ` ${recipientState}` : ''} ${recipientZip}
+        </div>
+      </div>
+      <div class="usps-barcode-section">
+        <div class="usps-barcode-label">ZIP - e/ ${labelInfo.carrier} ${labelInfo.service.toUpperCase()}</div>
+        <div class="usps-linear-barcode"></div>
+        <div class="usps-tracking-number">${trackingNumber}</div>
+      </div>
+      <div class="usps-footer">
+        Electronic Rate Approved #${approvalNumber} | Order: ${orderData.log.orderNumber} | ${labelInfo.weight} lbs
+      </div>
+    </div>
+  </div>
+    `
+  }).join('')}
+</body>
+</html>
+    `
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(pickListHTML)
+      printWindow.document.close()
+      setTimeout(() => {
+        printWindow.print()
+      }, 250)
+    }
+  }
+
+  if (bulkGroups.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-12 text-center">
+        <p className="text-gray-500 text-lg">No bulk orders found</p>
+        <p className="text-gray-400 text-sm mt-2">
+          Bulk orders are groups of 2+ orders with identical products
+        </p>
+      </div>
+    )
+  }
+
+  const totalBulkOrders = bulkGroups.reduce((sum, group) => sum + group.totalOrders, 0)
+
+  return (
+    <>
+      {/* Bulk Order Total */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold text-gray-900">Bulk Order Total: {totalBulkOrders}+</h2>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-4">
+          <div
+            className="bg-green-600 h-4 rounded-full transition-all duration-300"
+            style={{ width: `${Math.min((totalBulkOrders / 20) * 100, 100)}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-xs text-gray-500 mt-1">
+          <span>2</span>
+          <span>20+</span>
+        </div>
+      </div>
+
+      {/* Bulk Orders Table */}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Bulk Order
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Items
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Orders
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Shipping Service
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {bulkGroups.map((group, index) => {
+                const rate = shippingRates.get(group.signature)
+                return (
+                  <tr
+                    key={group.signature}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => handleRowClick(group)}
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        Bulk Order {index + 1}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-gray-900">
+                        {group.items.map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-2 mb-1">
+                            <div className="w-2 h-2 bg-green-500 rounded-full" />
+                            <span className="font-mono text-xs">{item.sku}</span>
+                            <span className="text-gray-600">× {item.quantity}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          {group.totalOrders} orders
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        {rate && rate.service && rate.price ? (
+                          <div className="w-3 h-3 bg-green-500 rounded-full" title={rate.service} />
+                        ) : (
+                          <div className="w-3 h-3 bg-red-500 rounded-full" title="No service set" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleProcessClick(group)
+                        }}
+                        className="px-4 py-2 rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
+                      >
+                        Process Orders
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <OrderDialog
+        isOpen={isDialogOpen}
+        onClose={handleCloseDialog}
+        order={selectedOrder}
+      />
+      <BulkOrderProcessDialog
+        isOpen={isBulkProcessDialogOpen}
+        onClose={() => {
+          setIsBulkProcessDialogOpen(false)
+          setSelectedGroup(null)
+        }}
+        group={selectedGroup}
+        onProceed={handleProceed}
+        shippingRate={selectedGroup ? shippingRates.get(selectedGroup.signature) : undefined}
+        onSavePackageInfo={handleSavePackageInfo}
+      />
+    </>
+  )
+}
+

@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import MainLayout from '@/components/MainLayout'
 
 export const metadata: Metadata = {
-  title: 'Shipping Log Dashboard',
-  description: 'View and manage incoming shipping logs from NetSuite',
+  title: 'E-Com Batch Tool',
+  description: 'View and manage orders from NetSuite',
 }
 
 export default function RootLayout({
@@ -13,9 +14,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <MainLayout>{children}</MainLayout>
+      </body>
     </html>
   )
 }
+
+
 
 

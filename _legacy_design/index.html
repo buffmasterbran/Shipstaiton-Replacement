@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS Dashboard - Warehouse Management</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h2>E-Com Batch Tool</h2>
+            </div>
+            
+            <nav class="nav-menu">
+                <a href="#" class="nav-item" data-page="all-orders">
+                    <i class="fas fa-list"></i>
+                    <span>All Orders</span>
+                </a>
+                <a href="#" class="nav-item active" data-page="singles">
+                    <i class="fas fa-box"></i>
+                    <span>Singles Orders</span>
+                </a>
+                <a href="#" class="nav-item" data-page="bulk">
+                    <i class="fas fa-layer-group"></i>
+                    <span>Bulk Orders</span>
+                </a>
+                <a href="#" class="nav-item" data-page="box-size">
+                    <i class="fas fa-cube"></i>
+                    <span>Box Size Specific</span>
+                </a>
+                <a href="#" class="nav-item" data-page="high-volume">
+                    <i class="fas fa-boxes"></i>
+                    <span>High Volume Orders</span>
+                </a>
+                <a href="#" class="nav-item" data-page="unique">
+                    <i class="fas fa-star"></i>
+                    <span>Unique Orders</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <a href="#" class="nav-item">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span>Log out</span>
+                </a>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="search-bar">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="Search..." id="searchInput">
+                </div>
+                <div class="header-actions">
+                    <button class="icon-button">
+                        <i class="fas fa-bell"></i>
+                        <span class="badge">3</span>
+                    </button>
+                    <div class="user-avatar">
+                        <i class="fas fa-user"></i>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- Dashboard Content -->
+            <div class="content-area">
+                <h1 class="page-title" id="pageTitle">Singles Orders</h1>
+                
+                <!-- Singles Orders Page -->
+                <div class="page-content" id="page-singles">
+                    <!-- Filter and Action Bar -->
+                    <div class="action-bar">
+                        <div class="filter-bar">
+                            <button class="filter-btn active" data-size="all">All Sizes</button>
+                            <button class="filter-btn" data-size="10oz">10oz</button>
+                            <button class="filter-btn" data-size="16oz">16oz</button>
+                            <button class="filter-btn" data-size="26oz">26oz</button>
+                            <button class="filter-btn" data-size="stickers">Stickers</button>
+                        </div>
+                        <div class="color-filter-bar">
+                            <button class="color-filter-btn active" data-color="all">All Colors</button>
+                            <button class="color-filter-btn" data-color="Forever Green">Forever Green</button>
+                            <button class="color-filter-btn" data-color="Coral">Coral</button>
+                            <button class="color-filter-btn" data-color="Paradise Blue">Paradise Blue</button>
+                            <button class="color-filter-btn" data-color="Kraken Black">Kraken Black</button>
+                            <button class="color-filter-btn" data-color="Slate">Slate</button>
+                            <button class="color-filter-btn" data-color="Champagne">Champagne</button>
+                            <button class="color-filter-btn" data-color="Party Red">Party Red</button>
+                            <button class="color-filter-btn" data-color="Solstice Purple">Solstice Purple</button>
+                            <button class="color-filter-btn" data-color="Dragon Fruit Fuchsia">Dragon Fruit Fuchsia</button>
+                            <button class="color-filter-btn" data-color="Sea Turtle">Sea Turtle</button>
+                            <button class="color-filter-btn" data-color="Great White">Great White</button>
+                            <button class="color-filter-btn" data-color="Last Light">Last Light</button>
+                            <button class="color-filter-btn" data-color="Day Break">Day Break</button>
+                            <button class="color-filter-btn" data-color="Solar Orange">Solar Orange</button>
+                            <button class="color-filter-btn" data-color="Sand Castle">Sand Castle</button>
+                            <button class="color-filter-btn" data-color="The Deep (Navy)">The Deep (Navy)</button>
+                        </div>
+                        <button class="btn-primary" id="batch-singles-btn">
+                            <i class="fas fa-layer-group"></i>
+                            Batch Orders
+                        </button>
+                    </div>
+                    
+                    <!-- Singles Orders List -->
+                    <div class="card">
+                        <h3 class="card-title">Single Item Orders</h3>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th>
+                                        <th>Customer</th>
+                                        <th>Item SKU</th>
+                                        <th>Size</th>
+                                        <th>Quantity</th>
+                                        <th>Ship Date</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="singlesOrdersTableBody">
+                                    <tr>
+                                        <td colspan="7" style="text-align: center; padding: 40px; color: #999;">
+                                            Loading orders...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Original Dashboard Stats (hidden for now) -->
+                    <div style="display: none;">
+                    <!-- Stats Cards -->
+                    <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="statFulfillments">0</div>
+                        <div class="stat-label">Qty</div>
+                        <div class="stat-title">FULFILLMENTS</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="statOrders">0</div>
+                        <div class="stat-label">Qty</div>
+                        <div class="stat-title">NEW ORDERS</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="statItems">0</div>
+                        <div class="stat-label">Qty</div>
+                        <div class="stat-title">ITEMS</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="statCustomers">0</div>
+                        <div class="stat-label">Qty</div>
+                        <div class="stat-title">CUSTOMERS</div>
+                    </div>
+                </div>
+                
+                <!-- Two Column Layout -->
+                <div class="two-column">
+                    <!-- Sales Chart -->
+                    <div class="card">
+                        <h3 class="card-title">Sales</h3>
+                        <div class="chart-container">
+                            <canvas id="salesChart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Top Categories -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Top item categories</h3>
+                            <a href="#" class="view-all">VIEW ALL</a>
+                        </div>
+                        <div class="category-grid">
+                            <div class="category-icon">
+                                <i class="fas fa-box"></i>
+                            </div>
+                            <div class="category-icon">
+                                <i class="fas fa-cube"></i>
+                            </div>
+                            <div class="category-icon">
+                                <i class="fas fa-shopping-bag"></i>
+                            </div>
+                            <div class="category-icon">
+                                <i class="fas fa-gifts"></i>
+                            </div>
+                            <div class="category-icon">
+                                <i class="fas fa-archive"></i>
+                            </div>
+                            <div class="category-icon">
+                                <i class="fas fa-tag"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Two Column Layout - Bottom -->
+                <div class="two-column">
+                    <!-- Stock Numbers -->
+                    <div class="card">
+                        <h3 class="card-title">Stock numbers</h3>
+                        <div class="list-items">
+                            <div class="list-item">
+                                <span class="list-label">Low stock items</span>
+                                <span class="list-value" id="lowStockCount">0</span>
+                            </div>
+                            <div class="list-item">
+                                <span class="list-label">Item categories</span>
+                                <span class="list-value" id="categoryCount">0</span>
+                            </div>
+                            <div class="list-item">
+                                <span class="list-label">Total items</span>
+                                <span class="list-value" id="totalItemsCount">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Orders List -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Recent orders</h3>
+                            <a href="#" class="view-all">VIEW ALL</a>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th>
+                                        <th>Customer</th>
+                                        <th>Items</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ordersTableBody">
+                                    <!-- Orders will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                    </div>
+                    <!-- End hidden dashboard stats -->
+                </div>
+                <!-- End Singles Orders Page -->
+                
+                <!-- All Orders Page -->
+                <div class="page-content" id="page-all-orders" style="display: none;">
+                    <!-- Filter and Action Bar -->
+                    <div class="action-bar">
+                        <div class="filter-bar">
+                            <button class="filter-btn active" data-filter="all">All Orders</button>
+                            <button class="filter-btn" data-filter="singles">Singles</button>
+                            <button class="filter-btn" data-filter="bulk">Bulk</button>
+                            <button class="filter-btn" data-filter="high-volume">High Volume</button>
+                            <button class="filter-btn" data-filter="unique">Unique</button>
+                            <button class="filter-btn" data-filter="box-size">Box Size</button>
+                        </div>
+                        <div class="pack-filter-bar">
+                            <span class="pack-filter-label">Pack Sizes:</span>
+                            <button class="pack-filter-btn active" data-pack="all">All Packs</button>
+                            <button class="pack-filter-btn" data-pack="single">
+                                <i class="fas fa-cube"></i>
+                                Single
+                            </button>
+                            <button class="pack-filter-btn" data-pack="4pack">
+                                <i class="fas fa-box"></i>
+                                4 Pack
+                            </button>
+                            <button class="pack-filter-btn" data-pack="5pack">
+                                <i class="fas fa-layer-group"></i>
+                                5 Pack
+                            </button>
+                            <button class="pack-filter-btn" data-pack="8pack">
+                                <i class="fas fa-boxes"></i>
+                                8 Pack
+                            </button>
+                        </div>
+                        <div class="view-controls">
+                            <button class="btn-secondary" id="export-all-btn">
+                                <i class="fas fa-download"></i>
+                                Export All
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- All Orders List -->
+                    <div class="card">
+                        <h3 class="card-title">All Orders Overview</h3>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Sales Order Number</th>
+                                        <th>Customer</th>
+                                        <th>Category</th>
+                                        <th>Items</th>
+                                        <th>Total Qty</th>
+                                        <th>Ship Date</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="allOrdersTableBody">
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; padding: 40px; color: #999;">
+                                            Loading all orders...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <!-- End All Orders Page -->
+                
+                <!-- Bulk Orders Page -->
+                <div class="page-content" id="page-bulk" style="display: none;">
+                    <!-- Bulk Order Filter -->
+                    <div class="bulk-filter-section">
+                        <div class="bulk-filter-container">
+                            <label for="bulkOrderSlider" class="bulk-filter-label">
+                                Bulk Order Total: <span id="bulkOrderValue">2+</span>
+                            </label>
+                            <div class="bulk-slider-container">
+                                <input type="range" id="bulkOrderSlider" class="bulk-order-slider" 
+                                       min="2" max="20" value="2" step="1">
+                                <div class="slider-labels">
+                                    <span>2</span>
+                                    <span>20+</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bulk-orders-grid" id="bulkOrdersGrid">
+                        <p style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                            Loading bulk orders...
+                        </p>
+                    </div>
+                </div>
+                <!-- End Bulk Orders Page -->
+                
+                <!-- High Volume Orders Page -->
+                <div class="page-content" id="page-high-volume" style="display: none;">
+                    <div class="card">
+                        <h3 class="card-title">High Volume Items</h3>
+                        <p style="color: var(--text-secondary); padding: 20px 0;">
+                            Items with multiple orders (grouped by SKU)
+                        </p>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Item SKU</th>
+                                        <th>Item Name</th>
+                                        <th>Size</th>
+                                        <th>Order Count</th>
+                                        <th>Total Quantity</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="highVolumeTableBody">
+                                    <tr>
+                                        <td colspan="6" style="text-align: center; padding: 40px; color: #999;">
+                                            Loading high volume items...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Orders for selected SKU -->
+                    <div class="card" id="sku-orders-card" style="display: none; margin-top: 20px;">
+                        <h3 class="card-title" id="sku-orders-title">Orders for SKU</h3>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th>
+                                        <th>Customer</th>
+                                        <th>Quantity</th>
+                                        <th>Ship Date</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="skuOrdersTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <!-- End High Volume Orders Page -->
+                
+                <!-- Unique Orders Page -->
+                <div class="page-content" id="page-unique" style="display: none;">
+                    <div class="card">
+                        <h3 class="card-title">Unique Orders</h3>
+                        <p style="color: var(--text-secondary); padding: 20px 0;">
+                            Orders with mixed items that don't fit Singles, Bulk, or High Volume categories.
+                        </p>
+                        <!-- Placeholder for unique orders content -->
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th>
+                                        <th>Customer</th>
+                                        <th>Total Qty</th>
+                                        <th>Items</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="uniqueOrdersTableBody">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; padding: 40px; color: #999;">
+                                            No unique orders found
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <!-- End Unique Orders Page -->
+                
+                <!-- Box Size Specific Page -->
+                <div class="page-content" id="page-box-size" style="display: none;">
+                    <!-- Filter and Action Bar -->
+                    <div class="action-bar">
+                        <div class="filter-bar">
+                            <button class="filter-btn active" data-size="all">All Sizes</button>
+                            <button class="filter-btn" data-size="10oz">10oz</button>
+                            <button class="filter-btn" data-size="16oz">16oz</button>
+                            <button class="filter-btn" data-size="26oz">26oz</button>
+                            <button class="filter-btn" data-size="stickers">Stickers</button>
+                        </div>
+                        <div class="pack-filter-bar">
+                            <span class="pack-filter-label">Pack Sizes:</span>
+                            <button class="pack-filter-btn active" data-pack="all">All Packs</button>
+                            <button class="pack-filter-btn" data-pack="single">
+                                <i class="fas fa-cube"></i>
+                                Single
+                            </button>
+                            <button class="pack-filter-btn" data-pack="4pack">
+                                <i class="fas fa-box"></i>
+                                4 Pack
+                            </button>
+                            <button class="pack-filter-btn" data-pack="5pack">
+                                <i class="fas fa-layer-group"></i>
+                                5 Pack
+                            </button>
+                            <button class="pack-filter-btn" data-pack="8pack">
+                                <i class="fas fa-boxes"></i>
+                                8 Pack
+                            </button>
+                        </div>
+                        <div class="view-controls">
+                            <button class="btn-secondary" id="batch-orders-btn">
+                                <i class="fas fa-layer-group"></i>
+                                Batch Orders
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Box Size Orders List -->
+                    <div class="card">
+                        <h3 class="card-title">Box Size Specific Orders</h3>
+                        <p style="color: var(--text-secondary); padding: 20px 0;">
+                            Orders organized by box size requirements and pack compatibility
+                        </p>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Sales Order Number</th>
+                                        <th>Customer</th>
+                                        <th>Items</th>
+                                        <th>Pack Size</th>
+                                        <th>Compatible Packs</th>
+                                        <th>Total Qty</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="boxSizeTableBody">
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; padding: 40px; color: #999;">
+                                            Loading box size specific orders...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <!-- End Box Size Specific Page -->
+                
+            </div>
+        </main>
+    </div>
+    
+    <!-- Order Details Modal -->
+    <div id="orderModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalOrderTitle">Order Details</h2>
+                <span class="close" id="closeModal">&times;</span>
+            </div>
+            <div class="modal-body" id="modalOrderBody">
+                <!-- Order details will be populated here -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="closeModalBtn">Close</button>
+                <button class="btn-primary" id="editOrderBtn">
+                    <i class="fas fa-edit"></i>
+                    Edit Order
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Batch Creation Modal -->
+    <div id="batchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create New Batch</h2>
+                <span class="close" id="closeBatchModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="batchName">Batch Name:</label>
+                    <input type="text" id="batchName" placeholder="Enter batch name..." maxlength="50">
+                </div>
+                <div class="batch-info">
+                    <p><strong>Orders to be batched:</strong></p>
+                    <p id="batchOrderCount">0 orders selected</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelBatchBtn">Cancel</button>
+                <button class="btn-primary" id="createBatchBtn">
+                    <i class="fas fa-plus"></i>
+                    Create Batch
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
