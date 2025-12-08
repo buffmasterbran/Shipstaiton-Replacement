@@ -1,13 +1,22 @@
-export default function BoxSizePage() {
+import { prisma } from '@/lib/prisma'
+import BoxSizeSpecificTable from '@/components/BoxSizeSpecificTable'
+
+// Force dynamic rendering - no caching
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+export default async function BoxSizePage() {
+  const orders = await prisma.orderLog.findMany({
+    orderBy: {
+      createdAt: 'desc',
+    },
+    take: 1000, // Adjust as needed
+  })
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Box Size Specific</h1>
-      <div className="bg-white rounded-lg shadow p-12 text-center">
-        <p className="text-gray-500 text-lg">Box Size Specific page coming soon</p>
-        <p className="text-gray-400 text-sm mt-2">
-          This page will show orders filtered by box size
-        </p>
-      </div>
+      <BoxSizeSpecificTable orders={orders} />
     </div>
   )
 }
