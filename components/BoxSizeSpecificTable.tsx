@@ -138,7 +138,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           quantity: item.quantity || 1,
         }))
 
-        const totalQty = processedItems.reduce((sum, item) => sum + item.quantity, 0)
+        const totalQty = processedItems.reduce((sum: number, item) => sum + item.quantity, 0)
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
         const orderDate = order?.orderDate || log.createdAt
 
