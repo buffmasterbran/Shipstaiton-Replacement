@@ -396,6 +396,33 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
     .pick-list-item:last-child {
       border-bottom: none;
     }
+    .sample-order-label {
+      border: 2px solid #000;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .sample-order-header {
+      font-size: 48px;
+      font-weight: bold;
+      margin-bottom: 30px;
+      letter-spacing: 4px;
+    }
+    .sample-order-items {
+      width: 100%;
+      margin-top: 20px;
+    }
+    .sample-order-item {
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #000;
+    }
+    .sample-order-item:last-child {
+      border-bottom: none;
+    }
     .usps-label {
       border: 2px solid #000;
       padding: 0;
@@ -582,6 +609,34 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
           ${labelInfo.carrier} ${labelInfo.service} | ${labelInfo.packaging}<br>
           ${labelInfo.weight} lbs | ${labelInfo.dimensions.length}"×${labelInfo.dimensions.width}"×${labelInfo.dimensions.height}"
         </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- SAMPLE ORDER Page (Second Page) -->
+  <div class="page">
+    <div class="label sample-order-label">
+      <div class="sample-order-header">SAMPLE ORDER</div>
+      <div class="sample-order-items">
+        <div style="font-size: 14px; font-weight: bold; margin-bottom: 20px; text-align: center;">
+          Items in each order:
+        </div>
+        ${group.items.map(item => `
+          <div class="sample-order-item">
+            <div style="font-weight: bold; font-size: 18px; margin-bottom: 8px;">
+              <span style="font-family: monospace;">${item.sku}</span>
+            </div>
+            <div style="font-size: 14px; margin-bottom: 6px;">
+              ${item.name}
+            </div>
+            <div style="font-size: 12px; margin-bottom: 8px;">
+              Size: ${item.size} | Color: ${item.color}
+            </div>
+            <div style="font-size: 24px; font-weight: bold; text-align: center;">
+              Qty: ${item.quantity}
+            </div>
+          </div>
+        `).join('')}
       </div>
     </div>
   </div>
