@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import OrderDialog from './OrderDialog'
 import BulkOrderProcessDialog from './BulkOrderProcessDialog'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
+import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
 
 interface OrderLog {
@@ -66,6 +67,10 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
   const [rateShoppingActive, setRateShoppingActive] = useState(false)
   const rateShoppingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const isFetchingRatesRef = useRef<boolean>(false)
+  const [autoProcessEnabled, setAutoProcessEnabled] = useState(false)
+  const [autoProcessThreshold, setAutoProcessThreshold] = useState<number>(2)
+  const [isBatchPackageInfoDialogOpen, setIsBatchPackageInfoDialogOpen] = useState(false)
+  const [sliderValue, setSliderValue] = useState<number>(2)
 
   // Group orders by identical product combinations
   const bulkGroups = useMemo(() => {
@@ -126,6 +131,74 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
       .filter((group) => group.totalOrders >= 2)
       .sort((a, b) => b.totalOrders - a.totalOrders)
   }, [orders])
+
+  // Filter groups by slider value
+  const sliderFilteredGroups = useMemo(() => {
+    return bulkGroups.filter(group => group.totalOrders >= sliderValue)
+  }, [bulkGroups, sliderValue])
+
+  // Filter groups for auto-processing (only those above threshold)
+  const filteredBulkGroups = useMemo(() => {
+    if (!autoProcessEnabled) return bulkGroups
+    return bulkGroups.filter(group => group.totalOrders > autoProcessThreshold)
+  }, [bulkGroups, autoProcessEnabled, autoProcessThreshold])
+
+  // Convert bulk groups to batches for BatchPackageInfoDialog
+  interface BulkOrderBatch {
+    id: string
+    orders: Array<{
+      log: OrderLog
+      order: any
+      mainItem: any
+      size: string
+      color: string
+      customerName: string
+      customerId?: string
+      orderDate: string
+      status: string
+    }>
+    size: string
+    color: string
+    label: string
+  }
+
+  const bulkOrderBatches = useMemo(() => {
+    if (!autoProcessEnabled) return []
+    
+    return filteredBulkGroups.map((group, index) => {
+      // Convert bulk group orders to the format expected by BatchPackageInfoDialog
+      const batchOrders = group.orders.map(orderData => {
+        const payload = orderData.log.rawPayload as any
+        const order = Array.isArray(payload) ? payload[0] : payload
+        const items = order?.items || []
+        const mainItem = items.find((item: any) => !isShippingInsurance(item.sku || '', item.name || '')) || items[0]
+        
+        return {
+          log: orderData.log,
+          order,
+          mainItem: mainItem || { sku: 'N/A', name: 'Unknown', quantity: 1 },
+          size: getSizeFromSku(mainItem?.sku || ''),
+          color: getColorFromSku(mainItem?.sku || '', mainItem?.name),
+          customerName: orderData.customerName,
+          customerId: orderData.customerName ? orderData.customerName.split(' ')[0] : undefined,
+          orderDate: orderData.orderDate,
+          status: orderData.log.status,
+        }
+      })
+
+      // Create label from group items
+      const itemLabels = group.items.map(item => `${item.sku}×${item.quantity}`).join(', ')
+      const label = `Bulk ${index + 1}: ${itemLabels} (${group.totalOrders} orders)`
+
+      return {
+        id: group.signature,
+        orders: batchOrders,
+        size: group.items[0]?.size || 'Mixed',
+        color: group.items[0]?.color || 'Mixed',
+        label,
+      } as BulkOrderBatch
+    })
+  }, [filteredBulkGroups, autoProcessEnabled])
 
   // Check if selected group has shipping rates
   const selectedGroupHasRates = useMemo(() => {
@@ -732,6 +805,497 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
     }
   }
 
+  const generatePickListAndLabelsForBatches = (batchLabels: Array<{ batch: BulkOrderBatch; group: BulkOrderGroup; labelInfo: LabelInfo }>) => {
+    // Helper functions
+    const generateTrackingNumber = (orderNumber: string) => {
+      const randomDigits = orderNumber.padStart(22, '0').slice(-22)
+      return `420 ${randomDigits.slice(0, 5)} ${randomDigits.slice(5, 9)} ${randomDigits.slice(9, 13)} ${randomDigits.slice(13, 17)} ${randomDigits.slice(17, 21)} ${randomDigits.slice(21, 22)}`
+    }
+
+    const getServiceIndicator = (service: string) => {
+      if (service.includes('Express')) return 'E'
+      if (service.includes('Priority')) return 'P'
+      if (service.includes('First Class')) return 'FC'
+      return 'P'
+    }
+
+    const getServiceName = (service: string) => {
+      if (service.includes('Express')) return 'USPS PRIORITY MAIL EXPRESS®'
+      if (service.includes('Priority')) return 'USPS PRIORITY MAIL®'
+      if (service.includes('First Class')) return 'USPS FIRST-CLASS MAIL®'
+      return 'USPS PRIORITY MAIL®'
+    }
+
+    const getCurrentDate = () => {
+      const now = new Date()
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const day = String(now.getDate()).padStart(2, '0')
+      const year = String(now.getFullYear()).slice(-2)
+      return `${month}/${day}/${year}`
+    }
+
+    // Build HTML for all batches
+    let htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Pick List & Shipping Labels - Bulk Auto Process</title>
+  <style>
+    @page {
+      size: 4in 6in;
+      margin: 0;
+    }
+    * {
+      color: #000 !important;
+    }
+    .usps-service-banner {
+      background: #000 !important;
+      color: #fff !important;
+    }
+    body { 
+      font-family: Arial, Helvetica, sans-serif; 
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .page {
+      width: 4in;
+      height: 6in;
+      padding: 8px;
+      box-sizing: border-box;
+      page-break-after: always;
+      page-break-inside: avoid;
+      border: 1px solid #000;
+    }
+    .label { 
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .pick-label {
+      border: 2px solid #000;
+      padding: 10px;
+    }
+    .pick-label-header {
+      font-weight: bold;
+      font-size: 20px;
+      text-align: center;
+      border-top: 4px solid #000;
+      border-bottom: 4px solid #000;
+      padding: 10px 0;
+      margin-bottom: 12px;
+      background: #f0f0f0;
+    }
+    .pick-label-content {
+      font-size: 11px;
+      line-height: 1.4;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .pick-list-item {
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #000;
+    }
+    .pick-list-item:last-child {
+      border-bottom: none;
+    }
+    .sample-order-label {
+      border: 2px solid #000;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .sample-order-header {
+      font-size: 48px;
+      font-weight: bold;
+      margin-bottom: 30px;
+      letter-spacing: 4px;
+    }
+    .sample-order-items {
+      width: 100%;
+      margin-top: 20px;
+    }
+    .sample-order-item {
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #000;
+    }
+    .sample-order-item:last-child {
+      border-bottom: none;
+    }
+    .usps-label {
+      border: 2px solid #000;
+      padding: 0;
+      position: relative;
+      height: 100%;
+      width: 100%;
+    }
+    .usps-top-left {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      font-size: 9px;
+      line-height: 1.2;
+    }
+    .usps-service-indicator-large {
+      font-size: 48px;
+      font-weight: bold;
+      line-height: 1;
+      margin-bottom: 2px;
+    }
+    .usps-date-from {
+      font-size: 8px;
+      margin-top: 2px;
+    }
+    .usps-top-right {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      text-align: right;
+      font-size: 8px;
+      line-height: 1.3;
+      max-width: 1.2in;
+    }
+    .usps-postage-paid {
+      font-weight: bold;
+      margin-bottom: 2px;
+    }
+    .usps-2d-barcode {
+      border: 1px solid #000;
+      width: 0.8in;
+      height: 0.8in;
+      margin: 4px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 6px;
+      font-family: 'Courier New', monospace;
+    }
+    .usps-service-banner {
+      position: absolute;
+      top: 0.5in;
+      left: 0;
+      right: 0;
+      background: #000;
+      color: #fff;
+      text-align: center;
+      font-size: 12px;
+      font-weight: bold;
+      padding: 3px 0;
+      letter-spacing: 0.5px;
+    }
+    .usps-sender-address {
+      position: absolute;
+      top: 0.75in;
+      left: 0.5in;
+      font-size: 9px;
+      line-height: 1.3;
+      max-width: 2in;
+    }
+    .usps-ship-to-label {
+      position: absolute;
+      top: 1.3in;
+      left: 0.5in;
+      font-size: 8px;
+      font-weight: bold;
+      margin-bottom: 2px;
+    }
+    .usps-delivery-address {
+      position: absolute;
+      top: 1.45in;
+      left: 0.5in;
+      font-size: 11px;
+      line-height: 1.4;
+      font-weight: bold;
+      max-width: 2.5in;
+    }
+    .usps-delivery-name {
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+    .usps-delivery-street {
+      margin-bottom: 1px;
+    }
+    .usps-delivery-city-state {
+      margin-top: 2px;
+    }
+    .usps-barcode-section {
+      position: absolute;
+      bottom: 0.6in;
+      left: 0.2in;
+      right: 0.2in;
+    }
+    .usps-barcode-label {
+      font-size: 7px;
+      margin-bottom: 2px;
+      text-align: center;
+    }
+    .usps-linear-barcode {
+      border: 2px solid #000;
+      height: 0.5in;
+      margin: 2px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: repeating-linear-gradient(
+        90deg,
+        #000 0px,
+        #000 2px,
+        transparent 2px,
+        transparent 4px
+      );
+      background-size: 4px 100%;
+    }
+    .usps-tracking-number {
+      font-family: 'Courier New', monospace;
+      font-size: 9px;
+      text-align: center;
+      margin-top: 2px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+    }
+    .usps-footer {
+      position: absolute;
+      bottom: 0.1in;
+      left: 0.2in;
+      right: 0.2in;
+      font-size: 7px;
+      text-align: center;
+      border-top: 1px solid #000;
+      padding-top: 2px;
+    }
+    @media print {
+      .page {
+        page-break-after: always;
+      }
+      .label {
+        page-break-inside: avoid;
+      }
+      * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+`
+
+    // Process each batch
+    batchLabels.forEach(({ batch, group, labelInfo }) => {
+      // Aggregate items for pick list
+      const itemMap = new Map<string, { sku: string; name: string; totalQty: number; size: string; color: string }>()
+      
+      group.orders.forEach(orderData => {
+        const payload = orderData.log.rawPayload as any
+        const order = Array.isArray(payload) ? payload[0] : payload
+        const items = order?.items || []
+        
+        items.forEach((item: any) => {
+          if (isShippingInsurance(item.sku || '', item.name || '')) return
+          
+          const sku = item.sku || 'N/A'
+          const existing = itemMap.get(sku)
+          const qty = item.quantity || 1
+          
+          if (existing) {
+            existing.totalQty += qty * group.totalOrders
+          } else {
+            itemMap.set(sku, {
+              sku,
+              name: item.name || 'N/A',
+              totalQty: qty * group.totalOrders,
+              size: getSizeFromSku(sku),
+              color: getColorFromSku(sku, item.name),
+            })
+          }
+        })
+      })
+      
+      const aggregatedItems = Array.from(itemMap.values())
+      const totalItems = aggregatedItems.reduce((sum, item) => sum + item.totalQty, 0)
+
+      // Pick list for this batch (serves as divider)
+      htmlContent += `
+  <div class="page">
+    <div class="label pick-label">
+      <div class="pick-label-header">
+        <div style="font-size: 24px; margin-bottom: 4px;">════════════════</div>
+        <div style="font-size: 22px;">PICK LIST - ${batch.label}</div>
+        <div style="font-size: 24px; margin-top: 4px;">════════════════</div>
+      </div>
+      <div class="pick-label-content">
+        <div style="font-size: 18px; font-weight: bold; text-align: center; margin-bottom: 10px;">
+          Total Orders: ${group.totalOrders}
+        </div>
+        <div style="font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 12px;">
+          Total Items: ${totalItems}
+        </div>
+        ${aggregatedItems.map(item => `
+          <div class="pick-list-item">
+            <div style="font-weight: bold; font-size: 13px; margin-bottom: 4px;">
+              <span style="font-family: monospace;">${item.sku}</span>
+            </div>
+            <div style="font-size: 11px; margin-bottom: 2px;">
+              ${item.name}
+            </div>
+            <div style="font-size: 10px; margin-bottom: 4px;">
+              Size: ${item.size} | Color: ${item.color}
+            </div>
+            <div style="font-size: 16px; font-weight: bold; text-align: center;">
+              Qty: ${item.totalQty}
+            </div>
+          </div>
+        `).join('')}
+        <div style="margin-top: auto; border-top: 2px solid #000; padding-top: 6px; font-size: 10px;">
+          <strong>Shipping Info:</strong><br>
+          ${labelInfo.carrier} ${labelInfo.service} | ${labelInfo.packaging}<br>
+          ${labelInfo.weight} lbs | ${labelInfo.dimensions.length}"×${labelInfo.dimensions.width}"×${labelInfo.dimensions.height}"
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- SAMPLE ORDER Page (Second Page) -->
+  <div class="page">
+    <div class="label sample-order-label">
+      <div class="sample-order-header">SAMPLE ORDER</div>
+      <div class="sample-order-items">
+        <div style="font-size: 14px; font-weight: bold; margin-bottom: 20px; text-align: center;">
+          Items in each order:
+        </div>
+        ${group.items.map(item => `
+          <div class="sample-order-item">
+            <div style="font-weight: bold; font-size: 18px; margin-bottom: 8px;">
+              <span style="font-family: monospace;">${item.sku}</span>
+            </div>
+            <div style="font-size: 14px; margin-bottom: 6px;">
+              ${item.name}
+            </div>
+            <div style="font-size: 12px; margin-bottom: 8px;">
+              Size: ${item.size} | Color: ${item.color}
+            </div>
+            <div style="font-size: 24px; font-weight: bold; text-align: center;">
+              Qty: ${item.quantity}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  </div>
+      `
+
+      // Shipping labels for all orders in this batch
+      group.orders.forEach((orderData) => {
+        const payload = orderData.log.rawPayload as any
+        const order = Array.isArray(payload) ? payload[0] : payload
+        const shipTo = order?.shipTo || {}
+        const billTo = order?.billTo || {}
+        const trackingNumber = generateTrackingNumber(orderData.log.orderNumber)
+        const serviceIndicator = getServiceIndicator(labelInfo.service)
+        
+        const senderName = billTo.name || 'John Smith'
+        const senderCompany = billTo.company || 'Your Company'
+        const senderStreet = billTo.street1 || '123 Main Street'
+        const senderCity = billTo.city || 'City'
+        const senderState = billTo.state || 'ST'
+        const senderZip = billTo.postalCode || '12345'
+        const fromZip = senderZip.slice(0, 5) || '12345'
+        
+        const recipientName = shipTo.name || 'N/A'
+        const recipientCompany = shipTo.company || ''
+        const recipientStreet1 = shipTo.street1 || ''
+        const recipientStreet2 = shipTo.street2 || ''
+        const recipientCity = shipTo.city || ''
+        const recipientState = shipTo.state || ''
+        const recipientZip = shipTo.postalCode || ''
+        
+        const currentDate = getCurrentDate()
+        const serviceName = getServiceName(labelInfo.service)
+        const identifier = orderData.log.orderNumber.padStart(15, '0').slice(-15)
+        const approvalNumber = orderData.log.orderNumber.padStart(9, '0').slice(-9)
+        
+        htmlContent += `
+  <div class="page">
+    <div class="label usps-label">
+      <div class="usps-top-left">
+        <div class="usps-service-indicator-large">${serviceIndicator}</div>
+        <div class="usps-date-from">${currentDate}</div>
+        <div class="usps-date-from">From ${fromZip}</div>
+      </div>
+      
+      <div class="usps-top-right">
+        <div class="usps-postage-paid">US POSTAGE PAID</div>
+        <div>${labelInfo.carrier}</div>
+        <div>${labelInfo.packaging}</div>
+        <div class="usps-2d-barcode">
+          <div>2D<br>BARCODE</div>
+        </div>
+        <div style="font-family: 'Courier New', monospace; font-size: 7px; margin-top: 2px;">${identifier}</div>
+      </div>
+      
+      <div class="usps-service-banner">
+        ${serviceName}
+      </div>
+      
+      <div class="usps-sender-address">
+        ${senderName}<br>
+        ${senderCompany ? senderCompany + '<br>' : ''}${senderStreet}<br>
+        ${senderCity} ${senderState} ${senderZip}
+      </div>
+      
+      <div class="usps-ship-to-label">SHIP TO:</div>
+      
+      <div class="usps-delivery-address">
+        <div class="usps-delivery-name">${recipientName}</div>
+        ${recipientCompany ? `<div class="usps-delivery-street">${recipientCompany}</div>` : ''}
+        ${recipientStreet1 ? `<div class="usps-delivery-street">${recipientStreet1}</div>` : ''}
+        ${recipientStreet2 ? `<div class="usps-delivery-street">${recipientStreet2}</div>` : ''}
+        <div class="usps-delivery-city-state">
+          ${recipientCity}${recipientState ? ` ${recipientState}` : ''} ${recipientZip}
+        </div>
+      </div>
+      
+      <div class="usps-barcode-section">
+        <div class="usps-barcode-label">ZIP - e/ ${labelInfo.carrier} ${labelInfo.service.toUpperCase()}</div>
+        <div class="usps-linear-barcode"></div>
+        <div class="usps-tracking-number">${trackingNumber}</div>
+      </div>
+      
+      <div class="usps-footer">
+        Electronic Rate Approved #${approvalNumber} | Order: ${orderData.log.orderNumber} | ${labelInfo.weight} lbs
+      </div>
+    </div>
+  </div>
+        `
+      })
+    })
+
+    htmlContent += `
+</body>
+</html>
+    `
+
+    // Open in new window for printing/saving as PDF
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(htmlContent)
+      printWindow.document.close()
+      setTimeout(() => {
+        printWindow.print()
+      }, 250)
+    }
+  }
+
   if (bulkGroups.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-12 text-center">
@@ -745,22 +1309,141 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
 
   const totalBulkOrders = bulkGroups.reduce((sum, group) => sum + group.totalOrders, 0)
 
+  const handleBatchProceed = (batchPackageInfo: Map<string, PackageInfo>) => {
+    // Process all batches with their respective package info
+    const batchLabels: Array<{ batch: BulkOrderBatch; group: BulkOrderGroup; labelInfo: LabelInfo }> = []
+    
+    bulkOrderBatches.forEach(batch => {
+      const info = batchPackageInfo.get(batch.id)
+      const group = filteredBulkGroups.find(g => g.signature === batch.id)
+      if (info && group) {
+        const labelInfo: LabelInfo = {
+          carrier: info.carrier,
+          service: info.service,
+          packaging: info.packaging,
+          weight: info.weight,
+          dimensions: info.dimensions,
+        }
+        batchLabels.push({ batch, group, labelInfo })
+      }
+    })
+    
+    generatePickListAndLabelsForBatches(batchLabels)
+  }
+
   return (
     <>
+      {/* Auto Process Section */}
+      <div className="mb-4 bg-white rounded-lg shadow p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoProcessEnabled}
+                onChange={(e) => setAutoProcessEnabled(e.target.checked)}
+                className="w-5 h-5 text-green-600 rounded focus:ring-green-500"
+              />
+              <span className="text-sm font-medium text-gray-700">Auto Process</span>
+            </label>
+            {autoProcessEnabled && (
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600">Threshold:</label>
+                <input
+                  type="number"
+                  min="2"
+                  value={autoProcessThreshold}
+                  onChange={(e) => setAutoProcessThreshold(parseInt(e.target.value) || 2)}
+                  className="w-20 px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+                />
+                <span className="text-sm text-gray-600">orders per group</span>
+              </div>
+            )}
+          </div>
+          {autoProcessEnabled && bulkOrderBatches.length > 0 && (
+            <button
+              onClick={() => setIsBatchPackageInfoDialogOpen(true)}
+              className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center gap-2"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              Process All Groups ({bulkOrderBatches.length})
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Bulk Order Total */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold text-gray-900">Bulk Order Total: {totalBulkOrders}+</h2>
+          <h2 className="text-lg font-semibold text-gray-900">
+            Bulk Order Total: {autoProcessEnabled ? filteredBulkGroups.reduce((sum, g) => sum + g.totalOrders, 0) : sliderFilteredGroups.reduce((sum, g) => sum + g.totalOrders, 0)}+
+            {autoProcessEnabled ? (
+              <span className="ml-2 text-sm font-normal text-gray-500">
+                ({filteredBulkGroups.length} group{filteredBulkGroups.length !== 1 ? 's' : ''} above threshold)
+              </span>
+            ) : (
+              <span className="ml-2 text-sm font-normal text-gray-500">
+                ({sliderFilteredGroups.length} group{sliderFilteredGroups.length !== 1 ? 's' : ''} with {sliderValue}+ orders)
+              </span>
+            )}
+          </h2>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-4">
-          <div
-            className="bg-green-600 h-4 rounded-full transition-all duration-300"
-            style={{ width: `${Math.min((totalBulkOrders / 20) * 100, 100)}%` }}
+        <div className="relative">
+          <input
+            type="range"
+            min="2"
+            max="50"
+            value={sliderValue}
+            onChange={(e) => setSliderValue(parseInt(e.target.value))}
+            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, #16a34a 0%, #16a34a ${((sliderValue - 2) / 48) * 100}%, #e5e7eb ${((sliderValue - 2) / 48) * 100}%, #e5e7eb 100%)`
+            }}
           />
-        </div>
-        <div className="flex justify-between text-xs text-gray-500 mt-1">
-          <span>2</span>
-          <span>20+</span>
+          <style jsx>{`
+            input[type="range"]::-webkit-slider-thumb {
+              appearance: none;
+              width: 18px;
+              height: 18px;
+              border-radius: 50%;
+              background: #16a34a;
+              cursor: pointer;
+              border: 2px solid #fff;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+            input[type="range"]::-moz-range-thumb {
+              width: 18px;
+              height: 18px;
+              border-radius: 50%;
+              background: #16a34a;
+              cursor: pointer;
+              border: 2px solid #fff;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+            input[type="range"]:hover::-webkit-slider-thumb {
+              background: #15803d;
+            }
+            input[type="range"]:hover::-moz-range-thumb {
+              background: #15803d;
+            }
+          `}</style>
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>2</span>
+            <span className="font-medium text-gray-700">Min: {sliderValue}</span>
+            <span>50+</span>
+          </div>
         </div>
       </div>
 
@@ -788,7 +1471,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {bulkGroups.map((group, index) => {
+              {(autoProcessEnabled ? filteredBulkGroups : sliderFilteredGroups).map((group, index) => {
                 const rate = shippingRates.get(group.signature)
                 return (
                   <tr
@@ -862,6 +1545,13 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
         onProceed={handleProceed}
         shippingRate={selectedGroup ? shippingRates.get(selectedGroup.signature) : undefined}
         onSavePackageInfo={handleSavePackageInfo}
+      />
+
+      <BatchPackageInfoDialog
+        isOpen={isBatchPackageInfoDialogOpen}
+        onClose={() => setIsBatchPackageInfoDialogOpen(false)}
+        batches={bulkOrderBatches as any}
+        onProceed={handleBatchProceed}
       />
     </>
   )

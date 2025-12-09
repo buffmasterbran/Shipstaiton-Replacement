@@ -165,8 +165,8 @@ export function isShippingInsurance(sku: string, itemName?: string): boolean {
 /**
  * Check if an order is a single-item order
  * Returns true if:
- * - Order has exactly 1 item, OR
- * - Order has 2 items but one is shipping insurance
+ * - Order has exactly 1 non-insurance item with quantity 1 (1 cup total)
+ * - Order has 2 items but one is shipping insurance and the other has quantity 1
  */
 export function isSingleItemOrder(items: any[]): boolean {
   if (!items || items.length === 0) return false
@@ -176,6 +176,13 @@ export function isSingleItemOrder(items: any[]): boolean {
     (item) => !isShippingInsurance(item.sku || '', item.name || '')
   )
   
-  return nonInsuranceItems.length === 1
+  // Must have exactly 1 non-insurance item
+  if (nonInsuranceItems.length !== 1) return false
+  
+  // Check that the single item has quantity 1 (1 cup total)
+  const singleItem = nonInsuranceItems[0]
+  const quantity = singleItem.quantity || 1
+  
+  return quantity === 1
 }
 
