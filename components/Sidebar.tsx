@@ -7,28 +7,34 @@ import type { UserRole } from './MainLayout'
 interface NavItem {
   name: string
   href: string
+  access: 'admin' | 'operator' // who can see this tab
   icon?: string
 }
 
 const navItems: NavItem[] = [
-  { name: 'All Orders', href: '/' },
-  { name: 'Singles Orders', href: '/singles' },
-  { name: 'Bulk Orders', href: '/bulk' },
-  { name: 'Bulk Verification', href: '/bulk-verification' },
-  { name: 'Box Size Specific', href: '/box-size' },
-  { name: 'Batches', href: '/batches' },
-  { name: 'ShipEngine Test', href: '/shipengine-test' },
-  { name: 'Shipstation Test', href: '/shipstation-test' },
-  { name: 'Settings', href: '/settings' },
+  { name: 'All Orders', href: '/', access: 'admin' },
+  { name: 'Expedited Orders', href: '/expedited', access: 'admin' },
+  { name: 'Singles', href: '/singles', access: 'admin' },
+  { name: 'Bulk Orders', href: '/bulk', access: 'admin' },
+  { name: 'Bulk Verification', href: '/bulk-verification', access: 'operator' },
+  { name: 'Orders by Size', href: '/box-size', access: 'admin' },
+  { name: 'Personalization', href: '/personalization', access: 'admin' },
+  { name: 'Accessories', href: '/accessories', access: 'admin' },
+  { name: 'International Orders', href: '/international', access: 'admin' },
+  { name: 'Local Pickup Orders', href: '/local-pickup', access: 'operator' },
+  { name: 'Analytics', href: '/analytics', access: 'operator' },
+  { name: 'Receive Returns', href: '/returns', access: 'operator' },
+  { name: 'Inventory Count', href: '/inventory-count', access: 'operator' },
+  { name: 'Batches', href: '/batches', access: 'admin' },
+  { name: 'ShipEngine Test', href: '/shipengine-test', access: 'admin' },
+  { name: 'Settings', href: '/settings', access: 'admin' },
 ]
-
-const OPERATOR_NAV_HREF = '/bulk-verification'
 
 export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
 
   const visibleNavItems = role === 'operator'
-    ? navItems.filter((item) => item.href === OPERATOR_NAV_HREF)
+    ? navItems.filter((item) => item.access === 'operator')
     : navItems
 
   return (

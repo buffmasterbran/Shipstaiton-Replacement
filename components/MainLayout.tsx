@@ -14,8 +14,9 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const { role, setRole } = useRole()
   const [canProcess, setCanProcess] = useState(true)
 
+  const operatorAllowedPaths = ['/bulk-verification', '/local-pickup', '/analytics', '/returns', '/inventory-count']
   useEffect(() => {
-    if (role === 'operator' && pathname !== '/bulk-verification') {
+    if (role === 'operator' && !operatorAllowedPaths.includes(pathname)) {
       router.replace('/bulk-verification')
     }
   }, [role, pathname, router])

@@ -98,7 +98,7 @@ Click "Refresh" to update the view without reloading the page.
 
 ## Deployment to Vercel
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed instructions on:
+See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed instructions on:
 - Setting up Supabase database
 - Deploying to Vercel
 - Configuring environment variables
@@ -118,6 +118,6 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed instructions on:
    - `API_SECRET` (your generated secret)
 7. ✅ Deploy and test!
 
-See [NETSUITE_INTEGRATION.md](./NETSUITE_INTEGRATION.md) for NetSuite script integration examples.
+See [docs/NETSUITE_INTEGRATION.md](./docs/NETSUITE_INTEGRATION.md) for NetSuite script integration examples. Other docs (env, Vercel, Quick Start) are in the [docs/](./docs/) folder.
 
 
