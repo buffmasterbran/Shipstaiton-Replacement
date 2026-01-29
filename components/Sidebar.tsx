@@ -8,6 +8,8 @@ interface NavItem {
   name: string
   href: string
   access: 'admin' | 'operator' // who can see this tab
+  /** When set, opens in new tab instead of in-app route (until under one roof) */
+  externalHref?: string
   icon?: string
 }
 
@@ -18,13 +20,13 @@ const navItems: NavItem[] = [
   { name: 'Bulk Orders', href: '/bulk', access: 'admin' },
   { name: 'Bulk Verification', href: '/bulk-verification', access: 'operator' },
   { name: 'Orders by Size', href: '/box-size', access: 'admin' },
-  { name: 'Personalization', href: '/personalization', access: 'admin' },
+  { name: 'Personalization', href: '/personalization', access: 'admin', externalHref: 'https://pers-packing-slips.vercel.app/' },
   { name: 'Accessories', href: '/accessories', access: 'admin' },
   { name: 'International Orders', href: '/international', access: 'admin' },
   { name: 'Local Pickup Orders', href: '/local-pickup', access: 'operator' },
-  { name: 'Analytics', href: '/analytics', access: 'operator' },
+  { name: 'Analytics', href: '/analytics', access: 'operator', externalHref: 'https://paws-analytics.vercel.app/' },
   { name: 'Receive Returns', href: '/returns', access: 'operator' },
-  { name: 'Inventory Count', href: '/inventory-count', access: 'operator' },
+  { name: 'Inventory Count', href: '/inventory-count', access: 'operator', externalHref: 'https://inventory-count.vercel.app/' },
   { name: 'Batches', href: '/batches', access: 'admin' },
   { name: 'ShipEngine Test', href: '/shipengine-test', access: 'admin' },
   { name: 'Settings', href: '/settings', access: 'admin' },
@@ -48,19 +50,26 @@ export default function Sidebar({ role }: { role: UserRole }) {
       <nav className="flex-1 p-4">
         <ul className="space-y-2">
           {visibleNavItems.map((item) => {
-            const isActive = pathname === item.href || (item.href === '/' && pathname === '/')
+            const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
+            const className = `block px-4 py-3 rounded-lg transition-colors ${
+              isActive ? 'bg-green-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            }`
             return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={`block px-4 py-3 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-green-600 text-white'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                  }`}
-                >
-                  {item.name}
-                </Link>
+              <li key={item.externalHref ?? item.href}>
+                {item.externalHref ? (
+                  <a
+                    href={item.externalHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={className}
+                  >
+                    {item.name}
+                  </a>
+                ) : (
+                  <Link href={item.href} className={className}>
+                    {item.name}
+                  </Link>
+                )}
               </li>
             )
           })}

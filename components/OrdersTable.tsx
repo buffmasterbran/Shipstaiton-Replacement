@@ -23,6 +23,29 @@ function formatCurrency(amount: number | string) {
   }).format(Number(amount))
 }
 
+/** Late = not shipped and (ship-by date passed, or order date is 1+ days ago). Similar to NS saved search. */
+function isOrderLate(log: OrderLog): boolean {
+  const status = (log.status || '').toUpperCase()
+  if (status === 'SHIPPED') return false
+
+  const payload = log.rawPayload as any
+  const order = Array.isArray(payload) ? payload[0] : payload
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const shipBy = order?.shipByDate ? new Date(order.shipByDate) : null
+  if (shipBy) {
+    shipBy.setHours(0, 0, 0, 0)
+    return shipBy < today
+  }
+
+  const orderDate = order?.orderDate ? new Date(order.orderDate) : new Date(log.createdAt)
+  orderDate.setHours(0, 0, 0, 0)
+  const oneDayAgo = new Date(today)
+  oneDayAgo.setDate(oneDayAgo.getDate() - 1)
+  return orderDate <= oneDayAgo
+}
+
 export default function OrdersTable({ logs }: OrdersTableProps) {
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -86,12 +109,15 @@ export default function OrdersTable({ logs }: OrdersTableProps) {
                 const order = Array.isArray(payload) ? payload[0] : payload
                 const itemCount = order?.items?.length || 0
                 const customerName = order?.shipTo?.name || order?.billTo?.name || 'N/A'
+                const late = isOrderLate(log)
 
                 return (
                   <tr
                     key={log.id}
                     onClick={() => handleRowClick(log)}
-                    className="cursor-pointer hover:bg-blue-50 transition-colors"
+                    className={`cursor-pointer transition-colors ${
+                      late ? 'bg-amber-50 hover:bg-amber-100 border-l-4 border-l-amber-500' : 'hover:bg-blue-50'
+                    }`}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-semibold text-gray-900">
@@ -139,9 +165,16 @@ export default function OrdersTable({ logs }: OrdersTableProps) {
                       {new Date(log.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        {log.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {late && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-200 text-amber-900" title="Past ship-by or order date, not yet shipped">
+                            Late
+                          </span>
+                        )}
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${late ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                          {log.status}
+                        </span>
+                      </div>
                     </td>
                   </tr>
                 )
