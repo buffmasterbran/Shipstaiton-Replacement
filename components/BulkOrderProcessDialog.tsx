@@ -44,6 +44,8 @@ interface BulkOrderProcessDialogProps {
   onProceed: () => void
   shippingRate?: ShippingRate
   onSavePackageInfo: (info: PackageInfo) => void
+  sendToQueueLoading?: boolean
+  sendToQueueError?: string | null
 }
 
 export default function BulkOrderProcessDialog({
@@ -53,6 +55,8 @@ export default function BulkOrderProcessDialog({
   onProceed,
   shippingRate,
   onSavePackageInfo,
+  sendToQueueLoading = false,
+  sendToQueueError = null,
 }: BulkOrderProcessDialogProps) {
   const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
   const [isProcessDialogOpen, setIsProcessDialogOpen] = useState(false)
@@ -227,24 +231,30 @@ export default function BulkOrderProcessDialog({
                   </div>
 
                   {/* Footer */}
-                  <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
-                    <button
-                      onClick={handleClose}
-                      className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
-                    >
-                      Close
-                    </button>
-                    <button
-                      onClick={handleProcessOrdersClick}
-                      disabled={!shippingRate || !shippingRate.price || !shippingRate.service}
-                      className={`px-4 py-2 rounded-lg transition-colors ${
-                        shippingRate && shippingRate.price && shippingRate.service
-                          ? 'bg-green-600 text-white hover:bg-green-700'
-                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      }`}
-                    >
-                      Process Orders
-                    </button>
+                  <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+                    {sendToQueueError && (
+                      <p className="text-red-600 text-sm mb-3">{sendToQueueError}</p>
+                    )}
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={handleClose}
+                        disabled={sendToQueueLoading}
+                        className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors disabled:opacity-50"
+                      >
+                        Close
+                      </button>
+                      <button
+                        onClick={handleProcessOrdersClick}
+                        disabled={!shippingRate || !shippingRate.price || !shippingRate.service || sendToQueueLoading}
+                        className={`px-4 py-2 rounded-lg transition-colors ${
+                          shippingRate && shippingRate.price && shippingRate.service && !sendToQueueLoading
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        }`}
+                      >
+                        {sendToQueueLoading ? 'Sending…' : 'Send to queue'}
+                      </button>
+                    </div>
                   </div>
                 </Dialog.Panel>
               </Transition.Child>
@@ -260,12 +270,13 @@ export default function BulkOrderProcessDialog({
         onSave={handlePackageInfoSave}
       />
 
-      {/* Process Confirmation Dialog */}
+      {/* Send to queue confirmation (max 24 orders per packer batch) */}
       <ProcessDialog
         isOpen={isProcessDialogOpen}
         onClose={() => setIsProcessDialogOpen(false)}
         orderCount={group.totalOrders}
         onProceed={handleProcessProceed}
+        bulkChunkCount={Math.ceil(group.totalOrders / 24)}
       />
     </>
   )

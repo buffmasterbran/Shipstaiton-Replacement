@@ -13,9 +13,11 @@ const navItems: NavItem[] = [
   { name: 'All Orders', href: '/' },
   { name: 'Singles Orders', href: '/singles' },
   { name: 'Bulk Orders', href: '/bulk' },
+  { name: 'Bulk Verification', href: '/bulk-verification' },
   { name: 'Box Size Specific', href: '/box-size' },
   { name: 'Batches', href: '/batches' },
-  { name: 'Test Orders', href: '/test-orders' },
+  { name: 'ShipEngine Test', href: '/shipengine-test' },
+  { name: 'Shipstation Test', href: '/shipstation-test' },
   { name: 'Settings', href: '/settings' },
 ]
 

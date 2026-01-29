@@ -71,6 +71,8 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
   const [autoProcessThreshold, setAutoProcessThreshold] = useState<number>(2)
   const [isBatchPackageInfoDialogOpen, setIsBatchPackageInfoDialogOpen] = useState(false)
   const [sliderValue, setSliderValue] = useState<number>(2)
+  const [sendToQueueLoading, setSendToQueueLoading] = useState(false)
+  const [sendToQueueError, setSendToQueueError] = useState<string | null>(null)
 
   // Group orders by identical product combinations
   const bulkGroups = useMemo(() => {
@@ -327,17 +329,39 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
     }
   }, [])
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (!selectedGroup || !packageInfo) return
 
-    const labelInfo: LabelInfo = {
-      carrier: packageInfo.carrier,
-      service: packageInfo.service,
-      packaging: packageInfo.packaging,
-      weight: packageInfo.weight,
-      dimensions: packageInfo.dimensions,
+    setSendToQueueError(null)
+    setSendToQueueLoading(true)
+    try {
+      const res = await fetch('/api/bulk-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bulkGroupSignature: selectedGroup.signature,
+          orderNumbers: selectedGroup.orders.map((o) => o.log.orderNumber),
+          packageInfo: {
+            carrier: packageInfo.carrier,
+            service: packageInfo.service,
+            packaging: packageInfo.packaging,
+            weight: packageInfo.weight,
+            dimensions: packageInfo.dimensions,
+          },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to send to queue')
+      setIsBulkProcessDialogOpen(false)
+      setSelectedGroup(null)
+      setPackageInfo(null)
+      // Refresh would require router.refresh() or refetch - user can refresh page to see queue
+      if (typeof window !== 'undefined') window.alert(`Sent to queue: ${data.created} packer batch(es) created. Packers can verify and print from Bulk Verification.`)
+    } catch (e: any) {
+      setSendToQueueError(e?.message || 'Failed to send to queue')
+    } finally {
+      setSendToQueueLoading(false)
     }
-    generatePickListAndLabels(selectedGroup, labelInfo)
   }
 
   const generatePickListAndLabels = (group: BulkOrderGroup, labelInfo: LabelInfo) => {
@@ -1309,26 +1333,56 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
 
   const totalBulkOrders = bulkGroups.reduce((sum, group) => sum + group.totalOrders, 0)
 
-  const handleBatchProceed = (batchPackageInfo: Map<string, PackageInfo>) => {
-    // Process all batches with their respective package info
+  const handleBatchProceed = async (batchPackageInfo: Map<string, PackageInfo>) => {
     const batchLabels: Array<{ batch: BulkOrderBatch; group: BulkOrderGroup; labelInfo: LabelInfo }> = []
-    
     bulkOrderBatches.forEach(batch => {
       const info = batchPackageInfo.get(batch.id)
       const group = filteredBulkGroups.find(g => g.signature === batch.id)
       if (info && group) {
-        const labelInfo: LabelInfo = {
-          carrier: info.carrier,
-          service: info.service,
-          packaging: info.packaging,
-          weight: info.weight,
-          dimensions: info.dimensions,
-        }
-        batchLabels.push({ batch, group, labelInfo })
+        batchLabels.push({
+          batch,
+          group,
+          labelInfo: {
+            carrier: info.carrier,
+            service: info.service,
+            packaging: info.packaging,
+            weight: info.weight,
+            dimensions: info.dimensions,
+          },
+        })
       }
     })
-    
-    generatePickListAndLabelsForBatches(batchLabels)
+    setSendToQueueError(null)
+    setSendToQueueLoading(true)
+    try {
+      let totalCreated = 0
+      for (const { group, labelInfo } of batchLabels) {
+        const res = await fetch('/api/bulk-queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bulkGroupSignature: group.signature,
+            orderNumbers: group.orders.map((o) => o.log.orderNumber),
+            packageInfo: {
+              carrier: labelInfo.carrier,
+              service: labelInfo.service,
+              packaging: labelInfo.packaging,
+              weight: labelInfo.weight,
+              dimensions: labelInfo.dimensions,
+            },
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to send to queue')
+        totalCreated += data.created ?? 0
+      }
+      setIsBatchPackageInfoDialogOpen(false)
+      if (typeof window !== 'undefined') window.alert(`Sent to queue: ${totalCreated} packer batch(es) created. Packers can verify and print from Bulk Verification.`)
+    } catch (e: any) {
+      setSendToQueueError(e?.message || 'Failed to send to queue')
+    } finally {
+      setSendToQueueLoading(false)
+    }
   }
 
   return (
@@ -1540,11 +1594,14 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
         onClose={() => {
           setIsBulkProcessDialogOpen(false)
           setSelectedGroup(null)
+          setSendToQueueError(null)
         }}
         group={selectedGroup}
         onProceed={handleProceed}
         shippingRate={selectedGroup ? shippingRates.get(selectedGroup.signature) : undefined}
         onSavePackageInfo={handleSavePackageInfo}
+        sendToQueueLoading={sendToQueueLoading}
+        sendToQueueError={sendToQueueError}
       />
 
       <BatchPackageInfoDialog

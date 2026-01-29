@@ -1,6 +1,9 @@
 import type { Metadata } from 'next'
+import dynamic from 'next/dynamic'
 import './globals.css'
-import MainLayout from '@/components/MainLayout'
+
+// MainLayout uses usePathname(); load it only on client so navigation context is available (avoids useContext null during SSR)
+const MainLayout = dynamic(() => import('@/components/MainLayout'), { ssr: false })
 
 export const metadata: Metadata = {
   title: 'E-Com Batch Tool',

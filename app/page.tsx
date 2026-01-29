@@ -6,7 +6,7 @@ import OrdersTable from '@/components/OrdersTable'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-async function getOrderLogs() {
+async function getOrderLogs(): Promise<{ logs: Awaited<ReturnType<typeof prisma.orderLog.findMany>>; dbError: boolean }> {
   try {
     const logs = await prisma.orderLog.findMany({
       take: 50,
@@ -14,15 +14,15 @@ async function getOrderLogs() {
         createdAt: 'desc',
       },
     })
-    return logs
+    return { logs, dbError: false }
   } catch (error) {
     console.error('Error fetching order logs:', error)
-    return []
+    return { logs: [], dbError: true }
   }
 }
 
 export default async function AllOrdersPage() {
-  const logs = await getOrderLogs()
+  const { logs, dbError } = await getOrderLogs()
 
   return (
     <div>
@@ -35,6 +35,12 @@ export default async function AllOrdersPage() {
         </div>
         <RefreshButton />
       </div>
+
+      {dbError && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+          Can&apos;t reach database. Check your network or try again later. Showing empty list.
+        </div>
+      )}
 
       <OrdersTable logs={logs} />
 

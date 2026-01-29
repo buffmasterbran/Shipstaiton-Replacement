@@ -9,6 +9,8 @@ interface ProcessDialogProps {
   onClose: () => void
   orderCount: number
   onProceed: () => void
+  /** When set, this is a "Send to queue" confirmation for bulk (shows chunk message) */
+  bulkChunkCount?: number
 }
 
 export default function ProcessDialog({
@@ -16,11 +18,14 @@ export default function ProcessDialog({
   onClose,
   orderCount,
   onProceed,
+  bulkChunkCount,
 }: ProcessDialogProps) {
   const handleProceed = () => {
     onProceed()
     onClose()
   }
+
+  const isSendToQueue = bulkChunkCount != null
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
@@ -53,7 +58,7 @@ export default function ProcessDialog({
                 <div className="bg-gradient-to-r from-green-600 to-green-700 px-6 py-4">
                   <div className="flex items-center justify-between">
                     <Dialog.Title as="h3" className="text-xl font-bold text-white">
-                      Process {orderCount} Order{orderCount !== 1 ? 's' : ''}
+                      {isSendToQueue ? 'Send to queue' : `Process ${orderCount} Order${orderCount !== 1 ? 's' : ''}`}
                     </Dialog.Title>
                     <button
                       onClick={onClose}
@@ -67,9 +72,15 @@ export default function ProcessDialog({
                 {/* Content */}
                 <div className="p-6">
                   <div className="mb-6">
-                    <p className="text-gray-700 text-base leading-relaxed">
-                      By proceeding with this process, you will create labels in ShipEngine and set item fulfillment in NetSuite to shipped.
-                    </p>
+                    {isSendToQueue ? (
+                      <p className="text-gray-700 text-base leading-relaxed">
+                        This will send this bulk ({orderCount} orders) to the queue as <strong>{bulkChunkCount} packer batch(es)</strong> (max 24 orders each). Packers will verify items and print labels from <strong>Bulk Verification</strong>.
+                      </p>
+                    ) : (
+                      <p className="text-gray-700 text-base leading-relaxed">
+                        By proceeding with this process, you will create labels in ShipEngine and set item fulfillment in NetSuite to shipped.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -85,7 +96,7 @@ export default function ProcessDialog({
                     onClick={handleProceed}
                     className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                   >
-                    Proceed
+                    {isSendToQueue ? 'Send to queue' : 'Proceed'}
                   </button>
                 </div>
               </Dialog.Panel>

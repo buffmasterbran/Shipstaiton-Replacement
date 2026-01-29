@@ -21,6 +21,23 @@ model OrderLog {
   @@index([orderNumber])
 }
 
+// Packer batch = up to 24 orders. Admin sends bulk groups to queue as chunked BulkQueueItems.
+model BulkQueueItem {
+  id                 String   @id @default(cuid())
+  batchId            String?  @unique @map("batch_id") // Human-readable: "Bulk-000123" (6 digits = 1M capacity, numbers only)
+  bulkGroupSignature String   @map("bulk_group_signature")
+  chunkIndex         Int      @map("chunk_index")
+  totalChunks        Int      @map("total_chunks")
+  orderNumbers       Json     @map("order_numbers") // string[] - order numbers in this chunk (max 24)
+  packageInfo        Json     @map("package_info") // { carrier, service, packaging, weight, dimensions }
+  status             String   @default("PENDING")   // PENDING | COMPLETED
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("bulk_queue_items")
+  @@index([status])
+}
+
 
 
 

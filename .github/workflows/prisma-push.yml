@@ -1,0 +1,36 @@
+# Push Prisma schema to Supabase from GitHub's servers (avoids running db push from a blocked network).
+# Run manually from the Actions tab, or automatically on push to main.
+
+name: Prisma DB Push
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'prisma/schema.prisma'
+      - '.github/workflows/prisma-push.yml'
+  workflow_dispatch:  # "Run workflow" button in Actions tab
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Push schema to database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma db push
+        # If your repo has no DATABASE_URL secret yet:
+        # Repo → Settings → Secrets and variables → Actions → New repository secret
+        # Name: DATABASE_URL
+        # Value: postgresql://postgres:YOUR_PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require

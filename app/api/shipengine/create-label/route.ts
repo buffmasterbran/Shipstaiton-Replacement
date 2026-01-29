@@ -5,10 +5,12 @@ const SHIPENGINE_API_URL = 'https://api.shipengine.com/v1/labels'
 const SHIPENGINE_CARRIERS_URL = 'https://api.shipengine.com/v1/carriers'
 
 // Map our service codes to ShipEngine service codes
+// Note: If the service code is already in ShipEngine format, it will pass through
 const serviceCodeMap: { [key: string]: string } = {
   'usps_priority': 'usps_priority_mail',
   'usps_first_class': 'usps_first_class_mail',
   'usps_priority_mail_express': 'usps_priority_mail_express',
+  'usps_ground_advantage': 'usps_ground_advantage',
   'ups_ground': 'ups_ground',
   'ups_2nd_day_air': 'ups_2nd_day_air',
   'fedex_ground': 'fedex_ground',
@@ -46,7 +48,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Map service code to ShipEngine format
-    const mappedServiceCode = serviceCodeMap[body.serviceCode] || body.serviceCode || 'usps_priority_mail'
+    // If it's already a ShipEngine service code (contains underscore), use it directly
+    // Otherwise, try to map it
+    const mappedServiceCode = serviceCodeMap[body.serviceCode] || body.serviceCode || 'usps_ground_advantage'
 
     // Transform the request to ShipEngine format
     const shipEngineRequest: any = {
@@ -89,6 +93,14 @@ export async function POST(request: NextRequest) {
               unit: body.dimensions.unit || 'inch',
             },
             package_code: body.packageCode || 'package',
+            // Add label messages if provided (for USPS labels - appears at bottom)
+            ...(body.labelMessages && (body.labelMessages.reference1 || body.labelMessages.reference2 || body.labelMessages.reference3) ? {
+              label_messages: {
+                ...(body.labelMessages.reference1 && { reference1: body.labelMessages.reference1.substring(0, 60) }),
+                ...(body.labelMessages.reference2 && { reference2: body.labelMessages.reference2.substring(0, 60) }),
+                ...(body.labelMessages.reference3 && { reference3: body.labelMessages.reference3.substring(0, 60) }),
+              },
+            } : {}),
           },
         ],
         label_format: 'pdf',

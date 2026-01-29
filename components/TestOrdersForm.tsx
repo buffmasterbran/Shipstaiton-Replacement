@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface LabelResponse {
   label_id?: string
@@ -33,10 +33,19 @@ interface LabelResponse {
   message?: string
 }
 
+interface ShippingService {
+  service_code: string
+  service_name: string
+  carrier: string
+}
+
 export default function TestOrdersForm() {
   const [loading, setLoading] = useState(false)
   const [response, setResponse] = useState<LabelResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [services, setServices] = useState<ShippingService[]>([])
+  const [loadingServices, setLoadingServices] = useState(false)
+  const [servicesError, setServicesError] = useState<string | null>(null)
 
   // Default test order data for a single item order
   const [orderData, setOrderData] = useState({
@@ -74,7 +83,93 @@ export default function TestOrdersForm() {
     },
     serviceCode: 'usps_priority',
     packageCode: 'package',
+    labelMessages: {
+      reference1: 'PT16MK',
+      reference2: '',
+      reference3: '',
+    },
   })
+
+  // Fetch available services from ShipEngine
+  const fetchServices = async () => {
+    setLoadingServices(true)
+    setServicesError(null)
+    
+    try {
+      const res = await fetch('/api/shipengine/get-services', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        const errorMsg = data.error || 'Failed to fetch services'
+        // Show a more informative error message
+        setServicesError(`${errorMsg} (Using default services)`)
+        console.warn('Failed to fetch services from ShipEngine, using defaults:', data)
+        // Fallback to comprehensive default services if API fails
+        setServices([
+          { service_code: 'usps_ground_advantage', service_name: 'USPS Ground Advantage™', carrier: 'USPS' },
+          { service_code: 'usps_priority_mail', service_name: 'USPS Priority Mail', carrier: 'USPS' },
+          { service_code: 'usps_priority_mail_express', service_name: 'USPS Priority Mail Express', carrier: 'USPS' },
+          { service_code: 'usps_first_class_mail', service_name: 'USPS First Class Mail', carrier: 'USPS' },
+          { service_code: 'usps_parcel_select', service_name: 'USPS Parcel Select', carrier: 'USPS' },
+          { service_code: 'usps_media_mail', service_name: 'USPS Media Mail', carrier: 'USPS' },
+          { service_code: 'usps_priority_mail_express_hold_at_location', service_name: 'USPS Priority Mail Express Hold at Location', carrier: 'USPS' },
+          { service_code: 'usps_priority_mail_hold_at_location', service_name: 'USPS Priority Mail Hold at Location', carrier: 'USPS' },
+        ])
+      } else {
+        const fetchedServices = data.services || []
+        // Ensure USPS Ground Advantage is included if available
+        const hasGroundAdvantage = fetchedServices.some((s: ShippingService) => 
+          s.service_code === 'usps_ground_advantage' || s.service_name.toLowerCase().includes('ground advantage')
+        )
+        
+        if (!hasGroundAdvantage && fetchedServices.length > 0) {
+          // Add it if not present
+          fetchedServices.unshift({
+            service_code: 'usps_ground_advantage',
+            service_name: 'USPS Ground Advantage™',
+            carrier: 'USPS',
+          })
+        }
+        
+        setServices(fetchedServices.length > 0 ? fetchedServices : [
+          { service_code: 'usps_ground_advantage', service_name: 'USPS Ground Advantage™', carrier: 'USPS' },
+          { service_code: 'usps_priority_mail', service_name: 'USPS Priority Mail', carrier: 'USPS' },
+        ])
+        
+        // Set default service code if current one is not in the list
+        if (fetchedServices.length > 0 && !fetchedServices.find((s: ShippingService) => s.service_code === orderData.serviceCode)) {
+          setOrderData({ ...orderData, serviceCode: fetchedServices[0].service_code })
+        }
+      }
+    } catch (err: any) {
+      setServicesError(err.message || 'An error occurred while fetching services')
+      // Fallback to comprehensive default services
+      setServices([
+        { service_code: 'usps_ground_advantage', service_name: 'USPS Ground Advantage™', carrier: 'USPS' },
+        { service_code: 'usps_priority_mail', service_name: 'USPS Priority Mail', carrier: 'USPS' },
+        { service_code: 'usps_priority_mail_express', service_name: 'USPS Priority Mail Express', carrier: 'USPS' },
+        { service_code: 'usps_first_class_mail', service_name: 'USPS First Class Mail', carrier: 'USPS' },
+        { service_code: 'usps_parcel_select', service_name: 'USPS Parcel Select', carrier: 'USPS' },
+        { service_code: 'usps_media_mail', service_name: 'USPS Media Mail', carrier: 'USPS' },
+      ])
+    } finally {
+      setLoadingServices(false)
+    }
+  }
+
+  // Fetch services on mount (but don't show error if it fails - fallback is fine)
+  useEffect(() => {
+    fetchServices().catch(() => {
+      // Silently handle - fallback services are already set
+    })
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -267,18 +362,42 @@ export default function TestOrdersForm() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Service Code</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-700">Service Code</label>
+                  <button
+                    type="button"
+                    onClick={fetchServices}
+                    disabled={loadingServices}
+                    className="text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+                  >
+                    {loadingServices ? 'Loading...' : '🔄 Refresh'}
+                  </button>
+                </div>
+                {servicesError && (
+                  <div className="mb-1">
+                    <p className="text-xs text-yellow-600 mb-1">
+                      ⚠️ {servicesError}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Note: Rate shopping may require carrier setup. Default USPS services are available.
+                    </p>
+                  </div>
+                )}
                 <select
                   value={orderData.serviceCode}
                   onChange={(e) => setOrderData({ ...orderData, serviceCode: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                  disabled={loadingServices || services.length === 0}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
                 >
-                  <option value="usps_priority">USPS Priority Mail</option>
-                  <option value="usps_first_class">USPS First Class Mail</option>
-                  <option value="usps_priority_mail_express">USPS Priority Mail Express</option>
-                  <option value="ups_ground">UPS Ground</option>
-                  <option value="ups_2nd_day_air">UPS 2nd Day Air</option>
-                  <option value="fedex_ground">FedEx Ground</option>
+                  {services.length === 0 ? (
+                    <option value="">Loading services...</option>
+                  ) : (
+                    services.map((service) => (
+                      <option key={service.service_code} value={service.service_code}>
+                        {service.carrier} - {service.service_name}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
               <div>
@@ -328,6 +447,59 @@ export default function TestOrdersForm() {
             </div>
           </div>
 
+          {/* Label Messages (Custom Text for Bottom of Label) */}
+          <div className="border-b border-gray-200 pb-4">
+            <h3 className="text-md font-medium text-gray-700 mb-3">Label Messages (Bottom Section)</h3>
+            <p className="text-xs text-gray-500 mb-3">USPS supports up to 3 custom messages (60 characters each) that appear at the bottom of the label</p>
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reference 1 (e.g., SKU/Product Code)</label>
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={orderData.labelMessages.reference1}
+                  onChange={(e) => setOrderData({ 
+                    ...orderData, 
+                    labelMessages: { ...orderData.labelMessages, reference1: e.target.value } 
+                  })}
+                  placeholder="PT16MK"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">{orderData.labelMessages.reference1.length}/60 characters</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reference 2 (e.g., Invoice #)</label>
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={orderData.labelMessages.reference2}
+                  onChange={(e) => setOrderData({ 
+                    ...orderData, 
+                    labelMessages: { ...orderData.labelMessages, reference2: e.target.value } 
+                  })}
+                  placeholder="Invoice #12345"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">{orderData.labelMessages.reference2.length}/60 characters</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reference 3 (e.g., PO #)</label>
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={orderData.labelMessages.reference3}
+                  onChange={(e) => setOrderData({ 
+                    ...orderData, 
+                    labelMessages: { ...orderData.labelMessages, reference3: e.target.value } 
+                  })}
+                  placeholder="PO #67890"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">{orderData.labelMessages.reference3.length}/60 characters</p>
+              </div>
+            </div>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -351,6 +523,18 @@ export default function TestOrdersForm() {
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded">
               <p className="text-red-800 font-medium">{error}</p>
+            </div>
+          )}
+          {response?.label_download?.pdf && (
+            <div className="mb-4">
+              <a
+                href={response.label_download.pdf}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
+              >
+                📄 Open Label PDF in New Tab
+              </a>
             </div>
           )}
           <pre className="bg-gray-50 p-4 rounded-lg overflow-auto text-sm">
