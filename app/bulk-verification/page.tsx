@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRole } from '@/context/RoleContext'
 import BulkVerificationDialog from '@/components/BulkVerificationDialog'
 
 const MAX_ORDERS_PER_CHUNK = 24
@@ -25,11 +26,15 @@ interface BulkQueueItem {
 }
 
 export default function BulkVerificationPage() {
+  const { role } = useRole()
+  const isAdmin = role === 'admin'
   const [items, setItems] = useState<BulkQueueItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [releasingId, setReleasingId] = useState<string | null>(null)
+  const [releasingAll, setReleasingAll] = useState(false)
 
   const fetchItems = async () => {
     setLoading(true)
@@ -64,12 +69,60 @@ export default function BulkVerificationPage() {
     fetchItems()
   }
 
+  const handleReleaseOne = async (item: BulkQueueItem) => {
+    if (!isAdmin) return
+    if (!window.confirm(`Release batch ${item.batchId ?? item.id} from the queue? Those orders will show as "Ready to process" on Bulk Orders again.`)) return
+    setReleasingId(item.id)
+    try {
+      const res = await fetch(`/api/bulk-queue/${item.id}`, { method: 'DELETE' })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(data.error || 'Failed to release')
+      fetchItems()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to release')
+    } finally {
+      setReleasingId(null)
+    }
+  }
+
+  const handleReleaseAll = async () => {
+    if (!isAdmin) return
+    if (!window.confirm(`Release all ${items.length} pending batch(es) from the queue? All orders will show as "Ready to process" on Bulk Orders again. Use this at night so you can re-process in the morning with any new orders.`)) return
+    setReleasingAll(true)
+    try {
+      const res = await fetch('/api/bulk-queue', { method: 'DELETE' })
+      const data = (await res.json()) as { error?: string; deleted?: number }
+      if (!res.ok) throw new Error(data.error || 'Failed to release all')
+      fetchItems()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to release all')
+    } finally {
+      setReleasingAll(false)
+    }
+  }
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Bulk Verification</h1>
       <p className="text-gray-600 mb-6">
         List of bulk packer batches (max {MAX_ORDERS_PER_CHUNK} orders each) sent by Admin. Verify items and print labels.
       </p>
+
+      {isAdmin && items.length > 0 && (
+        <div className="mb-4 flex items-center gap-4">
+          <button
+            type="button"
+            onClick={handleReleaseAll}
+            disabled={releasingAll}
+            className="px-4 py-2 border border-amber-600 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors disabled:opacity-50 text-sm font-medium"
+          >
+            {releasingAll ? 'Releasing…' : 'Release all pending (back to Bulk Orders)'}
+          </button>
+          <span className="text-sm text-gray-500">
+            Use at night to release unshipped batches so you can re-process in the morning with new orders.
+          </span>
+        </div>
+      )}
 
       {loading && <p className="text-gray-500">Loading…</p>}
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
@@ -131,12 +184,25 @@ export default function BulkVerificationPage() {
                       {pkg.carrier} {pkg.service}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button
-                        onClick={() => handleStartBulk(item.id)}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                      >
-                        Start bulk
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleStartBulk(item.id)}
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          Start bulk
+                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleReleaseOne(item)}
+                            disabled={releasingId === item.id}
+                            className="px-4 py-2 border border-amber-600 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors disabled:opacity-50"
+                            title="Release this batch from queue (orders go back to Bulk Orders)"
+                          >
+                            {releasingId === item.id ? 'Releasing…' : 'Release'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )

@@ -1,19 +1,24 @@
 'use client'
 
 import { useState } from 'react'
+import type { UserRole } from './MainLayout'
 
 interface HeaderProps {
+  role: UserRole
+  setRole: (role: UserRole) => void
   onProcessClick?: () => void
   processButtonText?: string
   showProcessButton?: boolean
   processButtonDisabled?: boolean
 }
 
-export default function Header({ 
-  onProcessClick, 
+export default function Header({
+  role,
+  setRole,
+  onProcessClick,
   processButtonText = 'Process',
   showProcessButton = false,
-  processButtonDisabled = false
+  processButtonDisabled = false,
 }: HeaderProps) {
   const [dateRange, setDateRange] = useState('')
 
@@ -43,9 +48,32 @@ export default function Header({
         </svg>
       </div>
 
-      {/* Right Side */}
-      <div className="flex items-center gap-4">
-        <span className="text-gray-700">Welcome, Brandegee C Pierce</span>
+      {/* Right Side: Role + Welcome + Process */}
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-600">View as:</span>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="role"
+              checked={role === 'admin'}
+              onChange={() => setRole('admin')}
+              className="w-4 h-4 text-green-600 focus:ring-green-500"
+            />
+            <span className="text-sm text-gray-700">Admin</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="role"
+              checked={role === 'operator'}
+              onChange={() => setRole('operator')}
+              className="w-4 h-4 text-green-600 focus:ring-green-500"
+            />
+            <span className="text-sm text-gray-700">Operator</span>
+          </label>
+        </div>
+        <span className="text-gray-700 border-l border-gray-200 pl-4">Welcome, Brandegee C Pierce</span>
         {showProcessButton && onProcessClick && (
           <button 
             onClick={onProcessClick}

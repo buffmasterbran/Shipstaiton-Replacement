@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import OrderDialog from './OrderDialog'
 import BulkOrderProcessDialog from './BulkOrderProcessDialog'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
@@ -16,8 +17,12 @@ interface OrderLog {
   updatedAt: Date
 }
 
+export type QueueStatusBySignature = Record<string, 'pending' | 'in_queue' | 'completed'>
+
 interface BulkOrdersTableProps {
   orders: OrderLog[]
+  /** Status per bulk group signature: pending = not sent, in_queue = has PENDING batches, completed = all COMPLETED */
+  queueStatusBySignature?: QueueStatusBySignature
 }
 
 interface BulkOrderGroup {
@@ -56,7 +61,9 @@ interface LabelInfo {
   }
 }
 
-export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
+type StatusFilter = 'all' | 'pending' | 'shipped'
+
+export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }: BulkOrdersTableProps) {
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkProcessDialogOpen, setIsBulkProcessDialogOpen] = useState(false)
@@ -73,6 +80,8 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
   const [sliderValue, setSliderValue] = useState<number>(2)
   const [sendToQueueLoading, setSendToQueueLoading] = useState(false)
   const [sendToQueueError, setSendToQueueError] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending')
+  const router = useRouter()
 
   // Group orders by identical product combinations
   const bulkGroups = useMemo(() => {
@@ -144,6 +153,23 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
     if (!autoProcessEnabled) return bulkGroups
     return bulkGroups.filter(group => group.totalOrders > autoProcessThreshold)
   }, [bulkGroups, autoProcessEnabled, autoProcessThreshold])
+
+  // Get queue status for a group (pending = not sent, in_queue = has PENDING batches, completed = all COMPLETED)
+  const getGroupStatus = (signature: string): 'pending' | 'in_queue' | 'completed' =>
+    queueStatusBySignature[signature] ?? 'pending'
+
+  // Filter by status: pending = not sent or in queue, shipped = all batches completed
+  const displayGroups = useMemo(() => {
+    const list = autoProcessEnabled ? filteredBulkGroups : sliderFilteredGroups
+    if (statusFilter === 'all') return list
+    if (statusFilter === 'pending') {
+      return list.filter(g => {
+        const s = queueStatusBySignature[g.signature] ?? 'pending'
+        return s === 'pending' || s === 'in_queue'
+      })
+    }
+    return list.filter(g => (queueStatusBySignature[g.signature] ?? 'pending') === 'completed')
+  }, [autoProcessEnabled, filteredBulkGroups, sliderFilteredGroups, statusFilter, queueStatusBySignature])
 
   // Convert bulk groups to batches for BatchPackageInfoDialog
   interface BulkOrderBatch {
@@ -355,7 +381,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
       setIsBulkProcessDialogOpen(false)
       setSelectedGroup(null)
       setPackageInfo(null)
-      // Refresh would require router.refresh() or refetch - user can refresh page to see queue
+      router.refresh()
       if (typeof window !== 'undefined') window.alert(`Sent to queue: ${data.created} packer batch(es) created. Packers can verify and print from Bulk Verification.`)
     } catch (e: any) {
       setSendToQueueError(e?.message || 'Failed to send to queue')
@@ -1377,6 +1403,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
         totalCreated += data.created ?? 0
       }
       setIsBatchPackageInfoDialogOpen(false)
+      router.refresh()
       if (typeof window !== 'undefined') window.alert(`Sent to queue: ${totalCreated} packer batch(es) created. Packers can verify and print from Bulk Verification.`)
     } catch (e: any) {
       setSendToQueueError(e?.message || 'Failed to send to queue')
@@ -1387,6 +1414,43 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
 
   return (
     <>
+      {/* Status filter: Pending shipment / Shipped */}
+      <div className="mb-4 bg-white rounded-lg shadow p-4">
+        <div className="flex flex-wrap items-center gap-6">
+          <span className="text-sm font-medium text-gray-700">Status:</span>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="statusFilter"
+              checked={statusFilter === 'pending'}
+              onChange={() => setStatusFilter('pending')}
+              className="w-4 h-4 text-green-600 focus:ring-green-500"
+            />
+            <span className="text-sm text-gray-700">Pending shipment</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="statusFilter"
+              checked={statusFilter === 'shipped'}
+              onChange={() => setStatusFilter('shipped')}
+              className="w-4 h-4 text-green-600 focus:ring-green-500"
+            />
+            <span className="text-sm text-gray-700">Shipped</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="statusFilter"
+              checked={statusFilter === 'all'}
+              onChange={() => setStatusFilter('all')}
+              className="w-4 h-4 text-green-600 focus:ring-green-500"
+            />
+            <span className="text-sm text-gray-700">All</span>
+          </label>
+        </div>
+      </div>
+
       {/* Auto Process Section */}
       <div className="mb-4 bg-white rounded-lg shadow p-4">
         <div className="flex items-center justify-between gap-4">
@@ -1442,16 +1506,10 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold text-gray-900">
-            Bulk Order Total: {autoProcessEnabled ? filteredBulkGroups.reduce((sum, g) => sum + g.totalOrders, 0) : sliderFilteredGroups.reduce((sum, g) => sum + g.totalOrders, 0)}+
-            {autoProcessEnabled ? (
-              <span className="ml-2 text-sm font-normal text-gray-500">
-                ({filteredBulkGroups.length} group{filteredBulkGroups.length !== 1 ? 's' : ''} above threshold)
-              </span>
-            ) : (
-              <span className="ml-2 text-sm font-normal text-gray-500">
-                ({sliderFilteredGroups.length} group{sliderFilteredGroups.length !== 1 ? 's' : ''} with {sliderValue}+ orders)
-              </span>
-            )}
+            Bulk Order Total: {displayGroups.reduce((sum, g) => sum + g.totalOrders, 0)}+
+            <span className="ml-2 text-sm font-normal text-gray-500">
+              ({displayGroups.length} group{displayGroups.length !== 1 ? 's' : ''} shown)
+            </span>
           </h2>
         </div>
         <div className="relative">
@@ -1517,6 +1575,9 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                   Orders
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Shipping Service
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1525,8 +1586,21 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {(autoProcessEnabled ? filteredBulkGroups : sliderFilteredGroups).map((group, index) => {
+              {displayGroups.map((group, index) => {
                 const rate = shippingRates.get(group.signature)
+                const queueStatus = getGroupStatus(group.signature)
+                const statusLabel =
+                  queueStatus === 'pending'
+                    ? 'Ready to process'
+                    : queueStatus === 'in_queue'
+                      ? 'Processed (in queue)'
+                      : 'Shipped'
+                const statusBadge =
+                  queueStatus === 'pending'
+                    ? 'bg-amber-100 text-amber-800'
+                    : queueStatus === 'in_queue'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-gray-100 text-gray-700'
                 return (
                   <tr
                     key={group.signature}
@@ -1557,6 +1631,11 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge}`}>
+                        {statusLabel}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         {rate && rate.service && rate.price ? (
                           <div className="w-3 h-3 bg-green-500 rounded-full" title={rate.service} />
@@ -1566,15 +1645,23 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleProcessClick(group)
-                        }}
-                        className="px-4 py-2 rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
-                      >
-                        Process Orders
-                      </button>
+                      {queueStatus === 'pending' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleProcessClick(group)
+                          }}
+                          className="px-4 py-2 rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
+                        >
+                          Process Orders
+                        </button>
+                      )}
+                      {queueStatus === 'in_queue' && (
+                        <span className="text-sm text-blue-600 font-medium">In Bulk Verification</span>
+                      )}
+                      {queueStatus === 'completed' && (
+                        <span className="text-sm text-gray-600">Shipped</span>
+                      )}
                     </td>
                   </tr>
                 )

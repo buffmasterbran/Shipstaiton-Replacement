@@ -38,8 +38,8 @@ export async function POST(request: NextRequest) {
 
     const totalChunks = chunks.length
 
-    // Get unique batch numbers from sequence (6 digits = 1M capacity, numbers only). If sequence doesn't exist yet, skip batchId.
-    let batchIds: string[] = []
+    // Get unique batch numbers from sequence (6 digits = 1M capacity). If sequence doesn't exist, batchId stays null.
+    let batchIds: (string | null)[] = []
     try {
       const seqResult = await prisma.$queryRaw<{ nextval: bigint }[]>`
         SELECT nextval('bulk_batch_seq') FROM generate_series(1, ${totalChunks})
@@ -48,32 +48,58 @@ export async function POST(request: NextRequest) {
         (row) => 'Bulk-' + String(Number(row.nextval)).padStart(6, '0')
       )
     } catch (_) {
-      // Sequence or column may not exist yet; run prisma/add-batch-id.sql in Supabase to enable batch IDs
+      batchIds = chunks.map(() => null)
     }
 
-    const created = await prisma.bulkQueueItem.createMany({
-      data: chunks.map((orders, chunkIndex) => ({
-        ...(batchIds[chunkIndex] && { batchId: batchIds[chunkIndex] }),
-        bulkGroupSignature,
-        chunkIndex,
-        totalChunks,
-        orderNumbers: orders,
-        packageInfo,
-        status: 'PENDING',
-      })),
-    })
+    // Create one record per chunk (createMany can reject optional batchId in some Prisma versions)
+    let created = 0
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const batchId = batchIds[chunkIndex] ?? null
+      await prisma.bulkQueueItem.create({
+        data: {
+          ...(batchId && { batchId }),
+          bulkGroupSignature,
+          chunkIndex,
+          totalChunks,
+          orderNumbers: chunks[chunkIndex],
+          packageInfo,
+          status: 'PENDING',
+        },
+      })
+      created++
+    }
 
     return NextResponse.json({
       success: true,
-      created: created.count,
+      created,
       totalChunks,
-      batchIds: batchIds.slice(0, created.count),
-      message: `Created ${created.count} packer batch(es) (max ${MAX_ORDERS_PER_CHUNK} orders each)`,
+      batchIds: batchIds.filter(Boolean) as string[],
+      message: `Created ${created} packer batch(es) (max ${MAX_ORDERS_PER_CHUNK} orders each)`,
     })
   } catch (error: any) {
     console.error('Error creating bulk queue items:', error)
     return NextResponse.json(
       { error: 'Failed to create queue items', details: error?.message },
+      { status: 500 }
+    )
+  }
+}
+
+/** Delete all PENDING queue items (admin). Releases everything back so Bulk Orders can re-process (e.g. after adding overnight orders). */
+export async function DELETE(request: NextRequest) {
+  try {
+    const result = await prisma.bulkQueueItem.deleteMany({
+      where: { status: 'PENDING' },
+    })
+    return NextResponse.json({
+      success: true,
+      deleted: result.count,
+      message: `Released ${result.count} batch(es) from queue. Orders are back on Bulk Orders.`,
+    })
+  } catch (error: any) {
+    console.error('Error releasing queue:', error)
+    return NextResponse.json(
+      { error: 'Failed to release queue', details: error?.message },
       { status: 500 }
     )
   }

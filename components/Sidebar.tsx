@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
+import type { UserRole } from './MainLayout'
 
 interface NavItem {
   name: string
@@ -21,8 +22,14 @@ const navItems: NavItem[] = [
   { name: 'Settings', href: '/settings' },
 ]
 
-export default function Sidebar() {
+const OPERATOR_NAV_HREF = '/bulk-verification'
+
+export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
+
+  const visibleNavItems = role === 'operator'
+    ? navItems.filter((item) => item.href === OPERATOR_NAV_HREF)
+    : navItems
 
   return (
     <div className="w-64 bg-gray-900 text-white min-h-screen flex flex-col">
@@ -34,7 +41,7 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 p-4">
         <ul className="space-y-2">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = pathname === item.href || (item.href === '/' && pathname === '/')
             return (
               <li key={item.href}>
