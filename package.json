@@ -12,7 +12,10 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "generate:secret": "node scripts/generate-api-secret.js",
-    "test:api": "node scripts/test-api.js"
+    "test:api": "node scripts/test-api.js",
+    "test:db": "node scripts/test-db-connection.js",
+    "deploy": "npx vercel",
+    "deploy:prod": "npx vercel --prod"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",

@@ -6,7 +6,11 @@ import OrdersTable from '@/components/OrdersTable'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-async function getOrderLogs(): Promise<{ logs: Awaited<ReturnType<typeof prisma.orderLog.findMany>>; dbError: boolean }> {
+async function getOrderLogs(): Promise<{
+  logs: Awaited<ReturnType<typeof prisma.orderLog.findMany>>
+  dbError: boolean
+  errorMessage?: string
+}> {
   try {
     const logs = await prisma.orderLog.findMany({
       take: 50,
@@ -15,14 +19,15 @@ async function getOrderLogs(): Promise<{ logs: Awaited<ReturnType<typeof prisma.
       },
     })
     return { logs, dbError: false }
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
     console.error('Error fetching order logs:', error)
-    return { logs: [], dbError: true }
+    return { logs: [], dbError: true, errorMessage: message }
   }
 }
 
 export default async function AllOrdersPage() {
-  const { logs, dbError } = await getOrderLogs()
+  const { logs, dbError, errorMessage } = await getOrderLogs()
 
   return (
     <div>
@@ -38,7 +43,10 @@ export default async function AllOrdersPage() {
 
       {dbError && (
         <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
-          Can&apos;t reach database. Check your network or try again later. Showing empty list.
+          <p className="font-medium">Can&apos;t reach database. Showing empty list.</p>
+          {errorMessage && (
+            <p className="mt-2 text-xs font-mono break-all">{errorMessage}</p>
+          )}
         </div>
       )}
 
