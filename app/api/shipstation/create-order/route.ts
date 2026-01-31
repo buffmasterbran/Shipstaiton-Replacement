@@ -132,11 +132,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       return NextResponse.json(
-        {
-          error: data.message || data.errors?.[0]?.errorMessage || 'Failed to create order',
-          request: shipstationOrder,
-          response: data,
-        },
+        { error: data.message || data.errors?.[0]?.errorMessage || 'Failed to create order' },
         { status: response.status }
       )
     }

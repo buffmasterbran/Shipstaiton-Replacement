@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY || 'TEST_uhYzVt5jrvjfnn5hvcfI06gaVIU4tKpl6b7rZwRrVSs'
+const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY
 const SHIPENGINE_RATES_URL = 'https://api.shipengine.com/v1/rates'
 const SHIPENGINE_CARRIERS_URL = 'https://api.shipengine.com/v1/carriers'
 
 export async function POST(request: NextRequest) {
   try {
+    if (!SHIPENGINE_API_KEY) {
+      return NextResponse.json(
+        { error: 'ShipEngine API key not configured' },
+        { status: 500 }
+      )
+    }
+
     const body = await request.json()
 
     // First, try to get services from carriers endpoint (more reliable)
@@ -119,11 +126,7 @@ export async function POST(request: NextRequest) {
         `Failed to fetch services (Status: ${response.status})`
       
       return NextResponse.json(
-        {
-          error: errorMessage,
-          details: data.errors || data,
-          response: data,
-        },
+        { error: errorMessage },
         { status: response.status }
       )
     }

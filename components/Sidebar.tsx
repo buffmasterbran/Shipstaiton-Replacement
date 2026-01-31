@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { useState, useEffect } from 'react'
 import type { UserRole } from './MainLayout'
 
 interface NavItem {
@@ -34,6 +35,27 @@ const navItems: NavItem[] = [
 
 export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
+  const [expeditedCount, setExpeditedCount] = useState(0)
+
+  // Fetch expedited order count
+  useEffect(() => {
+    async function fetchExpeditedCount() {
+      try {
+        const res = await fetch('/api/orders/expedited-count')
+        if (res.ok) {
+          const data = await res.json()
+          setExpeditedCount(data.count || 0)
+        }
+      } catch (error) {
+        console.error('Failed to fetch expedited count:', error)
+      }
+    }
+
+    fetchExpeditedCount()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchExpeditedCount, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   const visibleNavItems = role === 'operator'
     ? navItems.filter((item) => item.access === 'operator')
@@ -51,9 +73,19 @@ export default function Sidebar({ role }: { role: UserRole }) {
         <ul className="space-y-2">
           {visibleNavItems.map((item) => {
             const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
-            const className = `block px-4 py-3 rounded-lg transition-colors ${
-              isActive ? 'bg-green-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            }`
+            const isExpedited = item.href === '/expedited'
+            const hasExpeditedOrders = isExpedited && expeditedCount > 0
+            
+            // Bright red background when there are expedited orders (unless currently on that page)
+            let className = 'block px-4 py-3 rounded-lg transition-colors '
+            if (isActive) {
+              className += 'bg-green-600 text-white'
+            } else if (hasExpeditedOrders) {
+              className += 'bg-[#ff0000] text-white font-bold hover:bg-red-700'
+            } else {
+              className += 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            }
+            
             return (
               <li key={item.externalHref ?? item.href}>
                 {item.externalHref ? (
@@ -68,6 +100,11 @@ export default function Sidebar({ role }: { role: UserRole }) {
                 ) : (
                   <Link href={item.href} className={className}>
                     {item.name}
+                    {hasExpeditedOrders && (
+                      <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-red-600 rounded-full">
+                        {expeditedCount}
+                      </span>
+                    )}
                   </Link>
                 )}
               </li>

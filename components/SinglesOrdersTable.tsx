@@ -6,6 +6,7 @@ import ProcessDialog from './ProcessDialog'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
+import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
   id: string
@@ -59,6 +60,7 @@ interface LabelInfo {
 }
 
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
+  const { expeditedOnly } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isProcessDialogOpen, setIsProcessDialogOpen] = useState(false)
@@ -130,6 +132,14 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   // Filter orders
   const filteredOrders = useMemo(() => {
     return processedOrders.filter((order) => {
+      // Global expedited filter
+      if (expeditedOnly) {
+        const customerReachedOut = (order.log as any).customerReachedOut || false
+        if (!isOrderExpedited(order.log.rawPayload, customerReachedOut)) {
+          return false
+        }
+      }
+      
       // Size filter
       if (selectedSize !== 'all' && order.size !== selectedSize) {
         return false
@@ -158,7 +168,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       
       return true
     })
-  }, [processedOrders, selectedSize, selectedColor, searchQuery])
+  }, [processedOrders, selectedSize, selectedColor, searchQuery, expeditedOnly])
 
   // Group orders for auto-processing
   interface OrderBatch {

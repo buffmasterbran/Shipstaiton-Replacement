@@ -9,16 +9,18 @@ datasource db {
 }
 
 model OrderLog {
-  id          String   @id @default(cuid())
-  orderNumber String   @map("order_number")
-  status      String   @default("RECEIVED")
-  rawPayload  Json     @map("raw_payload")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id                  String   @id @default(cuid())
+  orderNumber         String   @map("order_number")
+  status              String   @default("RECEIVED")
+  rawPayload          Json     @map("raw_payload")
+  customerReachedOut  Boolean  @default(false) @map("customer_reached_out")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   @@map("order_logs")
   @@index([createdAt])
   @@index([orderNumber])
+  @@index([customerReachedOut])
 }
 
 // Packer batch = up to 24 orders. Admin sends bulk groups to queue as chunked BulkQueueItems.
@@ -38,6 +40,15 @@ model BulkQueueItem {
   @@index([status])
 }
 
+// Key-value app settings (order highlight rules, future settings).
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}
 
 
 

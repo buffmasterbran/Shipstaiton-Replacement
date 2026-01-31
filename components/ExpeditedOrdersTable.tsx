@@ -2,44 +2,42 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
-import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
 
-type SortKey = 'orderNumber' | 'customer' | 'items' | 'amount' | 'orderDate' | 'received' | 'status'
-type SortDir = 'asc' | 'desc'
-type OrderTypeFilter = 'all' | 'single' | 'bulk' | 'box' | 'batched' | 'uncategorized'
-
-const ORDER_TYPE_TABS: { key: OrderTypeFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'single', label: 'Single' },
-  { key: 'bulk', label: 'Bulk' },
-  { key: 'box', label: 'Box' },
-  { key: 'batched', label: 'Batched' },
-  { key: 'uncategorized', label: 'Uncategorized' },
+// Expedited shipping methods to filter for
+const EXPEDITED_SHIPPING_METHODS = [
+  'ups next day',
+  'ups next day air',
+  'ups 2nd day',
+  'ups 2nd day air',
+  'ups 2 day',
+  'ups 2 day air',
+  'ups 3 day',
+  'ups 3 day select',
+  'next day',
+  '2nd day',
+  '2 day',
+  '3 day',
+  // Add more variations as needed
 ]
+
+type SortKey = 'orderNumber' | 'customer' | 'shippingMethod' | 'amount' | 'orderDate' | 'received' | 'customerReachedOut' | 'status'
+type SortDir = 'asc' | 'desc'
 
 interface OrderLog {
   id: string
   orderNumber: string
   status: string
   rawPayload: any
-  customerReachedOut?: boolean
+  customerReachedOut: boolean
   createdAt: Date
   updatedAt: Date
 }
 
-/** Same shape as lib/settings OrderHighlightSettings (passed from server). */
-interface OrderHighlightSettings {
-  orangeMinDays: number
-  orangeMaxDays: number
-  redMinDays: number
-}
-
-interface OrdersTableProps {
+interface ExpeditedOrdersTableProps {
   logs: OrderLog[]
-  orderHighlightSettings?: OrderHighlightSettings | null
 }
 
 function formatCurrency(amount: number | string) {
@@ -49,32 +47,8 @@ function formatCurrency(amount: number | string) {
   }).format(Number(amount))
 }
 
-/** Normalize to local calendar date (midnight) so "days old" is consistent regardless of UTC vs local parsing. */
 function toCalendarDate(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
-}
-
-/** Days between order date and today (floor). Uses orderDate or createdAt. Calendar-day based so sort-by-date gives blocks. */
-function getDaysOld(log: OrderLog): number {
-  const payload = log.rawPayload as any
-  const order = Array.isArray(payload) ? payload[0] : payload
-  const raw = order?.orderDate ? new Date(order.orderDate) : new Date(log.createdAt)
-  const orderDate = toCalendarDate(raw)
-  const today = toCalendarDate(new Date())
-  const diffMs = today.getTime() - orderDate.getTime()
-  return Math.floor(diffMs / 86400000)
-}
-
-/** Row color = age only (so sort-by-date gives clear red / orange / white blocks). Red = 6+ days, Orange = 3–6 days. */
-function getOrderHighlightType(
-  log: OrderLog,
-  settings: OrderHighlightSettings | null | undefined
-): 'red' | 'orange' | null {
-  if (!settings) return null
-  const days = getDaysOld(log)
-  if (days >= settings.redMinDays) return 'red'
-  if (days > settings.orangeMinDays && days <= settings.orangeMaxDays) return 'orange'
-  return null
 }
 
 function getOrderDate(log: OrderLog): Date {
@@ -102,69 +76,48 @@ function getAmount(log: OrderLog): number {
   return typeof order?.amountPaid === 'number' ? order.amountPaid : 0
 }
 
-/** Categorize order type based on items, shipping, etc. Adjust logic as needed. */
-function getOrderType(log: OrderLog): OrderTypeFilter {
+function getShippingMethod(log: OrderLog): string {
   const payload = log.rawPayload as any
   const order = Array.isArray(payload) ? payload[0] : payload
-  const items = order?.items || []
-  const totalQty = items.reduce((sum: number, item: any) => sum + (item.quantity || 1), 0)
-  const shippingMethod = (order?.requestedShippingService || order?.shippingMethod || '').toLowerCase()
-  
-  // Check if batched (has batchId or batch info)
-  if (order?.batchId || order?.batch || log.status?.toUpperCase().includes('BATCH')) {
-    return 'batched'
-  }
-  
-  // Single = 1 item total quantity
-  if (totalQty === 1) {
-    return 'single'
-  }
-  
-  // Box = orders that need box packaging (2-5 items, or shipping method indicates box)
-  if (totalQty >= 2 && totalQty <= 5) {
-    return 'box'
-  }
-  
-  // Bulk = larger orders (6+ items)
-  if (totalQty >= 6) {
-    return 'bulk'
-  }
-  
-  // Uncategorized = anything else
-  return 'uncategorized'
+  return order?.requestedShippingService || order?.shippingMethod || order?.carrierCode || ''
 }
 
-export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
-  const { expeditedOnly } = useExpeditedFilter()
+function isExpeditedShipping(log: OrderLog): boolean {
+  const method = getShippingMethod(log).toLowerCase()
+  return EXPEDITED_SHIPPING_METHODS.some(exp => method.includes(exp))
+}
+
+export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps) {
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState<OrderTypeFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('orderDate')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  
+  // Local state for "customer reached out" toggles (in production, this would sync to API)
+  const [reachedOutOverrides, setReachedOutOverrides] = useState<Record<string, boolean>>({})
+
+  // Filter to only expedited shipping methods OR customer reached out
+  const expeditedLogs = useMemo(() => {
+    return logs.filter((log) => {
+      const isExpedited = isExpeditedShipping(log)
+      const reachedOut = reachedOutOverrides[log.id] ?? log.customerReachedOut
+      return isExpedited || reachedOut
+    })
+  }, [logs, reachedOutOverrides])
 
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    let list = logs
+    let list = expeditedLogs
     
-    // Filter by expedited (global toggle from header)
-    if (expeditedOnly) {
-      list = list.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
-    }
-    
-    // Filter by type
-    if (typeFilter !== 'all') {
-      list = list.filter((log) => getOrderType(log) === typeFilter)
-    }
-    
-    // Filter by search query
     if (q) {
       list = list.filter((log) => {
         const num = getOrderNumber(log).toLowerCase()
         const customer = getCustomerName(log).toLowerCase()
-        return num.includes(q) || customer.includes(q)
+        const shipping = getShippingMethod(log).toLowerCase()
+        return num.includes(q) || customer.includes(q) || shipping.includes(q)
       })
     }
     
@@ -177,16 +130,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         case 'customer':
           cmp = getCustomerName(a).localeCompare(getCustomerName(b))
           break
-        case 'items': {
-          const pa = (a.rawPayload as any)
-          const oa = Array.isArray(pa) ? pa[0] : pa
-          const pb = (b.rawPayload as any)
-          const ob = Array.isArray(pb) ? pb[0] : pb
-          const na = oa?.items?.length ?? 0
-          const nb = ob?.items?.length ?? 0
-          cmp = na - nb
+        case 'shippingMethod':
+          cmp = getShippingMethod(a).localeCompare(getShippingMethod(b))
           break
-        }
         case 'amount':
           cmp = getAmount(a) - getAmount(b)
           break
@@ -196,6 +142,12 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         case 'received':
           cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           break
+        case 'customerReachedOut': {
+          const ra = reachedOutOverrides[a.id] ?? a.customerReachedOut
+          const rb = reachedOutOverrides[b.id] ?? b.customerReachedOut
+          cmp = (ra ? 1 : 0) - (rb ? 1 : 0)
+          break
+        }
         case 'status':
           cmp = (a.status ?? '').localeCompare(b.status ?? '')
           break
@@ -204,29 +156,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [logs, expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
-  
-  // Count orders by type for tab badges
-  const typeCounts = useMemo(() => {
-    // Filter by expedited first if toggle is on
-    const baseList = expeditedOnly
-      ? logs.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
-      : logs
-    
-    const counts: Record<OrderTypeFilter, number> = {
-      all: baseList.length,
-      single: 0,
-      bulk: 0,
-      box: 0,
-      batched: 0,
-      uncategorized: 0,
-    }
-    baseList.forEach((log) => {
-      const t = getOrderType(log)
-      counts[t]++
-    })
-    return counts
-  }, [logs, expeditedOnly])
+  }, [expeditedLogs, searchQuery, sortKey, sortDir, reachedOutOverrides])
 
   const totalFiltered = filteredAndSortedLogs.length
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize))
@@ -237,7 +167,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   useEffect(() => {
     setPage(1)
-  }, [expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
+  }, [searchQuery, sortKey, sortDir])
 
   useEffect(() => {
     if (page > totalPages) setPage(1)
@@ -265,11 +195,55 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     setSelectedOrder(null)
   }
 
-  if (logs.length === 0) {
+  const toggleReachedOut = async (log: OrderLog, e: React.MouseEvent) => {
+    e.stopPropagation() // Don't open the row dialog
+    const currentValue = reachedOutOverrides[log.id] ?? log.customerReachedOut
+    const newValue = !currentValue
+    
+    // Optimistically update UI
+    setReachedOutOverrides((prev) => ({ ...prev, [log.id]: newValue }))
+    
+    try {
+      const res = await fetch('/api/orders/customer-reached-out', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: log.id, reachedOut: newValue }),
+      })
+      
+      if (!res.ok) {
+        throw new Error('API request failed')
+      }
+    } catch (error) {
+      console.error('Failed to update customer reached out status:', error)
+      // Revert on error
+      setReachedOutOverrides((prev) => ({ ...prev, [log.id]: currentValue }))
+    }
+  }
+
+  // Count stats
+  const stats = useMemo(() => {
+    let reachedOutCount = 0
+    expeditedLogs.forEach((log) => {
+      if (reachedOutOverrides[log.id] ?? log.customerReachedOut) {
+        reachedOutCount++
+      }
+    })
+    return {
+      total: expeditedLogs.length,
+      reachedOut: reachedOutCount,
+      expeditedShipping: expeditedLogs.length - reachedOutCount,
+    }
+  }, [expeditedLogs, reachedOutOverrides])
+
+  if (expeditedLogs.length === 0) {
     return (
       <div className="bg-white rounded shadow p-6 text-center">
-        <p className="text-gray-500">No order logs found</p>
-        <p className="text-gray-400 text-sm mt-1">Orders will appear once sent from NetSuite</p>
+        <p className="text-gray-500">No expedited orders found</p>
+        <p className="text-gray-400 text-sm mt-1">
+          Orders with UPS Next Day, 2 Day, or 3 Day shipping will appear here.
+          <br />
+          Orders marked as "Customer Reached Out" will also appear here.
+        </p>
       </div>
     )
   }
@@ -291,36 +265,28 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   return (
     <>
-      {/* Type filter tabs */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {ORDER_TYPE_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setTypeFilter(tab.key)}
-            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-              typeFilter === tab.key
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            {tab.label}
-            <span className={`ml-1.5 text-xs ${typeFilter === tab.key ? 'text-green-100' : 'text-gray-500'}`}>
-              {typeCounts[tab.key]}
-            </span>
-          </button>
-        ))}
+      {/* Stats badges */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+          Total: {stats.total}
+        </span>
+        <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-orange-100 text-orange-800">
+          Customer Reached Out: {stats.reachedOut}
+        </span>
+        <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
+          Expedited Shipping: {stats.expeditedShipping}
+        </span>
       </div>
 
-      {/* Compact toolbar: search + pagination in one row */}
+      {/* Toolbar */}
       <div className="mb-2 flex flex-wrap items-center gap-3">
         <input
-          id="orders-search"
+          id="expedited-search"
           type="search"
-          placeholder="Search order # or customer..."
+          placeholder="Search order #, customer, or shipping..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1 min-w-[180px] max-w-xs border border-gray-300 rounded px-2 py-1 text-sm placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500"
+          className="flex-1 min-w-[200px] max-w-md border border-gray-300 rounded px-2 py-1 text-sm placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500"
         />
         <div className="flex items-center gap-2 text-sm text-gray-600">
           <span className="hidden sm:inline">Show</span>
@@ -339,10 +305,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           </select>
         </div>
         <span className="text-xs text-gray-500">
-          {searchQuery.trim() ? `${totalFiltered}/${logs.length}` : `${logs.length} orders`}
+          {totalFiltered} orders
         </span>
       </div>
 
+      {/* Table */}
       <div className="bg-white rounded shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -350,33 +317,31 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
               <tr>
                 <Th columnKey="orderNumber">Order #</Th>
                 <Th columnKey="customer">Customer</Th>
-                <Th columnKey="items">Items</Th>
+                <Th columnKey="shippingMethod">Shipping Method</Th>
                 <Th columnKey="amount">Amount</Th>
                 <Th columnKey="orderDate">Order Date</Th>
                 <Th columnKey="received">Received</Th>
+                <Th columnKey="customerReachedOut">Customer Reached Out</Th>
                 <Th columnKey="status">Status</Th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="divide-y divide-gray-100">
               {pageLogs.map((log) => {
                 const payload = log.rawPayload as any
                 const order = Array.isArray(payload) ? payload[0] : payload
-                const itemCount = order?.items?.length || 0
                 const customerName = order?.shipTo?.name || order?.billTo?.name || 'N/A'
-                const highlightType = getOrderHighlightType(log, orderHighlightSettings)
-                // Whole row = solid red or orange; force white text on cells and all descendants (overrides text-gray-*).
-                const rowStyle =
-                  highlightType === 'red'
-                    ? 'bg-[#ff0000] hover:opacity-90 [&_td]:!text-white [&_td_*]:!text-white'
-                    : highlightType === 'orange'
-                      ? 'bg-[#ff9900] hover:opacity-90 [&_td]:!text-white [&_td_*]:!text-white'
-                      : 'hover:bg-blue-50'
+                const shippingMethod = getShippingMethod(log)
+                const reachedOut = reachedOutOverrides[log.id] ?? log.customerReachedOut
 
                 return (
                   <tr
                     key={log.id}
                     onClick={() => handleRowClick(log)}
-                    className={`cursor-pointer transition-colors ${rowStyle}`}
+                    className={`cursor-pointer transition-colors ${
+                      reachedOut
+                        ? 'bg-orange-50 hover:bg-orange-100'
+                        : 'hover:bg-blue-50'
+                    }`}
                   >
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className="text-sm font-semibold text-gray-900">
@@ -391,8 +356,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                      {itemCount}
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                        {shippingMethod || 'N/A'}
+                      </span>
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
                       {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}
@@ -404,13 +371,20 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                       {new Date(log.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                          highlightType === 'red' || highlightType === 'orange'
-                            ? 'bg-black/50 text-white'
-                            : 'bg-green-100 text-green-800'
+                      <button
+                        type="button"
+                        onClick={(e) => toggleReachedOut(log, e)}
+                        className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                          reachedOut
+                            ? 'bg-orange-500 text-white hover:bg-orange-600'
+                            : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                         }`}
                       >
+                        {reachedOut ? 'Yes' : 'No'}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         {log.status}
                       </span>
                     </td>
@@ -422,39 +396,36 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         </div>
       </div>
 
-      {/* Compact pagination */}
-      <div className="mt-2 flex items-center justify-between text-sm">
-        <span className="text-gray-500">
-          {totalFiltered === 0 ? 'No orders' : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalFiltered)} of ${totalFiltered}`}
+      {/* Pagination */}
+      <div className="mt-3 flex items-center justify-between text-sm">
+        <span className="text-gray-600">
+          {totalFiltered === 0
+            ? 'No orders'
+            : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalFiltered)} of ${totalFiltered}`}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1}
-            className="px-2 py-1 border border-gray-300 rounded text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-2 py-1 border border-gray-300 rounded text-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Prev
           </button>
-          <span className="px-2 text-gray-600">{page}/{totalPages}</span>
+          <span className="text-gray-500">{page}/{totalPages}</span>
           <button
             type="button"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page >= totalPages}
-            className="px-2 py-1 border border-gray-300 rounded text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-2 py-1 border border-gray-300 rounded text-xs hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next
           </button>
         </div>
       </div>
 
-      <OrderDialog
-        isOpen={isDialogOpen}
-        onClose={handleCloseDialog}
-        order={selectedOrder}
-      />
+      {/* Order Dialog */}
+      <OrderDialog order={selectedOrder} isOpen={isDialogOpen} onClose={handleCloseDialog} />
     </>
   )
 }
-
-

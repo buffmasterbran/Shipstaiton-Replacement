@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY || 'TEST_uhYzVt5jrvjfnn5hvcfI06gaVIU4tKpl6b7rZwRrVSs'
+const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY
 const SHIPENGINE_API_URL = 'https://api.shipengine.com/v1/labels'
 const SHIPENGINE_CARRIERS_URL = 'https://api.shipengine.com/v1/carriers'
 
@@ -18,6 +18,13 @@ const serviceCodeMap: { [key: string]: string } = {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!SHIPENGINE_API_KEY) {
+      return NextResponse.json(
+        { error: 'ShipEngine API key not configured' },
+        { status: 500 }
+      )
+    }
+
     const body = await request.json()
 
     // First, try to get carriers to find a valid carrier_id
@@ -133,11 +140,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       return NextResponse.json(
-        {
-          error: data.message || data.error?.message || 'Failed to create label',
-          request: shipEngineRequest,
-          response: data,
-        },
+        { error: data.message || data.error?.message || 'Failed to create label' },
         { status: response.status }
       )
     }

@@ -7,6 +7,7 @@ import BulkOrderProcessDialog from './BulkOrderProcessDialog'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
+import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
   id: string
@@ -64,6 +65,7 @@ interface LabelInfo {
 type StatusFilter = 'all' | 'pending' | 'shipped'
 
 export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }: BulkOrdersTableProps) {
+  const { expeditedOnly } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkProcessDialogOpen, setIsBulkProcessDialogOpen] = useState(false)
@@ -88,6 +90,14 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     const groupMap = new Map<string, BulkOrderGroup>()
 
     orders.forEach((log) => {
+      // Global expedited filter
+      if (expeditedOnly) {
+        const customerReachedOut = (log as any).customerReachedOut || false
+        if (!isOrderExpedited(log.rawPayload, customerReachedOut)) {
+          return
+        }
+      }
+
       const payload = log.rawPayload as any
       const order = Array.isArray(payload) ? payload[0] : payload
       const items = order?.items || []
@@ -141,7 +151,7 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     return Array.from(groupMap.values())
       .filter((group) => group.totalOrders >= 2)
       .sort((a, b) => b.totalOrders - a.totalOrders)
-  }, [orders])
+  }, [orders, expeditedOnly])
 
   // Filter groups by slider value
   const sliderFilteredGroups = useMemo(() => {

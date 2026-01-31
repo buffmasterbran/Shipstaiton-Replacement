@@ -36,35 +36,37 @@ export default function AllOrdersFilters({
   }, [router])
 
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <label className="text-sm text-gray-600">From</label>
+    <div className="flex items-center gap-1.5 text-sm">
       <input
         type="date"
         value={fromVal}
         onChange={(e) => setFromVal(e.target.value)}
-        className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+        className="border border-gray-300 rounded px-1.5 py-1 text-sm w-32"
+        title="From date"
       />
-      <label className="text-sm text-gray-600">To</label>
+      <span className="text-gray-400">–</span>
       <input
         type="date"
         value={toVal}
         onChange={(e) => setToVal(e.target.value)}
-        className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+        className="border border-gray-300 rounded px-1.5 py-1 text-sm w-32"
+        title="To date"
       />
       <button
         type="button"
         onClick={apply}
-        className="px-3 py-1.5 bg-gray-800 text-white rounded text-sm font-medium hover:bg-gray-700"
+        className="px-2 py-1 bg-gray-800 text-white rounded text-sm hover:bg-gray-700"
       >
-        Apply
+        Go
       </button>
       {(from || to) && (
         <button
           type="button"
           onClick={clear}
-          className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm hover:bg-gray-50"
+          className="px-2 py-1 text-gray-500 hover:text-gray-700 text-xs"
+          title="Clear date filter"
         >
-          Clear
+          ✕
         </button>
       )}
     </div>

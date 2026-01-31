@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { RoleProvider, useRole } from '@/context/RoleContext'
+import { ExpeditedFilterProvider, useExpeditedFilter } from '@/context/ExpeditedFilterContext'
 import Sidebar from './Sidebar'
 import Header from './Header'
 
@@ -12,6 +13,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { role, setRole } = useRole()
+  const { expeditedOnly, setExpeditedOnly } = useExpeditedFilter()
   const [canProcess, setCanProcess] = useState(true)
 
   const operatorAllowedPaths = ['/bulk-verification', '/local-pickup', '/analytics', '/returns', '/inventory-count']
@@ -22,6 +24,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   }, [role, pathname, router])
 
   const isSinglesPage = pathname === '/singles'
+  const isExpeditedPage = pathname === '/expedited'
 
   useEffect(() => {
     const handleProcessButtonAvailability = (event: CustomEvent) => {
@@ -40,6 +43,9 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         <Header
           role={role}
           setRole={setRole}
+          expeditedOnly={expeditedOnly}
+          setExpeditedOnly={setExpeditedOnly}
+          hideExpeditedToggle={isExpeditedPage}
           showProcessButton={isSinglesPage}
           processButtonText="Process"
           processButtonDisabled={isSinglesPage && !canProcess}
@@ -57,7 +63,9 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   return (
     <RoleProvider>
-      <MainLayoutContent>{children}</MainLayoutContent>
+      <ExpeditedFilterProvider>
+        <MainLayoutContent>{children}</MainLayoutContent>
+      </ExpeditedFilterProvider>
     </RoleProvider>
   )
 }

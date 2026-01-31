@@ -6,6 +6,9 @@ import type { UserRole } from './MainLayout'
 interface HeaderProps {
   role: UserRole
   setRole: (role: UserRole) => void
+  expeditedOnly?: boolean
+  setExpeditedOnly?: (value: boolean) => void
+  hideExpeditedToggle?: boolean
   onProcessClick?: () => void
   processButtonText?: string
   showProcessButton?: boolean
@@ -15,6 +18,9 @@ interface HeaderProps {
 export default function Header({
   role,
   setRole,
+  expeditedOnly = false,
+  setExpeditedOnly,
+  hideExpeditedToggle = false,
   onProcessClick,
   processButtonText = 'Process',
   showProcessButton = false,
@@ -24,28 +30,59 @@ export default function Header({
 
   return (
     <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-      {/* Date Range Picker */}
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          placeholder="MM/DD/YYYY - MM/DD/YYYY"
-          value={dateRange}
-          onChange={(e) => setDateRange(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-        />
-        <svg
-          className="w-5 h-5 text-gray-500"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+      {/* Date Range Picker + Expedited Toggle */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="MM/DD/YYYY - MM/DD/YYYY"
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
           />
-        </svg>
+          <svg
+            className="w-5 h-5 text-gray-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
+          </svg>
+        </div>
+
+        {/* Expedited Only Toggle */}
+        {!hideExpeditedToggle && setExpeditedOnly && (
+          <button
+            type="button"
+            onClick={() => setExpeditedOnly(!expeditedOnly)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              expeditedOnly
+                ? 'bg-orange-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+            title="Filter all pages to show only expedited orders (UPS Next Day, 2 Day, 3 Day, or Customer Reached Out)"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
+            </svg>
+            Expedited Only
+          </button>
+        )}
       </div>
 
       {/* Right Side: Role + Welcome + Process */}

@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
 import packConfig from '@/pack-config.json'
+import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
   id: string
@@ -108,6 +109,7 @@ function getCompatiblePacks(order: ProcessedOrder): string[] {
 }
 
 export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTableProps) {
+  const { expeditedOnly } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBatchDialogOpen, setIsBatchDialogOpen] = useState(false)
@@ -165,6 +167,14 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   // Filter orders based on size and pack size
   const filteredOrders = useMemo(() => {
     let filtered = processedOrders
+
+    // Global expedited filter
+    if (expeditedOnly) {
+      filtered = filtered.filter(order => {
+        const customerReachedOut = (order.log as any).customerReachedOut || false
+        return isOrderExpedited(order.log.rawPayload, customerReachedOut)
+      })
+    }
 
     // Size filter
     if (selectedSize !== 'all') {
@@ -226,7 +236,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     }
 
     return filtered
-  }, [processedOrders, selectedSize, selectedPackSize, searchQuery])
+  }, [processedOrders, selectedSize, selectedPackSize, searchQuery, expeditedOnly])
 
   const handleRowClick = (order: ProcessedOrder) => {
     setSelectedOrder({
