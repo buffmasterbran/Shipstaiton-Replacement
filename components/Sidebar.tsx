@@ -30,6 +30,8 @@ const navItems: NavItem[] = [
   { name: 'Inventory Count', href: '/inventory-count', access: 'operator', externalHref: 'https://inventory-count.vercel.app/' },
   { name: 'Batches', href: '/batches', access: 'admin' },
   { name: 'ShipEngine Test', href: '/shipengine-test', access: 'admin' },
+  { name: 'Products', href: '/products', access: 'admin' },
+  { name: 'Box Config', href: '/box-config', access: 'admin' },
   { name: 'Settings', href: '/settings', access: 'admin' },
 ]
 
