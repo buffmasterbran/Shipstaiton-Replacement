@@ -7,15 +7,21 @@ import BulkOrderProcessDialog from './BulkOrderProcessDialog'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
-import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
+import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
   id: string
   orderNumber: string
   status: string
   rawPayload: any
-  createdAt: Date
-  updatedAt: Date
+  suggestedBox?: {
+    boxId: string | null
+    boxName: string | null
+    confidence: 'confirmed' | 'calculated' | 'unknown'
+    reason?: string
+  } | null
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 export type QueueStatusBySignature = Record<string, 'pending' | 'in_queue' | 'completed'>
@@ -65,7 +71,7 @@ interface LabelInfo {
 type StatusFilter = 'all' | 'pending' | 'shipped'
 
 export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }: BulkOrdersTableProps) {
-  const { expeditedOnly } = useExpeditedFilter()
+  const { expeditedOnly, hidePersonalized } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkProcessDialogOpen, setIsBulkProcessDialogOpen] = useState(false)
@@ -90,6 +96,11 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     const groupMap = new Map<string, BulkOrderGroup>()
 
     orders.forEach((log) => {
+      // Global personalized filter (hide personalized by default)
+      if (hidePersonalized && isOrderPersonalized(log.rawPayload)) {
+        return
+      }
+
       // Global expedited filter
       if (expeditedOnly) {
         const customerReachedOut = (log as any).customerReachedOut || false
@@ -151,7 +162,7 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     return Array.from(groupMap.values())
       .filter((group) => group.totalOrders >= 2)
       .sort((a, b) => b.totalOrders - a.totalOrders)
-  }, [orders, expeditedOnly])
+  }, [orders, hidePersonalized, expeditedOnly])
 
   // Filter groups by slider value
   const sliderFilteredGroups = useMemo(() => {
@@ -1588,6 +1599,9 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Box
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Shipping Service
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1644,6 +1658,26 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge}`}>
                         {statusLabel}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {(() => {
+                        // Use the first order's cached suggestion (all orders in group have same items)
+                        const suggestion = group.orders[0]?.log.suggestedBox
+                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
+                        if (!suggestion.boxName) {
+                          return <span className="text-sm text-red-600 font-medium">No fit</span>
+                        }
+                        const colorClass = suggestion.confidence === 'confirmed'
+                          ? 'text-green-600'
+                          : suggestion.confidence === 'calculated'
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                        return (
+                          <span className={`text-sm font-medium ${colorClass}`}>
+                            {suggestion.boxName}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">

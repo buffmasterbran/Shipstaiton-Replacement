@@ -1,54 +1,69 @@
-import { prisma } from '@/lib/prisma'
-import { getOrderHighlightSettings } from '@/lib/settings'
-import RefreshButton from '@/components/RefreshButton'
+'use client'
+
+import { useState, useEffect } from 'react'
 import OrdersTable from '@/components/OrdersTable'
+import { useOrders } from '@/context/OrdersContext'
 
-// Force dynamic rendering - no caching
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
-async function getOrderLogs(): Promise<{
-  logs: Awaited<ReturnType<typeof prisma.orderLog.findMany>>
-  dbError: boolean
-  errorMessage?: string
-}> {
-  try {
-    const logs = await prisma.orderLog.findMany({
-      orderBy: { createdAt: 'desc' },
-    })
-    return { logs, dbError: false }
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error('Error fetching order logs:', error)
-    return { logs: [], dbError: true, errorMessage: message }
-  }
+interface OrderHighlightSettings {
+  orangeMinDays: number
+  orangeMaxDays: number
+  redMinDays: number
 }
 
-export default async function AllOrdersPage() {
-  let orderHighlightSettings: Awaited<ReturnType<typeof getOrderHighlightSettings>> | null = null
-  try {
-    orderHighlightSettings = await getOrderHighlightSettings(prisma)
-  } catch {
-    // app_settings table may not exist yet; use defaults (null) so OrdersTable still renders
+export default function AllOrdersPage() {
+  const { orders, loading, error } = useOrders()
+  const [orderHighlightSettings, setOrderHighlightSettings] = useState<OrderHighlightSettings | null>(null)
+
+  // Fetch highlight settings (separate from orders)
+  useEffect(() => {
+    async function fetchSettings() {
+      try {
+        const res = await fetch('/api/settings')
+        if (res.ok) {
+          const data = await res.json()
+          setOrderHighlightSettings(data.order_highlight || null)
+        }
+      } catch (err) {
+        console.error('Error fetching settings:', err)
+      }
+    }
+    fetchSettings()
+  }, [])
+
+  if (loading) {
+    return (
+      <div>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h1 className="text-xl font-bold text-gray-900 whitespace-nowrap">All Orders</h1>
+        </div>
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+          <span className="ml-3 text-gray-600">Loading orders...</span>
+        </div>
+      </div>
+    )
   }
-  const { logs, dbError, errorMessage } = await getOrderLogs()
+
+  if (error) {
+    return (
+      <div>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h1 className="text-xl font-bold text-gray-900 whitespace-nowrap">All Orders</h1>
+        </div>
+        <div className="bg-red-50 text-red-600 p-4 rounded-lg">
+          Error loading orders: {error}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
-      {/* Compact header bar */}
       <div className="flex items-center justify-between gap-3 mb-3">
         <h1 className="text-xl font-bold text-gray-900 whitespace-nowrap">All Orders</h1>
-        <RefreshButton />
       </div>
 
-      {dbError && (
-        <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm">
-          <span className="font-medium">Database error.</span>
-          {errorMessage && <span className="ml-2 text-xs font-mono">{errorMessage}</span>}
-        </div>
-      )}
-
-      <OrdersTable logs={logs} orderHighlightSettings={orderHighlightSettings} />
+      <OrdersTable logs={orders} orderHighlightSettings={orderHighlightSettings} />
     </div>
   )
 }

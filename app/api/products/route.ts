@@ -2,22 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import {
   getProductsConfig,
-  addSize,
-  updateSize,
-  deleteSize,
-  addSku,
-  updateSku,
-  deleteSku,
-  calculateVolume,
-  type ProductSize,
-  type ProductSku,
+  addProductSize,
+  updateProductSize,
+  deleteProductSize,
+  addProductSku,
+  updateProductSku,
+  deleteProductSku,
+  replacePatternsForSize,
+  getUnmatchedSkus,
+  dismissUnmatchedSku,
+  removeUnmatchedSku,
 } from '@/lib/products'
 
-/** GET /api/products - Return full config (sizes + skus) */
+/** GET /api/products - Return full config (sizes + skus + patterns + unmatched) */
 export async function GET() {
   try {
-    const config = await getProductsConfig(prisma)
-    return NextResponse.json(config)
+    const [config, unmatchedSkus] = await Promise.all([
+      getProductsConfig(prisma),
+      getUnmatchedSkus(prisma),
+    ])
+    return NextResponse.json({ ...config, unmatchedSkus })
   } catch (error: unknown) {
     console.error('Error fetching products:', error)
     return NextResponse.json(
@@ -39,23 +43,26 @@ export async function POST(request: NextRequest) {
         if (!body.name) {
           return NextResponse.json({ error: 'Name is required' }, { status: 400 })
         }
-        if (!body.dimensions) {
-          return NextResponse.json({ error: 'Dimensions are required' }, { status: 400 })
-        }
-        const size = await addSize(prisma, {
+
+        const size = await addProductSize(prisma, {
+          id: body.id,
           name: body.name,
-          dimensions: {
-            length: Number(body.dimensions?.length) || 0,
-            width: Number(body.dimensions?.width) || 0,
-            height: Number(body.dimensions?.height) || 0,
-          },
-          weight: Number(body.weight) || 0,
+          lengthInches: Number(body.lengthInches ?? body.dimensions?.length) || 0,
+          widthInches: Number(body.widthInches ?? body.dimensions?.width) || 0,
+          heightInches: Number(body.heightInches ?? body.dimensions?.height) || 0,
+          weightLbs: Number(body.weightLbs ?? body.weight) || 0,
           category: body.category || 'other',
           active: body.active !== false,
-          fallbackSkuPatterns: Array.isArray(body.fallbackSkuPatterns)
-            ? body.fallbackSkuPatterns
-            : [],
+          singleBoxId: body.singleBoxId || null,
         })
+
+        // Add patterns if provided
+        if (body.patterns && Array.isArray(body.patterns) && body.patterns.length > 0) {
+          await replacePatternsForSize(prisma, size.id, body.patterns)
+        } else if (body.fallbackSkuPatterns && Array.isArray(body.fallbackSkuPatterns) && body.fallbackSkuPatterns.length > 0) {
+          await replacePatternsForSize(prisma, size.id, body.fallbackSkuPatterns)
+        }
+
         return NextResponse.json(size, { status: 201 })
       }
 
@@ -63,24 +70,32 @@ export async function POST(request: NextRequest) {
         if (!body.id) {
           return NextResponse.json({ error: 'Size ID is required' }, { status: 400 })
         }
-        const updates: Partial<Omit<ProductSize, 'id'>> = {}
-        if (body.name !== undefined) updates.name = body.name
+
+        const updateData: Parameters<typeof updateProductSize>[2] = {}
+        if (body.name !== undefined) updateData.name = body.name
+        if (body.lengthInches !== undefined) updateData.lengthInches = Number(body.lengthInches)
+        if (body.widthInches !== undefined) updateData.widthInches = Number(body.widthInches)
+        if (body.heightInches !== undefined) updateData.heightInches = Number(body.heightInches)
         if (body.dimensions !== undefined) {
-          updates.dimensions = {
-            length: Number(body.dimensions.length) || 0,
-            width: Number(body.dimensions.width) || 0,
-            height: Number(body.dimensions.height) || 0,
-          }
-          updates.volume = calculateVolume(updates.dimensions)
+          updateData.lengthInches = Number(body.dimensions.length)
+          updateData.widthInches = Number(body.dimensions.width)
+          updateData.heightInches = Number(body.dimensions.height)
         }
-        if (body.weight !== undefined) updates.weight = Number(body.weight)
-        if (body.category !== undefined) updates.category = body.category
-        if (body.active !== undefined) updates.active = body.active
-        if (body.fallbackSkuPatterns !== undefined) {
-          updates.fallbackSkuPatterns = body.fallbackSkuPatterns
+        if (body.weightLbs !== undefined) updateData.weightLbs = Number(body.weightLbs)
+        if (body.weight !== undefined) updateData.weightLbs = Number(body.weight)
+        if (body.category !== undefined) updateData.category = body.category
+        if (body.active !== undefined) updateData.active = body.active
+        if (body.singleBoxId !== undefined) updateData.singleBoxId = body.singleBoxId || null
+
+        const size = await updateProductSize(prisma, body.id, updateData)
+
+        // Update patterns if provided
+        if (body.patterns !== undefined) {
+          await replacePatternsForSize(prisma, body.id, body.patterns || [])
+        } else if (body.fallbackSkuPatterns !== undefined) {
+          await replacePatternsForSize(prisma, body.id, body.fallbackSkuPatterns || [])
         }
 
-        const size = await updateSize(prisma, body.id, updates)
         return NextResponse.json(size)
       }
 
@@ -88,13 +103,14 @@ export async function POST(request: NextRequest) {
         if (!body.id) {
           return NextResponse.json({ error: 'Size ID is required' }, { status: 400 })
         }
-        const result = await deleteSize(prisma, body.id)
+        const result = await deleteProductSize(prisma, body.id)
         if (!result.deleted) {
           return NextResponse.json({ error: 'Size not found' }, { status: 404 })
         }
         return NextResponse.json({
           success: true,
           orphanedSkusRemoved: result.orphanedSkus,
+          orphanedPatternsRemoved: result.orphanedPatterns,
         })
       }
 
@@ -103,16 +119,20 @@ export async function POST(request: NextRequest) {
         if (!body.sku) {
           return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
         }
-        if (!body.sizeId) {
+        if (!body.sizeId && !body.productSizeId) {
           return NextResponse.json({ error: 'Size ID is required' }, { status: 400 })
         }
-        const sku = await addSku(prisma, {
+        const sku = await addProductSku(prisma, {
           sku: body.sku,
-          sizeId: body.sizeId,
+          productSizeId: body.sizeId || body.productSizeId,
           name: body.name || undefined,
           barcode: body.barcode || undefined,
           active: body.active !== false,
         })
+
+        // Remove from unmatched SKUs if it was there
+        await removeUnmatchedSku(prisma, body.sku.toUpperCase())
+
         return NextResponse.json(sku, { status: 201 })
       }
 
@@ -120,14 +140,16 @@ export async function POST(request: NextRequest) {
         if (!body.sku) {
           return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
         }
-        const skuUpdates: Partial<ProductSku> = {}
-        if (body.newSku !== undefined) skuUpdates.sku = body.newSku
-        if (body.sizeId !== undefined) skuUpdates.sizeId = body.sizeId
-        if (body.name !== undefined) skuUpdates.name = body.name || undefined
-        if (body.barcode !== undefined) skuUpdates.barcode = body.barcode || undefined
-        if (body.active !== undefined) skuUpdates.active = body.active
 
-        const sku = await updateSku(prisma, body.sku, skuUpdates)
+        const skuUpdateData: Parameters<typeof updateProductSku>[2] = {}
+        if (body.newSku !== undefined) skuUpdateData.sku = body.newSku
+        if (body.sizeId !== undefined) skuUpdateData.productSizeId = body.sizeId
+        if (body.productSizeId !== undefined) skuUpdateData.productSizeId = body.productSizeId
+        if (body.name !== undefined) skuUpdateData.name = body.name || null
+        if (body.barcode !== undefined) skuUpdateData.barcode = body.barcode || null
+        if (body.active !== undefined) skuUpdateData.active = body.active
+
+        const sku = await updateProductSku(prisma, body.sku, skuUpdateData)
         return NextResponse.json(sku)
       }
 
@@ -135,16 +157,25 @@ export async function POST(request: NextRequest) {
         if (!body.sku) {
           return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
         }
-        const deleted = await deleteSku(prisma, body.sku)
+        const deleted = await deleteProductSku(prisma, body.sku)
         if (!deleted) {
           return NextResponse.json({ error: 'SKU not found' }, { status: 404 })
         }
         return NextResponse.json({ success: true })
       }
 
+      // ==================== UNMATCHED SKU ACTIONS ====================
+      case 'dismiss-unmatched': {
+        if (!body.sku) {
+          return NextResponse.json({ error: 'SKU is required' }, { status: 400 })
+        }
+        await dismissUnmatchedSku(prisma, body.sku.toUpperCase())
+        return NextResponse.json({ success: true })
+      }
+
       default:
         return NextResponse.json(
-          { error: `Unknown action: ${action}. Valid actions: add-size, update-size, delete-size, add-sku, update-sku, delete-sku` },
+          { error: `Unknown action: ${action}. Valid actions: add-size, update-size, delete-size, add-sku, update-sku, delete-sku, dismiss-unmatched` },
           { status: 400 }
         )
     }

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
+import { useExpeditedFilter, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
@@ -32,8 +33,14 @@ interface OrderLog {
   status: string
   rawPayload: any
   customerReachedOut: boolean
-  createdAt: Date
-  updatedAt: Date
+  suggestedBox?: {
+    boxId: string | null
+    boxName: string | null
+    confidence: 'confirmed' | 'calculated' | 'unknown'
+    reason?: string
+  } | null
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 interface ExpeditedOrdersTableProps {
@@ -88,6 +95,7 @@ function isExpeditedShipping(log: OrderLog): boolean {
 }
 
 export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps) {
+  const { hidePersonalized } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -95,18 +103,22 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
-  
+
   // Local state for "customer reached out" toggles (in production, this would sync to API)
   const [reachedOutOverrides, setReachedOutOverrides] = useState<Record<string, boolean>>({})
 
   // Filter to only expedited shipping methods OR customer reached out
   const expeditedLogs = useMemo(() => {
     return logs.filter((log) => {
+      // Filter out personalized orders if toggle is on
+      if (hidePersonalized && isOrderPersonalized(log.rawPayload)) {
+        return false
+      }
       const isExpedited = isExpeditedShipping(log)
       const reachedOut = reachedOutOverrides[log.id] ?? log.customerReachedOut
       return isExpedited || reachedOut
     })
-  }, [logs, reachedOutOverrides])
+  }, [logs, hidePersonalized, reachedOutOverrides])
 
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -318,6 +330,9 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
                 <Th columnKey="orderNumber">Order #</Th>
                 <Th columnKey="customer">Customer</Th>
                 <Th columnKey="shippingMethod">Shipping Method</Th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Box
+                </th>
                 <Th columnKey="amount">Amount</Th>
                 <Th columnKey="orderDate">Order Date</Th>
                 <Th columnKey="received">Received</Th>
@@ -360,6 +375,25 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
                       <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
                         {shippingMethod || 'N/A'}
                       </span>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {(() => {
+                        const suggestion = log.suggestedBox
+                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
+                        if (!suggestion.boxName) {
+                          return <span className="text-sm text-red-600 font-medium">No fit</span>
+                        }
+                        const colorClass = suggestion.confidence === 'confirmed'
+                          ? 'text-green-600'
+                          : suggestion.confidence === 'calculated'
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                        return (
+                          <span className={`text-sm font-medium ${colorClass}`}>
+                            {suggestion.boxName}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
                       {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}

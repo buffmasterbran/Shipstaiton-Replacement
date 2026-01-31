@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
 import packConfig from '@/pack-config.json'
@@ -11,8 +11,14 @@ interface OrderLog {
   orderNumber: string
   status: string
   rawPayload: any
-  createdAt: Date
-  updatedAt: Date
+  suggestedBox?: {
+    boxId: string | null
+    boxName: string | null
+    confidence: 'confirmed' | 'calculated' | 'unknown'
+    reason?: string
+  } | null
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 interface BoxSizeSpecificTableProps {
@@ -607,6 +613,9 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                   PACK SIZE
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  BOX
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   COMPATIBLE PACKS
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -658,6 +667,25 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         {order.packSize}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {(() => {
+                        const suggestion = order.log.suggestedBox
+                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
+                        if (!suggestion.boxName) {
+                          return <span className="text-sm text-red-600 font-medium">No fit</span>
+                        }
+                        const colorClass = suggestion.confidence === 'confirmed'
+                          ? 'text-green-600'
+                          : suggestion.confidence === 'calculated'
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                        return (
+                          <span className={`text-sm font-medium ${colorClass}`}>
+                            {suggestion.boxName}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">
                       <div className="flex flex-wrap gap-1">

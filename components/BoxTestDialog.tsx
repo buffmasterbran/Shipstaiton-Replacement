@@ -8,6 +8,7 @@ interface Product {
   name: string
   volume: number
   category: string
+  singleBoxId?: string | null  // Products with dedicated boxes don't need single-item testing
 }
 
 interface Box {
@@ -57,6 +58,18 @@ function buildSignature(items: { productId: string; quantity: number }[]): strin
     .map(i => `${i.productId}:${i.quantity}`)
     .sort()
     .join('|')
+}
+
+// Check if a combo is a single-item with dedicated box (skip testing)
+function isPreBoxedSingle(
+  combo: { productId: string; quantity: number }[],
+  products: Product[]
+): boolean {
+  // Only applies to single-item, quantity=1 combos
+  if (combo.length !== 1 || combo[0].quantity !== 1) return false
+
+  const product = products.find(p => p.id === combo[0].productId)
+  return !!product?.singleBoxId
 }
 
 // Generate all combinations up to maxTotalQty items (any mix of products)
@@ -133,23 +146,29 @@ export default function BoxTestDialog({
     )
   }, [feedbackRules])
 
-  // Count how many combos are confirmed vs total
+  // Count how many combos are confirmed vs total (excluding pre-boxed singles)
   const comboStats = useMemo(() => {
     const allCombos = generateCombinations(products)
-    const unconfirmed = allCombos.filter(
+    // Filter out pre-boxed singles - they don't need testing
+    const testable = allCombos.filter(combo => !isPreBoxedSingle(combo, products))
+    const unconfirmed = testable.filter(
       combo => !confirmedSignatures.has(buildSignature(combo))
     )
+    const preBoxedCount = allCombos.length - testable.length
     return {
-      total: allCombos.length,
-      confirmed: allCombos.length - unconfirmed.length,
+      total: testable.length,
+      confirmed: testable.length - unconfirmed.length,
       remaining: unconfirmed.length,
+      skipped: preBoxedCount,
     }
   }, [products, confirmedSignatures])
 
   // Suggest the next unconfirmed combination
   const suggestNext = () => {
     const allCombos = generateCombinations(products)
-    const unconfirmed = allCombos.filter(
+    // Filter out pre-boxed singles, then filter for unconfirmed
+    const testable = allCombos.filter(combo => !isPreBoxedSingle(combo, products))
+    const unconfirmed = testable.filter(
       combo => !confirmedSignatures.has(buildSignature(combo))
     )
 
@@ -249,15 +268,20 @@ export default function BoxTestDialog({
     setError(null)
 
     try {
+      // If user selected "Actually fits in..." (correctBoxId provided),
+      // we record that the combo FITS in the correct box, not that it doesn't fit in the proposed box
+      const boxIdToSave = correctBoxId || testResult.box.id
+      const fitsValue = correctBoxId ? true : fits
+
       const res = await fetch('/api/box-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'add-feedback',
           comboSignature: testResult.comboSignature,
-          boxId: testResult.box.id,
-          fits,
-          correctBoxId: fits ? undefined : correctBoxId,
+          boxId: boxIdToSave,
+          fits: fitsValue,
+          correctBoxId: undefined, // Not needed since we're recording the correct box directly
         }),
       })
 
@@ -323,6 +347,11 @@ export default function BoxTestDialog({
                       {comboStats.remaining > 0 && (
                         <span className="text-blue-600 ml-2">
                           ({comboStats.remaining} remaining)
+                        </span>
+                      )}
+                      {comboStats.skipped > 0 && (
+                        <span className="text-green-600 ml-2" title="Single items with dedicated boxes">
+                          ({comboStats.skipped} pre-boxed)
                         </span>
                       )}
                     </div>

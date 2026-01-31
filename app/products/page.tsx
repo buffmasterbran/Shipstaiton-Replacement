@@ -2,41 +2,64 @@
 
 import { useState, useEffect } from 'react'
 
-interface ProductDimensions {
-  length: number
-  width: number
-  height: number
-}
-
 interface ProductSize {
   id: string
   name: string
-  dimensions: ProductDimensions
-  volume: number
-  weight: number
-  category: 'tumbler' | 'bottle' | 'accessory' | 'other'
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  volume?: number
+  weightLbs: number
+  category: string
   active: boolean
-  fallbackSkuPatterns: string[]
+  singleBoxId?: string | null
+}
+
+interface Box {
+  id: string
+  name: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  active: boolean
 }
 
 interface ProductSku {
   sku: string
-  sizeId: string
-  name?: string
-  barcode?: string
+  productSizeId: string
+  name: string | null
+  barcode: string | null
   active: boolean
+}
+
+interface ProductSkuPattern {
+  id: number
+  productSizeId: string
+  pattern: string
+}
+
+interface UnmatchedSku {
+  sku: string
+  firstSeen: string
+  lastSeen: string
+  occurrences: number
+  exampleOrder: string | null
+  itemName: string | null
+  dismissed: boolean
 }
 
 interface ProductsConfig {
   sizes: ProductSize[]
   skus: ProductSku[]
-  version: string
+  patterns: ProductSkuPattern[]
+  unmatchedSkus: UnmatchedSku[]
 }
 
-const CATEGORIES = ['tumbler', 'bottle', 'accessory', 'other'] as const
+const CATEGORIES = ['tumbler', 'bottle', 'accessory', 'other']
 
 export default function ProductsPage() {
   const [config, setConfig] = useState<ProductsConfig | null>(null)
+  const [boxes, setBoxes] = useState<Box[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,13 +72,14 @@ export default function ProductsPage() {
   const [isAddingSize, setIsAddingSize] = useState(false)
   const [sizeForm, setSizeForm] = useState({
     name: '',
-    fallbackSkuPatterns: '',
+    patterns: '',  // comma-separated regex patterns
     length: '',
     width: '',
     height: '',
     weight: '',
-    category: 'tumbler' as ProductSize['category'],
+    category: 'tumbler',
     active: true,
+    singleBoxId: '',  // dedicated box for single-item orders
   })
 
   // SKU form state
@@ -69,8 +93,31 @@ export default function ProductsPage() {
   })
 
   useEffect(() => {
-    fetchProducts()
+    fetchData()
   }, [])
+
+  const fetchData = async () => {
+    try {
+      const [productsRes, boxesRes] = await Promise.all([
+        fetch('/api/products'),
+        fetch('/api/box-config'),
+      ])
+
+      const productsData = await productsRes.json()
+      const boxesData = await boxesRes.json()
+
+      if (!productsRes.ok) throw new Error(productsData.error || 'Failed to fetch products')
+      if (!boxesRes.ok) throw new Error(boxesData.error || 'Failed to fetch boxes')
+
+      setConfig(productsData)
+      setBoxes(boxesData.boxes?.filter((b: Box) => b.active) || [])
+      setError(null)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const fetchProducts = async () => {
     try {
@@ -81,8 +128,6 @@ export default function ProductsPage() {
       setError(null)
     } catch (e) {
       setError((e as Error).message)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -99,32 +144,40 @@ export default function ProductsPage() {
     })
   }
 
+  // Get patterns for a size
+  const getPatternsForSize = (sizeId: string): string[] => {
+    return config?.patterns.filter(p => p.productSizeId === sizeId).map(p => p.pattern) || []
+  }
+
   // Size form handlers
   const resetSizeForm = () => {
     setSizeForm({
       name: '',
-      fallbackSkuPatterns: '',
+      patterns: '',
       length: '',
       width: '',
       height: '',
       weight: '',
       category: 'tumbler',
       active: true,
+      singleBoxId: '',
     })
     setEditingSize(null)
     setIsAddingSize(false)
   }
 
   const openEditSizeForm = (size: ProductSize) => {
+    const patterns = getPatternsForSize(size.id)
     setSizeForm({
       name: size.name,
-      fallbackSkuPatterns: size.fallbackSkuPatterns.join(', '),
-      length: String(size.dimensions.length),
-      width: String(size.dimensions.width),
-      height: String(size.dimensions.height),
-      weight: String(size.weight),
+      patterns: patterns.join(', '),
+      length: String(size.lengthInches),
+      width: String(size.widthInches),
+      height: String(size.heightInches),
+      weight: String(size.weightLbs),
       category: size.category,
       active: size.active,
+      singleBoxId: size.singleBoxId || '',
     })
     setEditingSize(size)
     setIsAddingSize(false)
@@ -144,7 +197,7 @@ export default function ProductsPage() {
     setError(null)
 
     try {
-      const fallbackSkuPatterns = sizeForm.fallbackSkuPatterns
+      const patterns = sizeForm.patterns
         .split(',')
         .map(s => s.trim())
         .filter(Boolean)
@@ -153,15 +206,14 @@ export default function ProductsPage() {
         action: editingSize ? 'update-size' : 'add-size',
         ...(editingSize ? { id: editingSize.id } : {}),
         name: sizeForm.name,
-        fallbackSkuPatterns,
-        dimensions: {
-          length: parseFloat(sizeForm.length) || 0,
-          width: parseFloat(sizeForm.width) || 0,
-          height: parseFloat(sizeForm.height) || 0,
-        },
-        weight: parseFloat(sizeForm.weight) || 0,
+        patterns,
+        lengthInches: parseFloat(sizeForm.length) || 0,
+        widthInches: parseFloat(sizeForm.width) || 0,
+        heightInches: parseFloat(sizeForm.height) || 0,
+        weightLbs: parseFloat(sizeForm.weight) || 0,
         category: sizeForm.category,
         active: sizeForm.active,
+        singleBoxId: sizeForm.singleBoxId || null,
       }
 
       const res = await fetch('/api/products', {
@@ -229,8 +281,8 @@ export default function ProductsPage() {
   const openEditSkuForm = (sku: ProductSku) => {
     setSkuForm({
       sku: sku.sku,
-      name: sku.name || '',
-      barcode: sku.barcode || '',
+      name: sku.name ?? '',
+      barcode: sku.barcode ?? '',
       active: sku.active,
     })
     setEditingSku(sku)
@@ -301,9 +353,50 @@ export default function ProductsPage() {
     }
   }
 
+  // Unmatched SKU handlers
+  const handleDismissUnmatchedSku = async (sku: string) => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'dismiss-unmatched', sku }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to dismiss')
+      await fetchProducts()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAddUnmatchedSku = (unmatchedSku: UnmatchedSku, sizeId: string) => {
+    // Pre-fill the SKU form and open add SKU form for the selected size
+    setSkuForm({
+      sku: unmatchedSku.sku,
+      name: unmatchedSku.itemName || '',
+      barcode: '',
+      active: true,
+    })
+    setAddingSkuForSizeId(sizeId)
+    setEditingSku(null)
+    // Make sure the size is expanded
+    setExpandedSizes(prev => new Set(prev).add(sizeId))
+    // Close size form if open
+    resetSizeForm()
+  }
+
   // Get SKUs for a size
   const getSkusForSize = (sizeId: string): ProductSku[] => {
-    return config?.skus.filter(s => s.sizeId === sizeId) || []
+    return config?.skus.filter(s => s.productSizeId === sizeId) || []
+  }
+
+  // Get box name by id
+  const getBoxName = (boxId: string | null | undefined): string | null => {
+    if (!boxId) return null
+    return boxes.find(b => b.id === boxId)?.name || null
   }
 
   if (loading) {
@@ -340,6 +433,81 @@ export default function ProductsPage() {
         </div>
       )}
 
+      {/* Undefined SKUs Section */}
+      {config?.unmatchedSkus && config.unmatchedSkus.length > 0 && (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="font-semibold text-amber-800">
+                Undefined SKUs ({config.unmatchedSkus.length})
+              </span>
+            </div>
+            <span className="text-xs text-amber-700">
+              SKUs from orders that don't match any product
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-amber-700 uppercase border-b border-amber-200">
+                  <th className="text-left py-2 pr-4">SKU</th>
+                  <th className="text-left py-2 pr-4">Item Name</th>
+                  <th className="text-right py-2 pr-4">Count</th>
+                  <th className="text-left py-2 pr-4">Last Seen</th>
+                  <th className="text-left py-2 pr-4">Example Order</th>
+                  <th className="text-right py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-amber-100">
+                {config.unmatchedSkus.map((unmatched) => (
+                  <tr key={unmatched.sku}>
+                    <td className="py-2 pr-4 font-mono text-gray-900">{unmatched.sku}</td>
+                    <td className="py-2 pr-4 text-gray-600">{unmatched.itemName || '—'}</td>
+                    <td className="py-2 pr-4 text-right text-gray-900 font-medium">{unmatched.occurrences}</td>
+                    <td className="py-2 pr-4 text-gray-500 text-xs">
+                      {new Date(unmatched.lastSeen).toLocaleDateString()}
+                    </td>
+                    <td className="py-2 pr-4 text-gray-500 font-mono text-xs">{unmatched.exampleOrder || '—'}</td>
+                    <td className="py-2 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <select
+                          className="text-xs border rounded px-2 py-1 mr-1"
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleAddUnmatchedSku(unmatched, e.target.value)
+                              e.target.value = ''
+                            }
+                          }}
+                        >
+                          <option value="">+ Add to...</option>
+                          {sizes.map((size) => (
+                            <option key={size.id} value={size.id}>
+                              {size.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => handleDismissUnmatchedSku(unmatched.sku)}
+                          disabled={saving}
+                          className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-amber-100"
+                          title="Dismiss this SKU (e.g., for promos or insurance)"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Add/Edit Size Form */}
       {(isAddingSize || editingSize) && (
         <div className="mb-6 p-4 bg-gray-50 border rounded-lg">
@@ -358,11 +526,11 @@ export default function ProductsPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fallback SKU Patterns</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SKU Patterns</label>
               <input
                 type="text"
-                value={sizeForm.fallbackSkuPatterns}
-                onChange={(e) => setSizeForm({ ...sizeForm, fallbackSkuPatterns: e.target.value })}
+                value={sizeForm.patterns}
+                onChange={(e) => setSizeForm({ ...sizeForm, patterns: e.target.value })}
                 className="w-full border rounded px-3 py-2 text-sm"
                 placeholder="^DPT26, ^PT26"
               />
@@ -372,7 +540,7 @@ export default function ProductsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
                 value={sizeForm.category}
-                onChange={(e) => setSizeForm({ ...sizeForm, category: e.target.value as ProductSize['category'] })}
+                onChange={(e) => setSizeForm({ ...sizeForm, category: e.target.value })}
                 className="w-full border rounded px-3 py-2 text-sm"
               >
                 {CATEGORIES.map((cat) => (
@@ -381,6 +549,22 @@ export default function ProductsPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Single Item Box</label>
+              <select
+                value={sizeForm.singleBoxId}
+                onChange={(e) => setSizeForm({ ...sizeForm, singleBoxId: e.target.value })}
+                className="w-full border rounded px-3 py-2 text-sm"
+              >
+                <option value="">-- None --</option>
+                {boxes.map((box) => (
+                  <option key={box.id} value={box.id}>
+                    {box.name} ({box.lengthInches}×{box.widthInches}×{box.heightInches}")
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Auto-select box for single-item orders</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Weight (lbs)</label>
@@ -476,7 +660,7 @@ export default function ProductsPage() {
             const skus = getSkusForSize(size.id)
             const isExpanded = expandedSizes.has(size.id)
             const isAddingSku = addingSkuForSizeId === size.id
-            const isEditingSkuForThisSize = editingSku && editingSku.sizeId === size.id
+            const isEditingSkuForThisSize = editingSku && editingSku.productSizeId === size.id
 
             return (
               <div key={size.id} className="bg-white rounded-lg shadow overflow-hidden">
@@ -494,16 +678,16 @@ export default function ProductsPage() {
                     <div>
                       <div className="font-medium text-gray-900">{size.name}</div>
                       <div className="text-sm text-gray-500">
-                        {size.dimensions.length}" × {size.dimensions.width}" × {size.dimensions.height}"
+                        {size.lengthInches}" × {size.widthInches}" × {size.heightInches}"
                         <span className="mx-2">|</span>
-                        {size.volume.toFixed(1)} in³
+                        {(size.volume ?? (size.lengthInches * size.widthInches * size.heightInches)).toFixed(1)} in³
                         <span className="mx-2">|</span>
-                        {size.weight} lb
-                        {size.fallbackSkuPatterns.length > 0 && (
+                        {size.weightLbs} lb
+                        {getPatternsForSize(size.id).length > 0 && (
                           <>
                             <span className="mx-2">|</span>
                             <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">
-                              {size.fallbackSkuPatterns.join(', ')}
+                              {getPatternsForSize(size.id).join(', ')}
                             </code>
                           </>
                         )}
@@ -519,6 +703,11 @@ export default function ProductsPage() {
                     }`}>
                       {size.category}
                     </span>
+                    {size.singleBoxId && getBoxName(size.singleBoxId) && (
+                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                        Ships in: {getBoxName(size.singleBoxId)}
+                      </span>
+                    )}
                     <span className="text-sm text-gray-500">{skus.length} SKU{skus.length !== 1 ? 's' : ''}</span>
                     {!size.active && (
                       <span className="text-xs text-gray-400">Inactive</span>

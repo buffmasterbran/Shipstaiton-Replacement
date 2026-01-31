@@ -3,20 +3,17 @@
 import { useState, useEffect } from 'react'
 import BoxTestDialog from '@/components/BoxTestDialog'
 
-interface BoxDimensions {
-  length: number
-  width: number
-  height: number
-}
-
 interface Box {
   id: string
   name: string
-  internalDimensions: BoxDimensions
+  lengthInches: number
+  widthInches: number
+  heightInches: number
   volume: number
   priority: number
   active: boolean
   inStock: boolean
+  singleCupOnly: boolean
 }
 
 interface FeedbackRule {
@@ -40,6 +37,7 @@ interface Product {
   name: string
   volume: number
   category: string
+  singleBoxId?: string | null
 }
 
 export default function BoxConfigPage() {
@@ -60,10 +58,14 @@ export default function BoxConfigPage() {
     priority: '',
     active: true,
     inStock: true,
+    singleCupOnly: false,
   })
 
   // Test dialog state
   const [isTestDialogOpen, setIsTestDialogOpen] = useState(false)
+
+  // Matrix filter state
+  const [hideConfirmed, setHideConfirmed] = useState(true)
 
   useEffect(() => {
     fetchData()
@@ -82,7 +84,8 @@ export default function BoxConfigPage() {
       if (!prodRes.ok) throw new Error(prodData.error || 'Failed to fetch products')
 
       setBoxConfig(boxData)
-      setProducts(prodData.products || [])
+      // v2 format returns sizes array, v1 returned products array
+      setProducts(prodData.sizes || prodData.products || [])
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -102,6 +105,7 @@ export default function BoxConfigPage() {
       priority: '',
       active: true,
       inStock: true,
+      singleCupOnly: false,
     })
     setEditingBox(null)
     setIsAddingBox(false)
@@ -110,12 +114,13 @@ export default function BoxConfigPage() {
   const openEditBoxForm = (box: Box) => {
     setBoxForm({
       name: box.name,
-      length: String(box.internalDimensions.length),
-      width: String(box.internalDimensions.width),
-      height: String(box.internalDimensions.height),
+      length: String(box.lengthInches),
+      width: String(box.widthInches),
+      height: String(box.heightInches),
       priority: String(box.priority),
       active: box.active,
       inStock: box.inStock,
+      singleCupOnly: box.singleCupOnly ?? false,
     })
     setEditingBox(box)
     setIsAddingBox(false)
@@ -133,14 +138,13 @@ export default function BoxConfigPage() {
           action: editingBox ? 'update-box' : 'add-box',
           ...(editingBox ? { id: editingBox.id } : {}),
           name: boxForm.name,
-          internalDimensions: {
-            length: parseFloat(boxForm.length) || 0,
-            width: parseFloat(boxForm.width) || 0,
-            height: parseFloat(boxForm.height) || 0,
-          },
+          lengthInches: parseFloat(boxForm.length) || 0,
+          widthInches: parseFloat(boxForm.width) || 0,
+          heightInches: parseFloat(boxForm.height) || 0,
           priority: parseInt(boxForm.priority) || 99,
           active: boxForm.active,
           inStock: boxForm.inStock,
+          singleCupOnly: boxForm.singleCupOnly,
         }),
       })
 
@@ -188,6 +192,30 @@ export default function BoxConfigPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to delete')
+      await fetchData()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Quick save feedback from matrix
+  const saveFeedbackQuick = async (comboSignature: string, boxId: string, fits: boolean) => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/box-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add-feedback',
+          comboSignature,
+          boxId,
+          fits,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to save')
       await fetchData()
     } catch (e) {
       setError((e as Error).message)
@@ -324,7 +352,7 @@ export default function BoxConfigPage() {
                   placeholder="1 = try first"
                 />
               </div>
-              <div className="flex items-end gap-4">
+              <div className="flex items-end gap-4 flex-wrap">
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -342,6 +370,15 @@ export default function BoxConfigPage() {
                     className="rounded"
                   />
                   <span className="text-sm">In Stock</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={boxForm.singleCupOnly}
+                    onChange={(e) => setBoxForm({ ...boxForm, singleCupOnly: e.target.checked })}
+                    className="rounded"
+                  />
+                  <span className="text-sm">Single Cup Only</span>
                 </label>
               </div>
             </div>
@@ -388,9 +425,16 @@ export default function BoxConfigPage() {
                 .sort((a, b) => a.priority - b.priority)
                 .map((box) => (
                   <tr key={box.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900">{box.name}</td>
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      {box.name}
+                      {box.singleCupOnly && (
+                        <span className="ml-2 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">
+                          Single
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {box.internalDimensions.length}" × {box.internalDimensions.width}" × {box.internalDimensions.height}"
+                      {box.lengthInches}" × {box.widthInches}" × {box.heightInches}"
                     </td>
                     <td className="px-4 py-3 text-gray-600">{box.volume.toFixed(0)} in³</td>
                     <td className="px-4 py-3 text-gray-600">{(box.volume * packingEfficiency).toFixed(0)} in³</td>
@@ -425,78 +469,213 @@ export default function BoxConfigPage() {
         </table>
       </div>
 
-      {/* ==================== FEEDBACK RULES SECTION ==================== */}
+      {/* ==================== ALL COMBINATIONS MATRIX ==================== */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="p-4 border-b">
-          <h2 className="text-lg font-semibold">Learned Rules (Feedback History)</h2>
-          <p className="text-sm text-gray-500">
-            When you confirm or reject a box fit, the rule is saved here for future orders.
-          </p>
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">All Product Combinations</h2>
+            <p className="text-sm text-gray-500">
+              <span className="text-green-600 font-bold">✓</span> = confirmed &nbsp;
+              <span className="text-blue-400">○</span> = calculated (untested) &nbsp;
+              <span className="text-gray-300">—</span> = too small/ineligible
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={hideConfirmed}
+              onChange={(e) => setHideConfirmed(e.target.checked)}
+              className="rounded"
+            />
+            <span>Hide confirmed</span>
+          </label>
         </div>
 
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Combination</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proposed Box</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fits?</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Correct Box</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tested</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {feedbackRules.length === 0 ? (
+        <div className="overflow-x-auto" style={{ maxHeight: '600px' }}>
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50 sticky top-0 z-10">
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
-                  No feedback rules yet. Use the Test Box Fit section above to create rules.
-                </td>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase sticky left-0 bg-gray-50 z-20">
+                  Combination
+                </th>
+                {boxes.sort((a, b) => a.priority - b.priority).map((box) => (
+                  <th key={box.id} className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase whitespace-nowrap">
+                    {box.name}
+                  </th>
+                ))}
               </tr>
-            ) : (
-              feedbackRules.map((rule) => {
-                const box = boxes.find(b => b.id === rule.boxId)
-                const correctBox = rule.correctBoxId ? boxes.find(b => b.id === rule.correctBoxId) : null
-
-                // Parse combo signature for display
-                const comboParts = rule.comboSignature.split('|').map(part => {
-                  const [productId, qty] = part.split(':')
-                  const product = products.find(p => p.id === productId)
-                  return `${qty}× ${product?.name || productId}`
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {(() => {
+                // Generate ALL combinations from products (cups only, up to 4 total)
+                const cupProducts = products.filter(p => {
+                  const cat = p.category?.toLowerCase() || ''
+                  return cat === 'tumbler' || cat === 'bottle'
                 })
 
-                return (
-                  <tr key={rule.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-gray-900">
-                      {comboParts.join(' + ')}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{box?.name || rule.boxId}</td>
-                    <td className="px-4 py-3">
-                      {rule.fits ? (
-                        <span className="text-green-600 font-medium">Yes</span>
-                      ) : (
-                        <span className="text-red-600 font-medium">No</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {rule.fits ? '—' : (correctBox?.name || rule.correctBoxId || '—')}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">
-                      {new Date(rule.testedAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => deleteFeedbackRule(rule.id)}
-                        className="text-red-600 hover:text-red-800 text-sm"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
+                // Build combo signature helper
+                const buildSig = (items: { productId: string; quantity: number }[]) => {
+                  return items
+                    .filter(i => i.quantity > 0)
+                    .map(i => `${i.productId}:${i.quantity}`)
+                    .sort()
+                    .join('|')
+                }
+
+                // Generate all combos
+                const allCombos: { signature: string; items: { productId: string; quantity: number }[]; displayName: string; orderVolume: number; cupCount: number }[] = []
+
+                const maxTotal = 10 // Max total cups in a combo
+
+                // Recursive function to generate combinations
+                const generateCombos = (
+                  productIndex: number,
+                  currentItems: { productId: string; quantity: number }[],
+                  totalQty: number
+                ) => {
+                  // Add current combo if it has items
+                  if (currentItems.some(i => i.quantity > 0)) {
+                    const sig = buildSig(currentItems)
+                    const orderVolume = currentItems.reduce((total, item) => {
+                      const product = products.find(p => p.id === item.productId)
+                      return total + (product?.volume || 0) * item.quantity
+                    }, 0)
+                    const displayParts = currentItems
+                      .filter(i => i.quantity > 0)
+                      .map(i => {
+                        const product = products.find(p => p.id === i.productId)
+                        return `${i.quantity}× ${product?.name || i.productId}`
+                      })
+                    allCombos.push({
+                      signature: sig,
+                      items: currentItems.filter(i => i.quantity > 0),
+                      displayName: displayParts.join(' + '),
+                      orderVolume,
+                      cupCount: totalQty,
+                    })
+                  }
+
+                  // Try adding more products
+                  for (let i = productIndex; i < cupProducts.length; i++) {
+                    const product = cupProducts[i]
+                    for (let qty = 1; qty <= maxTotal - totalQty; qty++) {
+                      generateCombos(
+                        i + 1,
+                        [...currentItems, { productId: product.id, quantity: qty }],
+                        totalQty + qty
+                      )
+                    }
+                  }
+                }
+
+                generateCombos(0, [], 0)
+
+                // Sort by total volume (smallest first)
+                allCombos.sort((a, b) => a.orderVolume - b.orderVolume)
+
+                // Filter out confirmed if hideConfirmed is true
+                const filteredCombos = hideConfirmed
+                  ? allCombos.filter(combo => !feedbackRules.some(r => r.comboSignature === combo.signature && r.fits))
+                  : allCombos
+
+                return filteredCombos.map((combo) => {
+                  const comboRules = feedbackRules.filter(r => r.comboSignature === combo.signature)
+
+                  return (
+                    <tr key={combo.signature} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-gray-900 text-xs sticky left-0 bg-white">
+                        {combo.displayName}
+                        <span className="ml-1 text-gray-400">({combo.orderVolume.toFixed(0)})</span>
+                        {comboRules.some(r => r.fits) && (
+                          <span className="ml-1 text-green-600">●</span>
+                        )}
+                      </td>
+                      {boxes.sort((a, b) => a.priority - b.priority).map((box) => {
+                        const rule = comboRules.find(r => r.boxId === box.id)
+                        const usableVolume = box.volume * packingEfficiency
+                        const wouldFit = combo.orderVolume <= usableVolume
+                        const isEligible = !box.singleCupOnly || combo.cupCount === 1
+
+                        return (
+                          <td key={box.id} className="px-1 py-1 text-center">
+                            {rule?.fits ? (
+                              <button
+                                onClick={() => {
+                                  if (confirm('Remove this confirmed fit?')) {
+                                    deleteFeedbackRule(rule.id)
+                                  }
+                                }}
+                                className="w-6 h-6 text-green-600 font-bold hover:bg-green-50 rounded"
+                                title="Confirmed - click to remove"
+                                disabled={saving}
+                              >
+                                ✓
+                              </button>
+                            ) : rule ? (
+                              <button
+                                onClick={() => saveFeedbackQuick(combo.signature, box.id, true)}
+                                className="w-6 h-6 text-red-500 hover:bg-red-50 rounded"
+                                title="Doesn't fit - click to mark as fits"
+                                disabled={saving}
+                              >
+                                ✗
+                              </button>
+                            ) : !isEligible ? (
+                              <span className="text-gray-200 text-xs">—</span>
+                            ) : wouldFit ? (
+                              <button
+                                onClick={() => saveFeedbackQuick(combo.signature, box.id, true)}
+                                className="w-6 h-6 text-blue-300 hover:text-green-600 hover:bg-green-50 rounded"
+                                title={`Click to confirm fit (${combo.orderVolume.toFixed(0)} ≤ ${usableVolume.toFixed(0)})`}
+                                disabled={saving}
+                              >
+                                ○
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => saveFeedbackQuick(combo.signature, box.id, true)}
+                                className="w-6 h-6 text-gray-200 hover:text-green-600 hover:bg-green-50 rounded"
+                                title={`Click to force fit (${combo.orderVolume.toFixed(0)} > ${usableVolume.toFixed(0)})`}
+                                disabled={saving}
+                              >
+                                —
+                              </button>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })
+              })()}
+            </tbody>
+          </table>
+        </div>
+        <div className="p-2 border-t bg-gray-50 text-xs text-gray-500">
+          {(() => {
+            const cupProducts = products.filter(p => {
+              const cat = p.category?.toLowerCase() || ''
+              return cat === 'tumbler' || cat === 'bottle'
+            })
+            // Quick count calculation
+            let totalCount = 0
+            const maxTotal = 10
+            const generateCount = (idx: number, total: number) => {
+              if (total > 0) totalCount++
+              for (let i = idx; i < cupProducts.length; i++) {
+                for (let qty = 1; qty <= maxTotal - total; qty++) {
+                  generateCount(i + 1, total + qty)
+                }
+              }
+            }
+            generateCount(0, 0)
+            const confirmedCount = feedbackRules.filter(r => r.fits).length
+            const unconfirmedCount = totalCount - confirmedCount
+            return hideConfirmed
+              ? `Showing ${unconfirmedCount} unconfirmed of ${totalCount} total - click any cell to confirm`
+              : `Showing all ${totalCount} combinations (${confirmedCount} confirmed) - click any cell to confirm`
+          })()}
+        </div>
       </div>
     </div>
   )

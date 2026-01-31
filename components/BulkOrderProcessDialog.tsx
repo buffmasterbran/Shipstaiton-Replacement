@@ -21,8 +21,8 @@ interface BulkOrderGroup {
       orderNumber: string
       status: string
       rawPayload: any
-      createdAt: Date
-      updatedAt: Date
+      createdAt: Date | string
+      updatedAt: Date | string
     }
     order: any
     customerName: string

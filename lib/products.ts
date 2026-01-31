@@ -1,124 +1,44 @@
 import type { PrismaClient } from '@prisma/client'
 
 // ============================================================================
-// Types
+// Types (matching Prisma schema)
 // ============================================================================
 
-export interface ProductDimensions {
-  length: number  // inches
-  width: number   // inches
-  height: number  // inches
-}
-
-/**
- * ProductSize: Physical attributes used for box fitting calculations.
- * IDs remain stable (e.g., "tumbler-16oz") for backward compatibility
- * with existing feedback rules in box-config.
- */
 export interface ProductSize {
-  id: string                    // e.g., "tumbler-16oz" - stable for box fitting
-  name: string                  // e.g., "16oz Tumbler"
-  dimensions: ProductDimensions
-  volume: number                // Auto-calculated: L × W × H (in³)
-  weight: number                // lbs
-  category: 'tumbler' | 'bottle' | 'accessory' | 'other'
+  id: string
+  name: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  weightLbs: number
+  category: string
   active: boolean
-  fallbackSkuPatterns: string[] // Regex patterns for backward compat
+  singleBoxId?: string | null  // Links to dedicated box for single-item orders
+  volume?: number // Calculated: L × W × H
 }
 
-/**
- * ProductSku: Individual variant with unique SKU/barcode.
- * Links to a ProductSize for physical dimensions.
- */
 export interface ProductSku {
-  sku: string                   // Primary key, e.g., "DPT16-RED"
-  sizeId: string                // References ProductSize.id
-  name?: string                 // Optional display name, e.g., "16oz Tumbler - Red"
-  barcode?: string              // UPC/EAN for this specific variant
+  sku: string
+  productSizeId: string
+  name: string | null
+  barcode: string | null
   active: boolean
 }
 
-/**
- * Combined config stored in appSetting JSON
- */
+export interface ProductSkuPattern {
+  id: number
+  productSizeId: string
+  pattern: string
+}
+
+// For backward compatibility with box-config
+export type Product = ProductSize
+
+// Response types for API
 export interface ProductsConfig {
   sizes: ProductSize[]
   skus: ProductSku[]
-  version: string               // "2.0.0" for new structure
-}
-
-/**
- * Backward compatibility alias for box fitting code.
- * Box fitting only needs: id, volume, name, category
- */
-export type Product = ProductSize
-
-// Old v1 Product type for migration
-interface OldProduct {
-  id: string
-  name: string
-  skuPatterns: string[]
-  dimensions: ProductDimensions
-  volume: number
-  weight: number
-  barcode?: string
-  category: 'tumbler' | 'bottle' | 'accessory' | 'other'
-  active: boolean
-}
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const PRODUCTS_KEY = 'products'
-
-const DEFAULT_SIZES: ProductSize[] = [
-  {
-    id: 'tumbler-10oz',
-    name: '10oz Tumbler',
-    fallbackSkuPatterns: ['^DPT10', '^PT10'],
-    dimensions: { length: 3, width: 3, height: 5 },
-    volume: 45,
-    weight: 0.4,
-    category: 'tumbler',
-    active: true,
-  },
-  {
-    id: 'tumbler-16oz',
-    name: '16oz Tumbler',
-    fallbackSkuPatterns: ['^DPT16', '^PT16'],
-    dimensions: { length: 3.5, width: 3.5, height: 6 },
-    volume: 73.5,
-    weight: 0.6,
-    category: 'tumbler',
-    active: true,
-  },
-  {
-    id: 'tumbler-26oz',
-    name: '26oz Tumbler',
-    fallbackSkuPatterns: ['^DPT26', '^PT26'],
-    dimensions: { length: 4, width: 4, height: 8 },
-    volume: 128,
-    weight: 0.9,
-    category: 'tumbler',
-    active: true,
-  },
-  {
-    id: 'tumbler-32oz',
-    name: '32oz Tumbler',
-    fallbackSkuPatterns: ['^DPT32', '^PT32'],
-    dimensions: { length: 4.5, width: 4.5, height: 9 },
-    volume: 182.25,
-    weight: 1.1,
-    category: 'tumbler',
-    active: true,
-  },
-]
-
-const DEFAULT_CONFIG: ProductsConfig = {
-  sizes: DEFAULT_SIZES,
-  skus: [],
-  version: '2.0.0',
+  patterns: ProductSkuPattern[]
 }
 
 // ============================================================================
@@ -126,16 +46,78 @@ const DEFAULT_CONFIG: ProductsConfig = {
 // ============================================================================
 
 /** Calculate volume from dimensions */
-export function calculateVolume(dims: ProductDimensions): number {
-  return dims.length * dims.width * dims.height
+export function calculateVolume(length: number, width: number, height: number): number {
+  return length * width * height
 }
 
-/** Generate a URL-safe ID from a name */
-export function generateProductId(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+/** Prisma ProductSize type (without calculated volume) */
+type PrismaProductSize = Omit<ProductSize, 'volume'> & { createdAt?: Date; updatedAt?: Date }
+
+/** Add volume to a ProductSize from Prisma */
+function addVolumeToSize(size: PrismaProductSize): ProductSize {
+  const { createdAt, updatedAt, ...rest } = size as PrismaProductSize & { createdAt?: Date; updatedAt?: Date }
+  return {
+    ...rest,
+    volume: calculateVolume(size.lengthInches, size.widthInches, size.heightInches),
+  }
+}
+
+// ============================================================================
+// Read Functions
+// ============================================================================
+
+/** Get all product sizes with calculated volume */
+export async function getProductSizes(prisma: PrismaClient): Promise<ProductSize[]> {
+  const sizes = await prisma.productSize.findMany({
+    orderBy: { name: 'asc' },
+  })
+  return sizes.map(addVolumeToSize)
+}
+
+/** Get active product sizes only */
+export async function getActiveProductSizes(prisma: PrismaClient): Promise<ProductSize[]> {
+  const sizes = await prisma.productSize.findMany({
+    where: { active: true },
+    orderBy: { name: 'asc' },
+  })
+  return sizes.map(addVolumeToSize)
+}
+
+/** Get all SKUs */
+export async function getProductSkus(prisma: PrismaClient): Promise<ProductSku[]> {
+  return prisma.productSku.findMany({
+    orderBy: { sku: 'asc' },
+  })
+}
+
+/** Get SKUs for a specific size */
+export async function getSkusForSize(prisma: PrismaClient, sizeId: string): Promise<ProductSku[]> {
+  return prisma.productSku.findMany({
+    where: { productSizeId: sizeId },
+    orderBy: { sku: 'asc' },
+  })
+}
+
+/** Get all SKU patterns */
+export async function getProductSkuPatterns(prisma: PrismaClient): Promise<ProductSkuPattern[]> {
+  return prisma.productSkuPattern.findMany({
+    orderBy: { productSizeId: 'asc' },
+  })
+}
+
+/** Get full products config (sizes + skus + patterns) */
+export async function getProductsConfig(prisma: PrismaClient): Promise<ProductsConfig> {
+  const [sizes, skus, patterns] = await Promise.all([
+    getProductSizes(prisma),
+    getProductSkus(prisma),
+    getProductSkuPatterns(prisma),
+  ])
+  return { sizes, skus, patterns }
+}
+
+// Backward compatibility alias
+export async function getProducts(prisma: PrismaClient): Promise<Product[]> {
+  return getActiveProductSizes(prisma)
 }
 
 // ============================================================================
@@ -145,33 +127,77 @@ export function generateProductId(name: string): string {
 /**
  * Look up a SKU to find its ProductSize.
  * Priority:
- *   1. Exact SKU match in skus table -> return linked ProductSize
- *   2. Fallback: regex pattern match in sizes.fallbackSkuPatterns
+ *   1. Exact SKU match in product_skus table -> return linked ProductSize
+ *   2. Fallback: regex pattern match in product_sku_patterns
  */
-export function matchSkuToSize(
-  sku: string,
-  config: ProductsConfig
-): ProductSize | null {
+export async function matchSkuToSize(
+  prisma: PrismaClient,
+  sku: string
+): Promise<ProductSize | null> {
   if (!sku) return null
   const upperSku = sku.toUpperCase()
 
   // LAYER 1: Exact SKU match
-  const skuEntry = config.skus.find(
-    s => s.active && s.sku.toUpperCase() === upperSku
-  )
-  if (skuEntry) {
-    const size = config.sizes.find(sz => sz.id === skuEntry.sizeId)
-    if (size?.active) return size
+  const skuRecord = await prisma.productSku.findUnique({
+    where: { sku: upperSku },
+    include: { productSize: true },
+  })
+
+  if (skuRecord?.active && skuRecord.productSize?.active) {
+    return addVolumeToSize(skuRecord.productSize)
   }
 
-  // LAYER 2: Fallback regex patterns (backward compatibility)
-  for (const size of config.sizes) {
-    if (!size.active) continue
-    for (const pattern of size.fallbackSkuPatterns) {
+  // Also try original case
+  const skuRecordOriginal = await prisma.productSku.findUnique({
+    where: { sku },
+    include: { productSize: true },
+  })
+
+  if (skuRecordOriginal?.active && skuRecordOriginal.productSize?.active) {
+    return addVolumeToSize(skuRecordOriginal.productSize)
+  }
+
+  // LAYER 2: Fallback regex patterns
+  const patterns = await prisma.productSkuPattern.findMany({
+    include: { productSize: true },
+  })
+
+  for (const patternRecord of patterns) {
+    if (!patternRecord.productSize?.active) continue
+    try {
+      const regex = new RegExp(patternRecord.pattern, 'i')
+      if (regex.test(sku)) {
+        return addVolumeToSize(patternRecord.productSize)
+      }
+    } catch {
+      // Invalid regex, skip
+      continue
+    }
+  }
+
+  return null
+}
+
+/**
+ * Backward-compatible wrapper that takes products array.
+ * Uses in-memory matching (for box-config integration).
+ */
+export function matchSkuToProduct(
+  sku: string,
+  products: Product[],
+  patterns?: ProductSkuPattern[]
+): Product | null {
+  if (!sku) return null
+
+  // If we have patterns, use them for regex matching
+  if (patterns) {
+    for (const patternRecord of patterns) {
+      const product = products.find(p => p.id === patternRecord.productSizeId)
+      if (!product?.active) continue
       try {
-        const regex = new RegExp(pattern, 'i')
-        if (regex.test(upperSku)) {
-          return size
+        const regex = new RegExp(patternRecord.pattern, 'i')
+        if (regex.test(sku)) {
+          return product
         }
       } catch {
         continue
@@ -182,264 +208,309 @@ export function matchSkuToSize(
   return null
 }
 
-/**
- * Backward-compatible wrapper for existing code.
- * @deprecated Use matchSkuToSize with full config instead
- */
-export function matchSkuToProduct(sku: string, products: Product[]): Product | null {
-  return matchSkuToSize(sku, { sizes: products, skus: [], version: '2.0.0' })
-}
-
-// ============================================================================
-// Migration Functions
-// ============================================================================
-
-function migrateV1ToV2(oldProducts: OldProduct[]): ProductsConfig {
-  const sizes: ProductSize[] = oldProducts.map(p => ({
-    id: p.id,
-    name: p.name,
-    dimensions: p.dimensions,
-    volume: p.volume,
-    weight: p.weight,
-    category: p.category,
-    active: p.active,
-    fallbackSkuPatterns: p.skuPatterns || [],
-  }))
-
-  // No SKUs in v1 - start with empty array
-  return { sizes, skus: [], version: '2.0.0' }
-}
-
-// ============================================================================
-// Database Functions
-// ============================================================================
-
-export function getDefaultProductsConfig(): ProductsConfig {
-  return { ...DEFAULT_CONFIG, sizes: [...DEFAULT_CONFIG.sizes], skus: [] }
-}
-
-export async function getProductsConfig(prisma: PrismaClient): Promise<ProductsConfig> {
-  try {
-    const row = await prisma.appSetting.findUnique({
-      where: { key: PRODUCTS_KEY },
-    })
-
-    if (!row?.value || typeof row.value !== 'object') {
-      return getDefaultProductsConfig()
-    }
-
-    const v = row.value as Record<string, unknown>
-
-    // Check if already v2 format (has sizes array)
-    if (v.version === '2.0.0' || Array.isArray(v.sizes)) {
-      return {
-        sizes: Array.isArray(v.sizes) ? v.sizes as ProductSize[] : DEFAULT_SIZES,
-        skus: Array.isArray(v.skus) ? v.skus as ProductSku[] : [],
-        version: '2.0.0',
-      }
-    }
-
-    // Migrate from v1 (flat products array)
-    if (Array.isArray(v.products)) {
-      return migrateV1ToV2(v.products as OldProduct[])
-    }
-
-    return getDefaultProductsConfig()
-  } catch {
-    return getDefaultProductsConfig()
-  }
-}
-
-export async function setProductsConfig(
-  prisma: PrismaClient,
-  config: ProductsConfig
-): Promise<ProductsConfig> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const jsonValue = config as any
-  await prisma.appSetting.upsert({
-    where: { key: PRODUCTS_KEY },
-    create: { key: PRODUCTS_KEY, value: jsonValue },
-    update: { value: jsonValue },
-  })
-  return config
-}
-
 // ============================================================================
 // Size CRUD Functions
 // ============================================================================
 
-export async function getSizes(prisma: PrismaClient): Promise<ProductSize[]> {
-  const config = await getProductsConfig(prisma)
-  return config.sizes
-}
-
-export async function addSize(
+export async function addProductSize(
   prisma: PrismaClient,
-  size: Omit<ProductSize, 'id' | 'volume'> & { id?: string }
+  data: {
+    id?: string
+    name: string
+    lengthInches: number
+    widthInches: number
+    heightInches: number
+    weightLbs?: number
+    category?: string
+    active?: boolean
+    singleBoxId?: string | null
+  }
 ): Promise<ProductSize> {
-  const config = await getProductsConfig(prisma)
+  const id = data.id || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
-  const newSize: ProductSize = {
-    ...size,
-    id: size.id || generateProductId(size.name),
-    volume: calculateVolume(size.dimensions),
-  }
+  const size = await prisma.productSize.create({
+    data: {
+      id,
+      name: data.name,
+      lengthInches: data.lengthInches,
+      widthInches: data.widthInches,
+      heightInches: data.heightInches,
+      weightLbs: data.weightLbs ?? 0,
+      category: data.category ?? 'other',
+      active: data.active ?? true,
+      singleBoxId: data.singleBoxId ?? null,
+    },
+  })
 
-  if (config.sizes.some(s => s.id === newSize.id)) {
-    throw new Error(`Size with ID "${newSize.id}" already exists`)
-  }
-
-  config.sizes.push(newSize)
-  await setProductsConfig(prisma, config)
-  return newSize
+  return addVolumeToSize(size)
 }
 
-export async function updateSize(
+export async function updateProductSize(
   prisma: PrismaClient,
   id: string,
-  updates: Partial<Omit<ProductSize, 'id'>>
+  data: Partial<{
+    name: string
+    lengthInches: number
+    widthInches: number
+    heightInches: number
+    weightLbs: number
+    category: string
+    active: boolean
+    singleBoxId: string | null
+  }>
 ): Promise<ProductSize> {
-  const config = await getProductsConfig(prisma)
-  const index = config.sizes.findIndex(s => s.id === id)
-
-  if (index === -1) {
-    throw new Error(`Size with ID "${id}" not found`)
-  }
-
-  const updated: ProductSize = { ...config.sizes[index], ...updates }
-  if (updates.dimensions) {
-    updated.volume = calculateVolume(updated.dimensions)
-  }
-
-  config.sizes[index] = updated
-  await setProductsConfig(prisma, config)
-  return updated
+  const size = await prisma.productSize.update({
+    where: { id },
+    data,
+  })
+  return addVolumeToSize(size)
 }
 
-export async function deleteSize(
+export async function deleteProductSize(
   prisma: PrismaClient,
   id: string
-): Promise<{ deleted: boolean; orphanedSkus: string[] }> {
-  const config = await getProductsConfig(prisma)
-  const index = config.sizes.findIndex(s => s.id === id)
+): Promise<{ deleted: boolean; orphanedSkus: number; orphanedPatterns: number }> {
+  // Count related records before deletion (cascade will remove them)
+  const [skuCount, patternCount] = await Promise.all([
+    prisma.productSku.count({ where: { productSizeId: id } }),
+    prisma.productSkuPattern.count({ where: { productSizeId: id } }),
+  ])
 
-  if (index === -1) {
-    return { deleted: false, orphanedSkus: [] }
+  try {
+    await prisma.productSize.delete({ where: { id } })
+    return { deleted: true, orphanedSkus: skuCount, orphanedPatterns: patternCount }
+  } catch {
+    return { deleted: false, orphanedSkus: 0, orphanedPatterns: 0 }
   }
-
-  // Find SKUs that reference this size
-  const orphanedSkus = config.skus
-    .filter(s => s.sizeId === id)
-    .map(s => s.sku)
-
-  // Remove the size
-  config.sizes.splice(index, 1)
-
-  // Also remove orphaned SKUs
-  config.skus = config.skus.filter(s => s.sizeId !== id)
-
-  await setProductsConfig(prisma, config)
-  return { deleted: true, orphanedSkus }
 }
 
 // ============================================================================
 // SKU CRUD Functions
 // ============================================================================
 
-export async function getSkus(prisma: PrismaClient): Promise<ProductSku[]> {
-  const config = await getProductsConfig(prisma)
-  return config.skus
-}
-
-export async function getSkusForSize(
+export async function addProductSku(
   prisma: PrismaClient,
-  sizeId: string
-): Promise<ProductSku[]> {
-  const config = await getProductsConfig(prisma)
-  return config.skus.filter(s => s.sizeId === sizeId)
-}
-
-export async function addSku(
-  prisma: PrismaClient,
-  sku: ProductSku
+  data: {
+    sku: string
+    productSizeId: string
+    name?: string
+    barcode?: string
+    active?: boolean
+  }
 ): Promise<ProductSku> {
-  const config = await getProductsConfig(prisma)
-
-  // Validate size exists
-  if (!config.sizes.some(s => s.id === sku.sizeId)) {
-    throw new Error(`Size with ID "${sku.sizeId}" not found`)
-  }
-
-  // Check for duplicate SKU
-  if (config.skus.some(s => s.sku.toUpperCase() === sku.sku.toUpperCase())) {
-    throw new Error(`SKU "${sku.sku}" already exists`)
-  }
-
-  config.skus.push(sku)
-  await setProductsConfig(prisma, config)
-  return sku
+  return prisma.productSku.create({
+    data: {
+      sku: data.sku,
+      productSizeId: data.productSizeId,
+      name: data.name ?? null,
+      barcode: data.barcode ?? null,
+      active: data.active ?? true,
+    },
+  })
 }
 
-export async function updateSku(
+export async function updateProductSku(
   prisma: PrismaClient,
-  originalSku: string,
-  updates: Partial<ProductSku>
+  sku: string,
+  data: Partial<{
+    sku: string
+    productSizeId: string
+    name: string | null
+    barcode: string | null
+    active: boolean
+  }>
 ): Promise<ProductSku> {
-  const config = await getProductsConfig(prisma)
-  const index = config.skus.findIndex(
-    s => s.sku.toUpperCase() === originalSku.toUpperCase()
-  )
+  // If changing SKU, we need to delete and recreate
+  if (data.sku && data.sku !== sku) {
+    const existing = await prisma.productSku.findUnique({ where: { sku } })
+    if (!existing) throw new Error(`SKU "${sku}" not found`)
 
-  if (index === -1) {
-    throw new Error(`SKU "${originalSku}" not found`)
+    await prisma.productSku.delete({ where: { sku } })
+    return prisma.productSku.create({
+      data: {
+        sku: data.sku,
+        productSizeId: data.productSizeId ?? existing.productSizeId,
+        name: data.name !== undefined ? data.name : existing.name,
+        barcode: data.barcode !== undefined ? data.barcode : existing.barcode,
+        active: data.active !== undefined ? data.active : existing.active,
+      },
+    })
   }
 
-  // If changing sizeId, validate it exists
-  if (updates.sizeId && !config.sizes.some(s => s.id === updates.sizeId)) {
-    throw new Error(`Size with ID "${updates.sizeId}" not found`)
-  }
-
-  // If changing SKU value, check for conflicts
-  if (updates.sku && updates.sku.toUpperCase() !== originalSku.toUpperCase()) {
-    if (config.skus.some(s => s.sku.toUpperCase() === updates.sku!.toUpperCase())) {
-      throw new Error(`SKU "${updates.sku}" already exists`)
-    }
-  }
-
-  const updated: ProductSku = { ...config.skus[index], ...updates }
-  config.skus[index] = updated
-  await setProductsConfig(prisma, config)
-  return updated
+  return prisma.productSku.update({
+    where: { sku },
+    data,
+  })
 }
 
-export async function deleteSku(
+export async function deleteProductSku(
   prisma: PrismaClient,
   sku: string
 ): Promise<boolean> {
-  const config = await getProductsConfig(prisma)
-  const index = config.skus.findIndex(
-    s => s.sku.toUpperCase() === sku.toUpperCase()
-  )
-
-  if (index === -1) return false
-
-  config.skus.splice(index, 1)
-  await setProductsConfig(prisma, config)
-  return true
+  try {
+    await prisma.productSku.delete({ where: { sku } })
+    return true
+  } catch {
+    return false
+  }
 }
 
 // ============================================================================
-// Backward Compatibility Functions
+// SKU Pattern CRUD Functions
 // ============================================================================
+
+export async function addProductSkuPattern(
+  prisma: PrismaClient,
+  data: {
+    productSizeId: string
+    pattern: string
+  }
+): Promise<ProductSkuPattern> {
+  return prisma.productSkuPattern.create({
+    data: {
+      productSizeId: data.productSizeId,
+      pattern: data.pattern,
+    },
+  })
+}
+
+export async function deleteProductSkuPattern(
+  prisma: PrismaClient,
+  id: number
+): Promise<boolean> {
+  try {
+    await prisma.productSkuPattern.delete({ where: { id } })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ============================================================================
+// Bulk Operations
+// ============================================================================
+
+export async function addPatternsToSize(
+  prisma: PrismaClient,
+  sizeId: string,
+  patterns: string[]
+): Promise<ProductSkuPattern[]> {
+  const created = await prisma.productSkuPattern.createMany({
+    data: patterns.map(pattern => ({
+      productSizeId: sizeId,
+      pattern,
+    })),
+  })
+
+  // Return the created patterns
+  return prisma.productSkuPattern.findMany({
+    where: { productSizeId: sizeId },
+    orderBy: { id: 'desc' },
+    take: created.count,
+  })
+}
+
+export async function replacePatternsForSize(
+  prisma: PrismaClient,
+  sizeId: string,
+  patterns: string[]
+): Promise<ProductSkuPattern[]> {
+  // Delete existing patterns
+  await prisma.productSkuPattern.deleteMany({
+    where: { productSizeId: sizeId },
+  })
+
+  // Add new ones
+  if (patterns.length === 0) return []
+
+  await prisma.productSkuPattern.createMany({
+    data: patterns.map(pattern => ({
+      productSizeId: sizeId,
+      pattern,
+    })),
+  })
+
+  return prisma.productSkuPattern.findMany({
+    where: { productSizeId: sizeId },
+  })
+}
+
+// ============================================================================
+// Unmatched SKU Tracking
+// ============================================================================
+
+export interface UnmatchedSku {
+  sku: string
+  firstSeen: Date | string
+  lastSeen: Date | string
+  occurrences: number
+  exampleOrder: string | null
+  itemName: string | null
+  dismissed: boolean
+}
 
 /**
- * Backward-compatible: returns sizes as Product[] for box-config integration
+ * Record unmatched SKUs during order ingestion.
+ * Uses upsert to increment occurrences if SKU already exists.
  */
-export async function getProducts(prisma: PrismaClient): Promise<Product[]> {
-  const config = await getProductsConfig(prisma)
-  return config.sizes
+export async function recordUnmatchedSkus(
+  prisma: PrismaClient,
+  skus: Array<{ sku: string; orderNumber: string; itemName: string | null }>
+): Promise<void> {
+  if (skus.length === 0) return
+
+  // Deduplicate by SKU within the batch
+  const uniqueSkus = new Map<string, { sku: string; orderNumber: string; itemName: string | null }>()
+  for (const s of skus) {
+    const upperSku = s.sku.toUpperCase()
+    if (upperSku && !uniqueSkus.has(upperSku)) {
+      uniqueSkus.set(upperSku, { ...s, sku: upperSku })
+    }
+  }
+
+  // Batch upsert - increment occurrences if exists
+  await prisma.$transaction(
+    Array.from(uniqueSkus.values()).map(({ sku, orderNumber, itemName }) =>
+      prisma.unmatchedSku.upsert({
+        where: { sku },
+        create: { sku, exampleOrder: orderNumber, itemName, occurrences: 1 },
+        update: {
+          occurrences: { increment: 1 },
+          lastSeen: new Date(),
+          exampleOrder: orderNumber,
+        },
+      })
+    )
+  )
 }
 
-// Legacy function aliases for backward compatibility
-export const addProduct = addSize
-export const updateProduct = updateSize
+/**
+ * Get all unmatched SKUs that haven't been dismissed.
+ */
+export async function getUnmatchedSkus(prisma: PrismaClient): Promise<UnmatchedSku[]> {
+  return prisma.unmatchedSku.findMany({
+    where: { dismissed: false },
+    orderBy: { occurrences: 'desc' },
+  })
+}
+
+/**
+ * Dismiss an unmatched SKU (hide it from the list).
+ */
+export async function dismissUnmatchedSku(prisma: PrismaClient, sku: string): Promise<void> {
+  await prisma.unmatchedSku.update({
+    where: { sku },
+    data: { dismissed: true },
+  })
+}
+
+/**
+ * Remove an unmatched SKU from the table (e.g., after it's been added as a product SKU).
+ */
+export async function removeUnmatchedSku(prisma: PrismaClient, sku: string): Promise<void> {
+  try {
+    await prisma.unmatchedSku.delete({ where: { sku } })
+  } catch {
+    // SKU might not exist in unmatched table, ignore
+  }
+}

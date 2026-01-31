@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(npm run build:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(timeout:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx next build)",
+      "Bash(node -e:*)",
+      "Bash(curl:*)",
+      "Bash(node scripts/backfill-boxes.js:*)"
     ]
   }
 }

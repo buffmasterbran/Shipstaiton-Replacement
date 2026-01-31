@@ -6,15 +6,21 @@ import ProcessDialog from './ProcessDialog'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
-import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
+import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
   id: string
   orderNumber: string
   status: string
   rawPayload: any
-  createdAt: Date
-  updatedAt: Date
+  suggestedBox?: {
+    boxId: string | null
+    boxName: string | null
+    confidence: 'confirmed' | 'calculated' | 'unknown'
+    reason?: string
+  } | null
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 interface SinglesOrdersTableProps {
@@ -60,7 +66,7 @@ interface LabelInfo {
 }
 
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
-  const { expeditedOnly } = useExpeditedFilter()
+  const { expeditedOnly, hidePersonalized } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isProcessDialogOpen, setIsProcessDialogOpen] = useState(false)
@@ -132,6 +138,11 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   // Filter orders
   const filteredOrders = useMemo(() => {
     return processedOrders.filter((order) => {
+      // Global personalized filter (hide personalized by default)
+      if (hidePersonalized && isOrderPersonalized(order.log.rawPayload)) {
+        return false
+      }
+
       // Global expedited filter
       if (expeditedOnly) {
         const customerReachedOut = (order.log as any).customerReachedOut || false
@@ -139,7 +150,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           return false
         }
       }
-      
+
       // Size filter
       if (selectedSize !== 'all' && order.size !== selectedSize) {
         return false
@@ -168,7 +179,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       
       return true
     })
-  }, [processedOrders, selectedSize, selectedColor, searchQuery, expeditedOnly])
+  }, [processedOrders, selectedSize, selectedColor, searchQuery, hidePersonalized, expeditedOnly])
 
   // Group orders for auto-processing
   interface OrderBatch {
@@ -1511,6 +1522,9 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                   Size
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Box
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Quantity
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1530,7 +1544,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">
                     No orders found matching your filters
                   </td>
                 </tr>
@@ -1565,6 +1579,25 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{processedOrder.size}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {(() => {
+                        const suggestion = processedOrder.log.suggestedBox
+                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
+                        if (!suggestion.boxName) {
+                          return <span className="text-sm text-red-600 font-medium">No fit</span>
+                        }
+                        const colorClass = suggestion.confidence === 'confirmed'
+                          ? 'text-green-600'
+                          : suggestion.confidence === 'calculated'
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                        return (
+                          <span className={`text-sm font-medium ${colorClass}`}>
+                            {suggestion.boxName}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">

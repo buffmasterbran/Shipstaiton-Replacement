@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
-import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
+import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
@@ -26,8 +26,14 @@ interface OrderLog {
   status: string
   rawPayload: any
   customerReachedOut?: boolean
-  createdAt: Date
-  updatedAt: Date
+  suggestedBox?: {
+    boxId: string | null
+    boxName: string | null
+    confidence: 'confirmed' | 'calculated' | 'unknown'
+    reason?: string
+  } | null
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 /** Same shape as lib/settings OrderHighlightSettings (passed from server). */
@@ -135,7 +141,7 @@ function getOrderType(log: OrderLog): OrderTypeFilter {
 }
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
-  const { expeditedOnly } = useExpeditedFilter()
+  const { expeditedOnly, hidePersonalized } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -148,17 +154,22 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     let list = logs
-    
+
+    // Filter out personalized orders (global toggle from header, default ON)
+    if (hidePersonalized) {
+      list = list.filter((log) => !isOrderPersonalized(log.rawPayload))
+    }
+
     // Filter by expedited (global toggle from header)
     if (expeditedOnly) {
       list = list.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
     }
-    
+
     // Filter by type
     if (typeFilter !== 'all') {
       list = list.filter((log) => getOrderType(log) === typeFilter)
     }
-    
+
     // Filter by search query
     if (q) {
       list = list.filter((log) => {
@@ -167,7 +178,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         return num.includes(q) || customer.includes(q)
       })
     }
-    
+
     return [...list].sort((a, b) => {
       let cmp = 0
       switch (sortKey) {
@@ -204,15 +215,23 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [logs, expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
+  }, [logs, hidePersonalized, expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
   
   // Count orders by type for tab badges
   const typeCounts = useMemo(() => {
-    // Filter by expedited first if toggle is on
-    const baseList = expeditedOnly
-      ? logs.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
-      : logs
-    
+    // Apply global filters first
+    let baseList = logs
+
+    // Filter out personalized orders if toggle is on
+    if (hidePersonalized) {
+      baseList = baseList.filter((log) => !isOrderPersonalized(log.rawPayload))
+    }
+
+    // Filter by expedited if toggle is on
+    if (expeditedOnly) {
+      baseList = baseList.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
+    }
+
     const counts: Record<OrderTypeFilter, number> = {
       all: baseList.length,
       single: 0,
@@ -226,7 +245,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       counts[t]++
     })
     return counts
-  }, [logs, expeditedOnly])
+  }, [logs, hidePersonalized, expeditedOnly])
 
   const totalFiltered = filteredAndSortedLogs.length
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize))
@@ -237,7 +256,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   useEffect(() => {
     setPage(1)
-  }, [expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
+  }, [hidePersonalized, expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
 
   useEffect(() => {
     if (page > totalPages) setPage(1)
@@ -351,6 +370,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                 <Th columnKey="orderNumber">Order #</Th>
                 <Th columnKey="customer">Customer</Th>
                 <Th columnKey="items">Items</Th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Box
+                </th>
                 <Th columnKey="amount">Amount</Th>
                 <Th columnKey="orderDate">Order Date</Th>
                 <Th columnKey="received">Received</Th>
@@ -393,6 +415,25 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
                       {itemCount}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {(() => {
+                        const suggestion = log.suggestedBox
+                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
+                        if (!suggestion.boxName) {
+                          return <span className="text-sm text-red-600 font-medium">No fit</span>
+                        }
+                        const colorClass = suggestion.confidence === 'confirmed'
+                          ? 'text-green-600'
+                          : suggestion.confidence === 'calculated'
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                        return (
+                          <span className={`text-sm font-medium ${colorClass}`}>
+                            {suggestion.boxName}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
                       {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}

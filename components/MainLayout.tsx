@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { RoleProvider, useRole } from '@/context/RoleContext'
 import { ExpeditedFilterProvider, useExpeditedFilter } from '@/context/ExpeditedFilterContext'
+import { OrdersProvider, useOrders } from '@/context/OrdersContext'
 import Sidebar from './Sidebar'
 import Header from './Header'
 
@@ -13,7 +14,8 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { role, setRole } = useRole()
-  const { expeditedOnly, setExpeditedOnly } = useExpeditedFilter()
+  const { expeditedOnly, setExpeditedOnly, hidePersonalized, setHidePersonalized } = useExpeditedFilter()
+  const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders } = useOrders()
   const [canProcess, setCanProcess] = useState(true)
 
   const operatorAllowedPaths = ['/bulk-verification', '/local-pickup', '/analytics', '/returns', '/inventory-count']
@@ -46,6 +48,8 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
           expeditedOnly={expeditedOnly}
           setExpeditedOnly={setExpeditedOnly}
           hideExpeditedToggle={isExpeditedPage}
+          hidePersonalized={hidePersonalized}
+          setHidePersonalized={setHidePersonalized}
           showProcessButton={isSinglesPage}
           processButtonText="Process"
           processButtonDisabled={isSinglesPage && !canProcess}
@@ -53,6 +57,10 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
             const event = new CustomEvent('openProcessDialog')
             window.dispatchEvent(event)
           } : undefined}
+          ordersCount={orders.length}
+          ordersLoading={ordersLoading}
+          lastFetchedAt={lastFetchedAt}
+          onRefreshOrders={refreshOrders}
         />
         <main className="flex-1 p-6">{children}</main>
       </div>
@@ -64,7 +72,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   return (
     <RoleProvider>
       <ExpeditedFilterProvider>
-        <MainLayoutContent>{children}</MainLayoutContent>
+        <OrdersProvider>
+          <MainLayoutContent>{children}</MainLayoutContent>
+        </OrdersProvider>
       </ExpeditedFilterProvider>
     </RoleProvider>
   )

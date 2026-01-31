@@ -1,40 +1,31 @@
 import type { PrismaClient } from '@prisma/client'
-import type { Product } from './products'
+import type { ProductSize } from './products'
 
 // ============================================================================
-// Types
+// Types (matching Prisma schema)
 // ============================================================================
-
-export interface BoxDimensions {
-  length: number  // inches (internal)
-  width: number   // inches (internal)
-  height: number  // inches (internal)
-}
 
 export interface Box {
   id: string
   name: string
-  internalDimensions: BoxDimensions
-  volume: number      // Auto-calculated (in³)
-  priority: number    // Lower = try first (prefer smaller boxes)
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  volume: number // Calculated: L × W × H
+  priority: number
   active: boolean
   inStock: boolean
+  singleCupOnly: boolean // If true, only use for single-cup orders (no multi-cup, no accessories)
 }
 
-export interface FeedbackRule {
+export interface BoxFeedbackRule {
   id: string
-  comboSignature: string  // Normalized: "tumbler-16oz:1|tumbler-26oz:2"
-  boxId: string           // Box that was tested
-  fits: boolean           // true = fits, false = doesn't fit
-  correctBoxId?: string   // If doesn't fit, which box actually works?
-  testedAt: string
-}
-
-export interface BoxConfig {
-  boxes: Box[]
-  feedbackRules: FeedbackRule[]
-  packingEfficiency: number  // Default 0.7 (70%)
-  version: string
+  comboSignature: string
+  boxId: string
+  fits: boolean
+  correctBoxId: string | null
+  testedAt: Date
+  testedBy: string | null
 }
 
 export interface BoxMatchResult {
@@ -44,73 +35,32 @@ export interface BoxMatchResult {
   orderVolume?: number
 }
 
+// For backward compatibility
+export type Product = ProductSize
+
 // ============================================================================
 // Constants
 // ============================================================================
 
-const BOX_CONFIG_KEY = 'box_config'
-
-const DEFAULT_BOXES: Box[] = [
-  {
-    id: 'single',
-    name: 'Single Box',
-    internalDimensions: { length: 5, width: 5, height: 9 },
-    volume: 225,
-    priority: 1,
-    active: true,
-    inStock: true,
-  },
-  {
-    id: '2-4-box',
-    name: '2/4 Box',
-    internalDimensions: { length: 8, width: 8, height: 9 },
-    volume: 576,
-    priority: 2,
-    active: true,
-    inStock: true,
-  },
-  {
-    id: '4-5-box',
-    name: '4/5 Box',
-    internalDimensions: { length: 10, width: 10, height: 10 },
-    volume: 1000,
-    priority: 3,
-    active: true,
-    inStock: true,
-  },
-  {
-    id: '6-10-box',
-    name: '6/10 Box',
-    internalDimensions: { length: 12, width: 12, height: 12 },
-    volume: 1728,
-    priority: 4,
-    active: true,
-    inStock: true,
-  },
-]
-
-const DEFAULT_CONFIG: BoxConfig = {
-  boxes: DEFAULT_BOXES,
-  feedbackRules: [],
-  packingEfficiency: 0.7,
-  version: '1.0.0',
-}
+const DEFAULT_PACKING_EFFICIENCY = 1.0  // 100% - box dimensions are internal measurements
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 /** Calculate volume from dimensions */
-export function calculateBoxVolume(dims: BoxDimensions): number {
-  return dims.length * dims.width * dims.height
+export function calculateBoxVolume(length: number, width: number, height: number): number {
+  return length * width * height
 }
 
-/** Generate a URL-safe ID from a name */
-export function generateBoxId(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+/** Add volume to a Box from Prisma */
+function addVolumeToBox(box: any): Box {
+  const { createdAt, updatedAt, ...rest } = box
+  return {
+    ...rest,
+    volume: calculateBoxVolume(box.lengthInches, box.widthInches, box.heightInches),
+    singleCupOnly: box.singleCupOnly ?? false,
+  }
 }
 
 /** Build normalized signature for an order (for feedback lookup) */
@@ -125,35 +75,148 @@ export function buildComboSignature(items: { productId: string; quantity: number
 /** Calculate total product volume for an order */
 export function calculateOrderVolume(
   items: { productId: string; quantity: number }[],
-  products: Product[]
+  products: ProductSize[]
 ): number {
   let total = 0
   for (const item of items) {
     const product = products.find(p => p.id === item.productId)
-    if (product) {
+    if (product?.volume) {
       total += product.volume * item.quantity
     }
   }
   return total
 }
 
+// ============================================================================
+// Order Classification (for single-cup box logic)
+// ============================================================================
+
+export interface OrderClassification {
+  cupCount: number        // Total quantity of tumblers/bottles
+  hasAccessories: boolean // Has non-sticker accessories (lids, etc.)
+  stickerOnly: boolean    // Order contains only stickers
+  accessoryOnly: boolean  // Order contains only accessories (no cups)
+}
+
+/**
+ * Classify order items to determine if single-cup boxes are eligible.
+ * - Cups = tumbler or bottle categories
+ * - Stickers = SKU starts with PL-STCK (ignored for box fitting)
+ * - Accessories = everything else (lids, straws, etc.)
+ */
+export function classifyOrderItems(
+  items: { productId: string; quantity: number; sku?: string }[],
+  products: ProductSize[]
+): OrderClassification {
+  let cupCount = 0
+  let hasAccessories = false
+  let hasCups = false
+  let hasNonSticker = false
+
+  for (const item of items) {
+    const product = products.find(p => p.id === item.productId)
+    if (!product) continue
+
+    // Check if it's a sticker by SKU pattern (PL-STCK*)
+    // Stickers are ignored for box fitting - they fit with anything
+    const sku = item.sku?.toUpperCase() || ''
+    if (sku.startsWith('PL-STCK')) {
+      continue // Skip stickers - they don't affect box selection
+    }
+
+    const category = product.category.toLowerCase()
+
+    if (category === 'tumbler' || category === 'bottle') {
+      cupCount += item.quantity
+      hasCups = true
+      hasNonSticker = true
+    } else if (category === 'accessory' || category === 'other') {
+      hasAccessories = true
+      hasNonSticker = true
+    }
+  }
+
+  return {
+    cupCount,
+    hasAccessories,
+    stickerOnly: !hasNonSticker,
+    accessoryOnly: !hasCups && hasAccessories,
+  }
+}
+
 /** Check if order fits in box (volume-based) */
 export function calculateFitRatio(
   orderVolume: number,
   box: Box,
-  packingEfficiency: number
+  packingEfficiency: number = DEFAULT_PACKING_EFFICIENCY
 ): number {
   const usableVolume = box.volume * packingEfficiency
   if (usableVolume === 0) return Infinity
   return orderVolume / usableVolume
 }
 
+// ============================================================================
+// Read Functions
+// ============================================================================
+
+/** Get all boxes with calculated volume */
+export async function getBoxes(prisma: PrismaClient): Promise<Box[]> {
+  const boxes = await prisma.box.findMany({
+    orderBy: { priority: 'asc' },
+  })
+  return boxes.map(addVolumeToBox)
+}
+
+/** Get active, in-stock boxes only */
+export async function getActiveBoxes(prisma: PrismaClient): Promise<Box[]> {
+  const boxes = await prisma.box.findMany({
+    where: { active: true, inStock: true },
+    orderBy: { priority: 'asc' },
+  })
+  return boxes.map(addVolumeToBox)
+}
+
+/** Get all feedback rules */
+export async function getFeedbackRules(prisma: PrismaClient): Promise<BoxFeedbackRule[]> {
+  return prisma.boxFeedbackRule.findMany({
+    orderBy: { testedAt: 'desc' },
+  })
+}
+
+/** Get packing efficiency from app settings (or default) */
+export async function getPackingEfficiency(prisma: PrismaClient): Promise<number> {
+  try {
+    const setting = await prisma.appSetting.findUnique({
+      where: { key: 'packing_efficiency' },
+    })
+    if (setting?.value && typeof setting.value === 'number') {
+      return setting.value
+    }
+  } catch {
+    // Ignore errors
+  }
+  return DEFAULT_PACKING_EFFICIENCY
+}
+
+/** Set packing efficiency in app settings */
+export async function setPackingEfficiency(prisma: PrismaClient, value: number): Promise<void> {
+  await prisma.appSetting.upsert({
+    where: { key: 'packing_efficiency' },
+    create: { key: 'packing_efficiency', value },
+    update: { value },
+  })
+}
+
+// ============================================================================
+// Box Fitting Logic
+// ============================================================================
+
 /** Check feedback rules for this combo + box */
 export function checkFeedback(
   signature: string,
   boxId: string,
-  feedbackRules: FeedbackRule[]
-): { hasFeedback: boolean; fits?: boolean; correctBoxId?: string } {
+  feedbackRules: BoxFeedbackRule[]
+): { hasFeedback: boolean; fits?: boolean; correctBoxId?: string | null } {
   const rule = feedbackRules.find(
     r => r.comboSignature === signature && r.boxId === boxId
   )
@@ -165,21 +228,39 @@ export function checkFeedback(
 
 /** Find best box for an order */
 export function findBestBox(
-  items: { productId: string; quantity: number }[],
-  products: Product[],
-  boxConfig: BoxConfig
+  items: { productId: string; quantity: number; sku?: string }[],
+  products: ProductSize[],
+  boxes: Box[],
+  feedbackRules: BoxFeedbackRule[],
+  packingEfficiency: number = DEFAULT_PACKING_EFFICIENCY
 ): BoxMatchResult {
   const signature = buildComboSignature(items)
   const orderVolume = calculateOrderVolume(items, products)
 
+  // Classify order to determine single-cup box eligibility
+  const classification = classifyOrderItems(items, products)
+
   // Sort boxes by priority (smaller/preferred first)
-  const activeBoxes = boxConfig.boxes
-    .filter(b => b.active && b.inStock)
+  // Filter out boxes that don't match the order type
+  const eligibleBoxes = boxes
+    .filter(b => {
+      if (!b.active || !b.inStock) return false
+
+      // Single-cup boxes: only for exactly 1 cup with no accessories
+      if (b.singleCupOnly) {
+        // Must have exactly 1 cup (quantity = 1)
+        if (classification.cupCount !== 1) return false
+        // Must not have accessories (lids, straws, etc.)
+        if (classification.hasAccessories) return false
+      }
+
+      return true
+    })
     .sort((a, b) => a.priority - b.priority)
 
-  for (const box of activeBoxes) {
+  for (const box of eligibleBoxes) {
     // LAYER 1: Check feedback rules first (human override)
-    const feedback = checkFeedback(signature, box.id, boxConfig.feedbackRules)
+    const feedback = checkFeedback(signature, box.id, feedbackRules)
 
     if (feedback.hasFeedback) {
       if (feedback.fits) {
@@ -191,7 +272,7 @@ export function findBestBox(
     }
 
     // LAYER 2: Fall back to volume calculation
-    const fitRatio = calculateFitRatio(orderVolume, box, boxConfig.packingEfficiency)
+    const fitRatio = calculateFitRatio(orderVolume, box, packingEfficiency)
     if (fitRatio <= 1.0) {
       return { box, confidence: 'calculated', fitRatio, orderVolume }
     }
@@ -200,151 +281,181 @@ export function findBestBox(
   return { box: null, confidence: 'unknown', orderVolume }
 }
 
-// ============================================================================
-// Database Functions
-// ============================================================================
-
-export function getDefaultBoxConfig(): BoxConfig {
-  return {
-    ...DEFAULT_CONFIG,
-    boxes: [...DEFAULT_CONFIG.boxes],
-    feedbackRules: [...DEFAULT_CONFIG.feedbackRules],
-  }
-}
-
-export async function getBoxConfig(prisma: PrismaClient): Promise<BoxConfig> {
-  try {
-    const row = await prisma.appSetting.findUnique({
-      where: { key: BOX_CONFIG_KEY },
-    })
-    if (!row?.value || typeof row.value !== 'object') {
-      return getDefaultBoxConfig()
-    }
-    const v = row.value as Record<string, unknown>
-    return {
-      boxes: Array.isArray(v.boxes) ? v.boxes as Box[] : DEFAULT_BOXES,
-      feedbackRules: Array.isArray(v.feedbackRules) ? v.feedbackRules as FeedbackRule[] : [],
-      packingEfficiency: typeof v.packingEfficiency === 'number' ? v.packingEfficiency : 0.7,
-      version: typeof v.version === 'string' ? v.version : '1.0.0',
-    }
-  } catch {
-    return getDefaultBoxConfig()
-  }
-}
-
-export async function setBoxConfig(
+/** Find best box using database queries (convenience wrapper) */
+export async function findBestBoxForOrder(
   prisma: PrismaClient,
-  config: BoxConfig
-): Promise<BoxConfig> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const jsonValue = config as any
-  await prisma.appSetting.upsert({
-    where: { key: BOX_CONFIG_KEY },
-    create: { key: BOX_CONFIG_KEY, value: jsonValue },
-    update: { value: jsonValue },
-  })
-  return config
+  items: { productId: string; quantity: number }[],
+  products: ProductSize[]
+): Promise<BoxMatchResult> {
+  const [boxes, feedbackRules, packingEfficiency] = await Promise.all([
+    getActiveBoxes(prisma),
+    getFeedbackRules(prisma),
+    getPackingEfficiency(prisma),
+  ])
+
+  return findBestBox(items, products, boxes, feedbackRules, packingEfficiency)
 }
 
-// Box CRUD
+// ============================================================================
+// Box CRUD Functions
+// ============================================================================
+
 export async function addBox(
   prisma: PrismaClient,
-  box: Omit<Box, 'id' | 'volume'> & { id?: string }
+  data: {
+    id?: string
+    name: string
+    lengthInches: number
+    widthInches: number
+    heightInches: number
+    priority?: number
+    active?: boolean
+    inStock?: boolean
+    singleCupOnly?: boolean
+  }
 ): Promise<Box> {
-  const config = await getBoxConfig(prisma)
+  const id = data.id || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
-  const newBox: Box = {
-    ...box,
-    id: box.id || generateBoxId(box.name),
-    volume: calculateBoxVolume(box.internalDimensions),
+  // Get max priority if not provided
+  let priority = data.priority
+  if (priority === undefined) {
+    const maxPriority = await prisma.box.aggregate({
+      _max: { priority: true },
+    })
+    priority = (maxPriority._max.priority ?? 0) + 1
   }
 
-  if (config.boxes.some(b => b.id === newBox.id)) {
-    throw new Error(`Box with ID "${newBox.id}" already exists`)
-  }
+  const box = await prisma.box.create({
+    data: {
+      id,
+      name: data.name,
+      lengthInches: data.lengthInches,
+      widthInches: data.widthInches,
+      heightInches: data.heightInches,
+      priority,
+      active: data.active ?? true,
+      inStock: data.inStock ?? true,
+      singleCupOnly: data.singleCupOnly ?? false,
+    } as any,
+  })
 
-  config.boxes.push(newBox)
-  await setBoxConfig(prisma, config)
-  return newBox
+  return addVolumeToBox(box)
 }
 
 export async function updateBox(
   prisma: PrismaClient,
   id: string,
-  updates: Partial<Omit<Box, 'id'>>
+  data: Partial<{
+    name: string
+    lengthInches: number
+    widthInches: number
+    heightInches: number
+    priority: number
+    active: boolean
+    inStock: boolean
+    singleCupOnly: boolean
+  }>
 ): Promise<Box> {
-  const config = await getBoxConfig(prisma)
-  const index = config.boxes.findIndex(b => b.id === id)
-
-  if (index === -1) {
-    throw new Error(`Box with ID "${id}" not found`)
-  }
-
-  const updated: Box = {
-    ...config.boxes[index],
-    ...updates,
-  }
-
-  if (updates.internalDimensions) {
-    updated.volume = calculateBoxVolume(updated.internalDimensions)
-  }
-
-  config.boxes[index] = updated
-  await setBoxConfig(prisma, config)
-  return updated
+  const box = await prisma.box.update({
+    where: { id },
+    data,
+  })
+  return addVolumeToBox(box)
 }
 
 export async function deleteBox(
   prisma: PrismaClient,
   id: string
-): Promise<boolean> {
-  const config = await getBoxConfig(prisma)
-  const index = config.boxes.findIndex(b => b.id === id)
+): Promise<{ deleted: boolean; feedbackRulesRemoved: number }> {
+  // Count feedback rules that will be cascade deleted
+  const feedbackCount = await prisma.boxFeedbackRule.count({
+    where: { boxId: id },
+  })
 
-  if (index === -1) {
-    return false
+  try {
+    await prisma.box.delete({ where: { id } })
+    return { deleted: true, feedbackRulesRemoved: feedbackCount }
+  } catch {
+    return { deleted: false, feedbackRulesRemoved: 0 }
   }
-
-  config.boxes.splice(index, 1)
-  await setBoxConfig(prisma, config)
-  return true
 }
 
-// Feedback Rule CRUD
+// ============================================================================
+// Feedback Rule CRUD Functions
+// ============================================================================
+
 export async function addFeedbackRule(
   prisma: PrismaClient,
-  rule: Omit<FeedbackRule, 'id' | 'testedAt'>
-): Promise<FeedbackRule> {
-  const config = await getBoxConfig(prisma)
-
-  const newRule: FeedbackRule = {
-    ...rule,
-    id: `rule-${Date.now()}`,
-    testedAt: new Date().toISOString(),
+  data: {
+    comboSignature: string
+    boxId: string
+    fits: boolean
+    correctBoxId?: string
+    testedBy?: string
   }
-
-  // Remove any existing rule for this combo + box
-  config.feedbackRules = config.feedbackRules.filter(
-    r => !(r.comboSignature === rule.comboSignature && r.boxId === rule.boxId)
-  )
-
-  config.feedbackRules.push(newRule)
-  await setBoxConfig(prisma, config)
-  return newRule
+): Promise<BoxFeedbackRule> {
+  // Upsert - replace existing rule for this combo + box
+  return prisma.boxFeedbackRule.upsert({
+    where: {
+      comboSignature_boxId: {
+        comboSignature: data.comboSignature,
+        boxId: data.boxId,
+      },
+    },
+    create: {
+      comboSignature: data.comboSignature,
+      boxId: data.boxId,
+      fits: data.fits,
+      correctBoxId: data.fits ? null : data.correctBoxId ?? null,
+      testedBy: data.testedBy ?? null,
+    },
+    update: {
+      fits: data.fits,
+      correctBoxId: data.fits ? null : data.correctBoxId ?? null,
+      testedAt: new Date(),
+      testedBy: data.testedBy ?? null,
+    },
+  })
 }
 
 export async function deleteFeedbackRule(
   prisma: PrismaClient,
   id: string
 ): Promise<boolean> {
-  const config = await getBoxConfig(prisma)
-  const index = config.feedbackRules.findIndex(r => r.id === id)
-
-  if (index === -1) {
+  try {
+    await prisma.boxFeedbackRule.delete({ where: { id } })
+    return true
+  } catch {
     return false
   }
+}
 
-  config.feedbackRules.splice(index, 1)
-  await setBoxConfig(prisma, config)
-  return true
+export async function clearFeedbackRulesForBox(
+  prisma: PrismaClient,
+  boxId: string
+): Promise<number> {
+  const result = await prisma.boxFeedbackRule.deleteMany({
+    where: { boxId },
+  })
+  return result.count
+}
+
+// ============================================================================
+// Config Response (for API compatibility)
+// ============================================================================
+
+export interface BoxConfig {
+  boxes: Box[]
+  feedbackRules: BoxFeedbackRule[]
+  packingEfficiency: number
+}
+
+export async function getBoxConfig(prisma: PrismaClient): Promise<BoxConfig> {
+  const [boxes, feedbackRules, packingEfficiency] = await Promise.all([
+    getBoxes(prisma),
+    getFeedbackRules(prisma),
+    getPackingEfficiency(prisma),
+  ])
+
+  return { boxes, feedbackRules, packingEfficiency }
 }

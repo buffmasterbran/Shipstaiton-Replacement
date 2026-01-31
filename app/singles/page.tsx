@@ -1,41 +1,44 @@
-import { prisma } from '@/lib/prisma'
+'use client'
+
+import { useMemo } from 'react'
 import SinglesOrdersTable from '@/components/SinglesOrdersTable'
-import { isSingleItemOrder } from '@/lib/order-utils'
+import { useOrders, isSingleItemOrder } from '@/context/OrdersContext'
 
-// Force dynamic rendering - no caching
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+export default function SinglesOrdersPage() {
+  const { orders, loading, error } = useOrders()
 
-async function getSingleItemOrders() {
-  try {
-    const logs = await prisma.orderLog.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-    })
-    
-    // Filter to only single-item orders
-    const singleItemOrders = logs.filter((log) => {
-      const payload = log.rawPayload as any
-      const order = Array.isArray(payload) ? payload[0] : payload
-      const items = order?.items || []
-      return isSingleItemOrder(items)
-    })
-    
-    return singleItemOrders
-  } catch (error) {
-    console.error('Error fetching single item orders:', error)
-    return []
+  // Filter to only single-item orders
+  const singleItemOrders = useMemo(() => {
+    return orders.filter(isSingleItemOrder)
+  }, [orders])
+
+  if (loading) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Singles Orders</h1>
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+          <span className="ml-3 text-gray-600">Loading orders...</span>
+        </div>
+      </div>
+    )
   }
-}
 
-export default async function SinglesOrdersPage() {
-  const orders = await getSingleItemOrders()
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Singles Orders</h1>
+        <div className="bg-red-50 text-red-600 p-4 rounded-lg">
+          Error loading orders: {error}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Singles Orders</h1>
-      <SinglesOrdersTable orders={orders} />
+      <SinglesOrdersTable orders={singleItemOrders} />
     </div>
   )
 }

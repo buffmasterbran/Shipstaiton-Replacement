@@ -14,6 +14,7 @@ model OrderLog {
   status              String   @default("RECEIVED")
   rawPayload          Json     @map("raw_payload")
   customerReachedOut  Boolean  @default(false) @map("customer_reached_out")
+  suggestedBox        Json?    @map("suggested_box")  // { boxId, boxName, confidence, reason? }
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
@@ -50,5 +51,113 @@ model AppSetting {
   @@map("app_settings")
 }
 
+// ============================================================================
+// BOX CONFIG TABLES - for box fitting calculations
+// ============================================================================
 
+model Box {
+  id            String   @id
+  name          String
+  lengthInches  Float    @map("length_inches")
+  widthInches   Float    @map("width_inches")
+  heightInches  Float    @map("height_inches")
+  priority      Int      @default(1)
+  active        Boolean  @default(true)
+  inStock       Boolean  @default(true) @map("in_stock")
+  singleCupOnly Boolean  @default(false) @map("single_cup_only")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
+  feedbackRules  BoxFeedbackRule[] @relation("BoxFeedback")
+  correctRules   BoxFeedbackRule[] @relation("CorrectBox")
+  singleProducts ProductSize[]     @relation("SingleProductBox")
+
+  @@map("boxes")
+  @@index([active])
+  @@index([priority])
+}
+
+model ProductSize {
+  id           String   @id
+  name         String
+  lengthInches Float    @map("length_inches")
+  widthInches  Float    @map("width_inches")
+  heightInches Float    @map("height_inches")
+  weightLbs    Float    @default(0) @map("weight_lbs")
+  category     String   @default("other")
+  active       Boolean  @default(true)
+  singleBoxId  String?  @map("single_box_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  skuPatterns ProductSkuPattern[]
+  skus        ProductSku[]
+  singleBox   Box?                @relation("SingleProductBox", fields: [singleBoxId], references: [id], onDelete: SetNull)
+
+  @@map("product_sizes")
+  @@index([active])
+  @@index([category])
+}
+
+model ProductSkuPattern {
+  id            Int         @id @default(autoincrement())
+  productSizeId String      @map("product_size_id")
+  pattern       String
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  productSize ProductSize @relation(fields: [productSizeId], references: [id], onDelete: Cascade)
+
+  @@map("product_sku_patterns")
+  @@index([productSizeId])
+}
+
+model ProductSku {
+  sku           String      @id
+  productSizeId String      @map("product_size_id")
+  name          String?
+  barcode       String?
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  productSize ProductSize @relation(fields: [productSizeId], references: [id], onDelete: Cascade)
+
+  @@map("product_skus")
+  @@index([productSizeId])
+}
+
+model BoxFeedbackRule {
+  id             String   @id @default(cuid())
+  comboSignature String   @map("combo_signature")
+  boxId          String   @map("box_id")
+  fits           Boolean
+  correctBoxId   String?  @map("correct_box_id")
+  testedAt       DateTime @default(now()) @map("tested_at")
+  testedBy       String?  @map("tested_by")
+
+  box        Box  @relation("BoxFeedback", fields: [boxId], references: [id], onDelete: Cascade)
+  correctBox Box? @relation("CorrectBox", fields: [correctBoxId], references: [id], onDelete: SetNull)
+
+  @@unique([comboSignature, boxId])
+  @@map("box_feedback_rules")
+  @@index([comboSignature])
+  @@index([boxId])
+}
+
+// ============================================================================
+// UNMATCHED SKU TRACKING - tracks SKUs that don't match any product
+// ============================================================================
+
+model UnmatchedSku {
+  sku          String    @id
+  firstSeen    DateTime  @default(now()) @map("first_seen")
+  lastSeen     DateTime  @updatedAt @map("last_seen")
+  occurrences  Int       @default(1)
+  exampleOrder String?   @map("example_order")
+  itemName     String?   @map("item_name")
+  dismissed    Boolean   @default(false)
+
+  @@map("unmatched_skus")
+  @@index([dismissed])
+  @@index([lastSeen])
+}

@@ -9,10 +9,16 @@ interface HeaderProps {
   expeditedOnly?: boolean
   setExpeditedOnly?: (value: boolean) => void
   hideExpeditedToggle?: boolean
+  hidePersonalized?: boolean
+  setHidePersonalized?: (value: boolean) => void
   onProcessClick?: () => void
   processButtonText?: string
   showProcessButton?: boolean
   processButtonDisabled?: boolean
+  ordersCount?: number
+  ordersLoading?: boolean
+  lastFetchedAt?: Date | null
+  onRefreshOrders?: () => void
 }
 
 export default function Header({
@@ -21,12 +27,27 @@ export default function Header({
   expeditedOnly = false,
   setExpeditedOnly,
   hideExpeditedToggle = false,
+  hidePersonalized = true,
+  setHidePersonalized,
   onProcessClick,
   processButtonText = 'Process',
   showProcessButton = false,
   processButtonDisabled = false,
+  ordersCount,
+  ordersLoading = false,
+  lastFetchedAt,
+  onRefreshOrders,
 }: HeaderProps) {
   const [dateRange, setDateRange] = useState('')
+
+  const formatLastFetched = (date: Date | null | undefined) => {
+    if (!date) return ''
+    const now = new Date()
+    const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
+    if (diff < 60) return 'just now'
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
 
   return (
     <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
@@ -82,6 +103,72 @@ export default function Header({
             </svg>
             Expedited Only
           </button>
+        )}
+
+        {/* Hide Personalized Toggle */}
+        {setHidePersonalized && (
+          <button
+            type="button"
+            onClick={() => setHidePersonalized(!hidePersonalized)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              hidePersonalized
+                ? 'bg-purple-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+            title="Hide orders with personalized/engraved items"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+              />
+            </svg>
+            Hide Personalized
+          </button>
+        )}
+
+        {/* Refresh Orders Button */}
+        {onRefreshOrders && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRefreshOrders}
+              disabled={ordersLoading}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                ordersLoading
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+              }`}
+              title="Refresh orders from database"
+            >
+              <svg
+                className={`w-4 h-4 ${ordersLoading ? 'animate-spin' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              {ordersLoading ? 'Loading...' : 'Refresh'}
+            </button>
+            {ordersCount !== undefined && !ordersLoading && (
+              <span className="text-xs text-gray-500">
+                {ordersCount} orders {lastFetchedAt && `• ${formatLastFetched(lastFetchedAt)}`}
+              </span>
+            )}
+          </div>
         )}
       </div>
 
