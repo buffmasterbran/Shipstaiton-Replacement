@@ -1,6 +1,23 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import BoxTestDialog from '@/components/BoxTestDialog'
 
 interface Box {
@@ -40,6 +57,88 @@ interface Product {
   singleBoxId?: string | null
 }
 
+// Sortable row component for drag-and-drop
+function SortableBoxRow({
+  box,
+  packingEfficiency,
+  onEdit,
+  onDelete,
+}: {
+  box: Box
+  packingEfficiency: number
+  onEdit: (box: Box) => void
+  onDelete: (id: string) => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: box.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <tr ref={setNodeRef} style={style} className="hover:bg-gray-50 bg-white">
+      <td className="px-2 py-3 w-8">
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing p-1 text-gray-400 hover:text-gray-600"
+          title="Drag to reorder"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+          </svg>
+        </button>
+      </td>
+      <td className="px-4 py-3 font-medium text-gray-900">
+        {box.name}
+        {box.singleCupOnly && (
+          <span className="ml-2 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">
+            Single
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-gray-600">
+        {box.lengthInches}" × {box.widthInches}" × {box.heightInches}"
+      </td>
+      <td className="px-4 py-3 text-gray-600">{box.volume.toFixed(0)} in³</td>
+      <td className="px-4 py-3 text-gray-600">{(box.volume * packingEfficiency).toFixed(0)} in³</td>
+      <td className="px-4 py-3 text-gray-500 text-xs">{box.priority}</td>
+      <td className="px-4 py-3">
+        {box.active && box.inStock ? (
+          <span className="text-green-600">Active</span>
+        ) : !box.active ? (
+          <span className="text-gray-400">Inactive</span>
+        ) : (
+          <span className="text-yellow-600">Out of Stock</span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-right">
+        <button
+          onClick={() => onEdit(box)}
+          className="text-blue-600 hover:text-blue-800 text-sm mr-3"
+        >
+          Edit
+        </button>
+        <button
+          onClick={() => onDelete(box.id)}
+          className="text-red-600 hover:text-red-800 text-sm"
+        >
+          Delete
+        </button>
+      </td>
+    </tr>
+  )
+}
+
 export default function BoxConfigPage() {
   const [boxConfig, setBoxConfig] = useState<BoxConfig | null>(null)
   const [products, setProducts] = useState<Product[]>([])
@@ -55,7 +154,6 @@ export default function BoxConfigPage() {
     length: '',
     width: '',
     height: '',
-    priority: '',
     active: true,
     inStock: true,
     singleCupOnly: false,
@@ -66,6 +164,14 @@ export default function BoxConfigPage() {
 
   // Matrix filter state
   const [hideConfirmed, setHideConfirmed] = useState(true)
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
 
   useEffect(() => {
     fetchData()
@@ -102,7 +208,6 @@ export default function BoxConfigPage() {
       length: '',
       width: '',
       height: '',
-      priority: '',
       active: true,
       inStock: true,
       singleCupOnly: false,
@@ -117,7 +222,6 @@ export default function BoxConfigPage() {
       length: String(box.lengthInches),
       width: String(box.widthInches),
       height: String(box.heightInches),
-      priority: String(box.priority),
       active: box.active,
       inStock: box.inStock,
       singleCupOnly: box.singleCupOnly ?? false,
@@ -141,7 +245,7 @@ export default function BoxConfigPage() {
           lengthInches: parseFloat(boxForm.length) || 0,
           widthInches: parseFloat(boxForm.width) || 0,
           heightInches: parseFloat(boxForm.height) || 0,
-          priority: parseInt(boxForm.priority) || 99,
+          // Priority is now managed by drag-and-drop; new boxes get added at the end
           active: boxForm.active,
           inStock: boxForm.inStock,
           singleCupOnly: boxForm.singleCupOnly,
@@ -177,6 +281,45 @@ export default function BoxConfigPage() {
       setError((e as Error).message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Handle drag end for reordering boxes
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      const sortedBoxes = [...boxes].sort((a, b) => a.priority - b.priority)
+      const oldIndex = sortedBoxes.findIndex((b) => b.id === active.id)
+      const newIndex = sortedBoxes.findIndex((b) => b.id === over.id)
+
+      const reorderedBoxes = arrayMove(sortedBoxes, oldIndex, newIndex)
+      const newBoxIds = reorderedBoxes.map((b) => b.id)
+
+      // Optimistically update local state
+      setBoxConfig((prev) => {
+        if (!prev) return prev
+        const updatedBoxes = reorderedBoxes.map((box, index) => ({
+          ...box,
+          priority: index + 1,
+        }))
+        return { ...prev, boxes: updatedBoxes }
+      })
+
+      // Save to server
+      try {
+        const res = await fetch('/api/box-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reorder-boxes', boxIds: newBoxIds }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to reorder')
+      } catch (e) {
+        setError((e as Error).message)
+        // Revert on error
+        await fetchData()
+      }
     }
   }
 
@@ -342,16 +485,6 @@ export default function BoxConfigPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
-                <input
-                  type="number"
-                  value={boxForm.priority}
-                  onChange={(e) => setBoxForm({ ...boxForm, priority: e.target.value })}
-                  className="w-full border rounded px-3 py-2 text-sm"
-                  placeholder="1 = try first"
-                />
-              </div>
               <div className="flex items-end gap-4 flex-wrap">
                 <label className="flex items-center gap-2">
                   <input
@@ -400,73 +533,56 @@ export default function BoxConfigPage() {
           </div>
         )}
 
-        {/* Boxes Table */}
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Internal Dims</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Volume</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usable ({(packingEfficiency * 100).toFixed(0)}%)</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Priority</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {boxes.length === 0 ? (
+        {/* Boxes Table with Drag-and-Drop */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50">
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
-                  No boxes configured. Click "Add Box" to create one.
-                </td>
+                <th className="px-2 py-3 w-8"></th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Internal Dims</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Volume</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usable ({(packingEfficiency * 100).toFixed(0)}%)</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase text-gray-400">#</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
-            ) : (
-              boxes
-                .sort((a, b) => a.priority - b.priority)
-                .map((box) => (
-                  <tr key={box.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900">
-                      {box.name}
-                      {box.singleCupOnly && (
-                        <span className="ml-2 px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">
-                          Single
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {box.lengthInches}" × {box.widthInches}" × {box.heightInches}"
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{box.volume.toFixed(0)} in³</td>
-                    <td className="px-4 py-3 text-gray-600">{(box.volume * packingEfficiency).toFixed(0)} in³</td>
-                    <td className="px-4 py-3 text-gray-600">{box.priority}</td>
-                    <td className="px-4 py-3">
-                      {box.active && box.inStock ? (
-                        <span className="text-green-600">Active</span>
-                      ) : !box.active ? (
-                        <span className="text-gray-400">Inactive</span>
-                      ) : (
-                        <span className="text-yellow-600">Out of Stock</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => openEditBoxForm(box)}
-                        className="text-blue-600 hover:text-blue-800 text-sm mr-3"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteBox(box.id)}
-                        className="text-red-600 hover:text-red-800 text-sm"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {boxes.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                    No boxes configured. Click "Add Box" to create one.
+                  </td>
+                </tr>
+              ) : (
+                <SortableContext
+                  items={[...boxes].sort((a, b) => a.priority - b.priority).map((b) => b.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {[...boxes]
+                    .sort((a, b) => a.priority - b.priority)
+                    .map((box) => (
+                      <SortableBoxRow
+                        key={box.id}
+                        box={box}
+                        packingEfficiency={packingEfficiency}
+                        onEdit={openEditBoxForm}
+                        onDelete={handleDeleteBox}
+                      />
+                    ))}
+                </SortableContext>
+              )}
+            </tbody>
+          </table>
+        </DndContext>
+        <p className="px-4 py-2 text-xs text-gray-500 bg-gray-50 border-t">
+          Drag rows to reorder. Boxes are tried in order from top to bottom.
+        </p>
       </div>
 
       {/* ==================== ALL COMBINATIONS MATRIX ==================== */}

@@ -240,6 +240,26 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ packingEfficiency: efficiency })
       }
 
+      case 'reorder-boxes': {
+        // Update box priorities based on new order
+        // Input: { boxIds: string[] } - array of box IDs in desired order
+        if (!body.boxIds || !Array.isArray(body.boxIds)) {
+          return NextResponse.json({ error: 'boxIds array is required' }, { status: 400 })
+        }
+
+        // Update each box's priority based on its position in the array
+        await prisma.$transaction(
+          body.boxIds.map((boxId: string, index: number) =>
+            prisma.box.update({
+              where: { id: boxId },
+              data: { priority: index + 1 },
+            })
+          )
+        )
+
+        return NextResponse.json({ success: true, updated: body.boxIds.length })
+      }
+
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
     }
