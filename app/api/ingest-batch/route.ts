@@ -234,17 +234,56 @@ export async function POST(request: NextRequest) {
       await recordUnmatchedSkus(prisma, allUnmatchedSkus)
     }
 
-    // Batch insert using Prisma
-    const result = await prisma.orderLog.createMany({
-      data: orderLogs,
-      skipDuplicates: true, // Skip duplicates if order_number already exists
-    })
+    // Insert orders individually to get back internal IDs
+    interface OrderResult {
+      orderId: string
+      success: boolean
+      errorMessage?: string
+    }
+
+    const results: OrderResult[] = []
+    let hasErrors = false
+
+    for (const orderData of orderLogs) {
+      try {
+        // Check if order already exists
+        const existing = await prisma.orderLog.findFirst({
+          where: { orderNumber: orderData.orderNumber },
+          select: { id: true },
+        })
+
+        if (existing) {
+          // Order already exists - still success, just use existing ID
+          results.push({
+            orderId: existing.id,
+            success: true,
+          })
+        } else {
+          // Create new order
+          const created = await prisma.orderLog.create({
+            data: orderData,
+            select: { id: true },
+          })
+
+          results.push({
+            orderId: created.id,
+            success: true,
+          })
+        }
+      } catch (err: any) {
+        hasErrors = true
+        results.push({
+          orderId: '',
+          success: false,
+          errorMessage: err.message || 'Failed to create order',
+        })
+      }
+    }
 
     return NextResponse.json(
       {
-        success: true,
-        message: `Successfully ingested ${result.count} order(s)`,
-        count: result.count,
+        hasErrors,
+        results,
       },
       { status: 200 }
     )
