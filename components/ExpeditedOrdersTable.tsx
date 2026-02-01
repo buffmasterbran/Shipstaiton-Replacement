@@ -95,8 +95,9 @@ function isExpeditedShipping(log: OrderLog): boolean {
 }
 
 export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps) {
-  const { hidePersonalized } = useExpeditedFilter()
+  const { personalizedFilter } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('orderDate')
@@ -110,15 +111,17 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
   // Filter to only expedited shipping methods OR customer reached out
   const expeditedLogs = useMemo(() => {
     return logs.filter((log) => {
-      // Filter out personalized orders if toggle is on
-      if (hidePersonalized && isOrderPersonalized(log.rawPayload)) {
-        return false
-      }
+      const isPersonalized = isOrderPersonalized(log.rawPayload)
+
+      // Personalized filter (3-state)
+      if (personalizedFilter === 'only' && !isPersonalized) return false
+      if (personalizedFilter === 'hide' && isPersonalized) return false
+
       const isExpedited = isExpeditedShipping(log)
       const reachedOut = reachedOutOverrides[log.id] ?? log.customerReachedOut
       return isExpedited || reachedOut
     })
-  }, [logs, hidePersonalized, reachedOutOverrides])
+  }, [logs, personalizedFilter, reachedOutOverrides])
 
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -199,12 +202,14 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
     const payload = log.rawPayload as any
     const order = Array.isArray(payload) ? payload[0] : payload
     setSelectedOrder(order)
+    setSelectedRawPayload(payload)
     setIsDialogOpen(true)
   }
 
   const handleCloseDialog = () => {
     setIsDialogOpen(false)
     setSelectedOrder(null)
+    setSelectedRawPayload(null)
   }
 
   const toggleReachedOut = async (log: OrderLog, e: React.MouseEvent) => {
@@ -459,7 +464,7 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
       </div>
 
       {/* Order Dialog */}
-      <OrderDialog order={selectedOrder} isOpen={isDialogOpen} onClose={handleCloseDialog} />
+      <OrderDialog order={selectedOrder} isOpen={isDialogOpen} onClose={handleCloseDialog} rawPayload={selectedRawPayload} />
     </>
   )
 }

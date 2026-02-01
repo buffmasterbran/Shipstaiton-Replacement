@@ -66,8 +66,9 @@ interface LabelInfo {
 }
 
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
-  const { expeditedOnly, hidePersonalized } = useExpeditedFilter()
+  const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isProcessDialogOpen, setIsProcessDialogOpen] = useState(false)
   const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
@@ -138,18 +139,17 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   // Filter orders
   const filteredOrders = useMemo(() => {
     return processedOrders.filter((order) => {
-      // Global personalized filter (hide personalized by default)
-      if (hidePersonalized && isOrderPersonalized(order.log.rawPayload)) {
-        return false
-      }
+      const isPersonalized = isOrderPersonalized(order.log.rawPayload)
+      const customerReachedOut = (order.log as any).customerReachedOut || false
+      const isExpedited = isOrderExpedited(order.log.rawPayload, customerReachedOut)
 
-      // Global expedited filter
-      if (expeditedOnly) {
-        const customerReachedOut = (order.log as any).customerReachedOut || false
-        if (!isOrderExpedited(order.log.rawPayload, customerReachedOut)) {
-          return false
-        }
-      }
+      // Personalized filter (3-state)
+      if (personalizedFilter === 'only' && !isPersonalized) return false
+      if (personalizedFilter === 'hide' && isPersonalized) return false
+
+      // Expedited filter (3-state)
+      if (expeditedFilter === 'only' && !isExpedited) return false
+      if (expeditedFilter === 'hide' && isExpedited) return false
 
       // Size filter
       if (selectedSize !== 'all' && order.size !== selectedSize) {
@@ -179,7 +179,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       
       return true
     })
-  }, [processedOrders, selectedSize, selectedColor, searchQuery, hidePersonalized, expeditedOnly])
+  }, [processedOrders, selectedSize, selectedColor, searchQuery, personalizedFilter, expeditedFilter])
 
   // Group orders for auto-processing
   interface OrderBatch {
@@ -308,12 +308,14 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
 
   const handleRowClick = (processedOrder: ProcessedOrder) => {
     setSelectedOrder(processedOrder.order)
+    setSelectedRawPayload(processedOrder.log.rawPayload)
     setIsDialogOpen(true)
   }
 
   const handleCloseDialog = () => {
     setIsDialogOpen(false)
     setSelectedOrder(null)
+    setSelectedRawPayload(null)
   }
 
   // Mock function to simulate rate shopping API call
@@ -1655,6 +1657,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         isOpen={isDialogOpen}
         onClose={handleCloseDialog}
         order={selectedOrder}
+        rawPayload={selectedRawPayload}
       />
 
       <ProcessDialog

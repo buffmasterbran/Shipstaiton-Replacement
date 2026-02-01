@@ -71,8 +71,9 @@ interface LabelInfo {
 type StatusFilter = 'all' | 'pending' | 'shipped'
 
 export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }: BulkOrdersTableProps) {
-  const { expeditedOnly, hidePersonalized } = useExpeditedFilter()
+  const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkProcessDialogOpen, setIsBulkProcessDialogOpen] = useState(false)
   const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
@@ -96,18 +97,17 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     const groupMap = new Map<string, BulkOrderGroup>()
 
     orders.forEach((log) => {
-      // Global personalized filter (hide personalized by default)
-      if (hidePersonalized && isOrderPersonalized(log.rawPayload)) {
-        return
-      }
+      const isPersonalized = isOrderPersonalized(log.rawPayload)
+      const customerReachedOut = (log as any).customerReachedOut || false
+      const isExpedited = isOrderExpedited(log.rawPayload, customerReachedOut)
 
-      // Global expedited filter
-      if (expeditedOnly) {
-        const customerReachedOut = (log as any).customerReachedOut || false
-        if (!isOrderExpedited(log.rawPayload, customerReachedOut)) {
-          return
-        }
-      }
+      // Personalized filter (3-state)
+      if (personalizedFilter === 'only' && !isPersonalized) return
+      if (personalizedFilter === 'hide' && isPersonalized) return
+
+      // Expedited filter (3-state)
+      if (expeditedFilter === 'only' && !isExpedited) return
+      if (expeditedFilter === 'hide' && isExpedited) return
 
       const payload = log.rawPayload as any
       const order = Array.isArray(payload) ? payload[0] : payload
@@ -162,7 +162,7 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     return Array.from(groupMap.values())
       .filter((group) => group.totalOrders >= 2)
       .sort((a, b) => b.totalOrders - a.totalOrders)
-  }, [orders, hidePersonalized, expeditedOnly])
+  }, [orders, personalizedFilter, expeditedFilter])
 
   // Filter groups by slider value
   const sliderFilteredGroups = useMemo(() => {
@@ -268,6 +268,7 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
         orderKey: firstOrder.log.orderNumber,
         ...firstOrder.order,
       })
+      setSelectedRawPayload(firstOrder.log.rawPayload)
       setIsDialogOpen(true)
     }
   }
@@ -275,6 +276,7 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
   const handleCloseDialog = () => {
     setIsDialogOpen(false)
     setSelectedOrder(null)
+    setSelectedRawPayload(null)
   }
 
   const handleProcessClick = (group: BulkOrderGroup) => {
@@ -1719,6 +1721,7 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
         isOpen={isDialogOpen}
         onClose={handleCloseDialog}
         order={selectedOrder}
+        rawPayload={selectedRawPayload}
       />
       <BulkOrderProcessDialog
         isOpen={isBulkProcessDialogOpen}

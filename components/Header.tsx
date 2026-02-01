@@ -2,13 +2,20 @@
 
 import { useState } from 'react'
 import type { UserRole } from './MainLayout'
+import type { FilterMode } from '@/context/ExpeditedFilterContext'
 
 interface HeaderProps {
   role: UserRole
   setRole: (role: UserRole) => void
+  // New 3-state filter APIs
+  expeditedFilter?: FilterMode
+  setExpeditedFilter?: (value: FilterMode) => void
+  personalizedFilter?: FilterMode
+  setPersonalizedFilter?: (value: FilterMode) => void
+  hideExpeditedToggle?: boolean
+  // Legacy APIs (kept for backwards compatibility)
   expeditedOnly?: boolean
   setExpeditedOnly?: (value: boolean) => void
-  hideExpeditedToggle?: boolean
   hidePersonalized?: boolean
   setHidePersonalized?: (value: boolean) => void
   onProcessClick?: () => void
@@ -21,13 +28,55 @@ interface HeaderProps {
   onRefreshOrders?: () => void
 }
 
+// Cycle through filter modes: all -> only -> hide -> all
+function cycleFilterMode(current: FilterMode): FilterMode {
+  if (current === 'all') return 'only'
+  if (current === 'only') return 'hide'
+  return 'all'
+}
+
+// Get display text for filter mode
+function getFilterLabel(mode: FilterMode, type: 'expedited' | 'personalized'): string {
+  if (type === 'expedited') {
+    if (mode === 'all') return 'Shipping: All'
+    if (mode === 'only') return 'Shipping: Expedited'
+    return 'Shipping: Standard'
+  } else {
+    if (mode === 'all') return 'PERS & Non-PERS'
+    if (mode === 'only') return 'PERS Only'
+    return 'Non-PERS'
+  }
+}
+
+// Get button color based on filter mode
+function getFilterButtonClass(mode: FilterMode, type: 'expedited' | 'personalized'): string {
+  const baseClass = 'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors'
+  if (mode === 'all') {
+    return `${baseClass} bg-gray-100 text-gray-600 hover:bg-gray-200`
+  }
+  if (mode === 'only') {
+    return type === 'expedited'
+      ? `${baseClass} bg-orange-500 text-white`
+      : `${baseClass} bg-purple-500 text-white`
+  }
+  // hide mode
+  return type === 'expedited'
+    ? `${baseClass} bg-orange-200 text-orange-800`
+    : `${baseClass} bg-purple-200 text-purple-800`
+}
+
 export default function Header({
   role,
   setRole,
-  expeditedOnly = false,
-  setExpeditedOnly,
+  expeditedFilter = 'all',
+  setExpeditedFilter,
+  personalizedFilter = 'hide',
+  setPersonalizedFilter,
   hideExpeditedToggle = false,
-  hidePersonalized = true,
+  // Legacy props (ignored if new props are provided)
+  expeditedOnly,
+  setExpeditedOnly,
+  hidePersonalized,
   setHidePersonalized,
   onProcessClick,
   processButtonText = 'Process',
@@ -51,7 +100,7 @@ export default function Header({
 
   return (
     <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-      {/* Date Range Picker + Expedited Toggle */}
+      {/* Date Range Picker + Filter Toggles */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <input
@@ -76,17 +125,13 @@ export default function Header({
           </svg>
         </div>
 
-        {/* Expedited Only Toggle */}
-        {!hideExpeditedToggle && setExpeditedOnly && (
+        {/* Expedited Filter Toggle (3-state) */}
+        {!hideExpeditedToggle && setExpeditedFilter && (
           <button
             type="button"
-            onClick={() => setExpeditedOnly(!expeditedOnly)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              expeditedOnly
-                ? 'bg-orange-500 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-            title="Filter all pages to show only expedited orders (UPS Next Day, 2 Day, 3 Day, or Customer Reached Out)"
+            onClick={() => setExpeditedFilter(cycleFilterMode(expeditedFilter))}
+            className={getFilterButtonClass(expeditedFilter, 'expedited')}
+            title="Click to cycle: All → Expedited → Standard"
           >
             <svg
               className="w-4 h-4"
@@ -101,21 +146,17 @@ export default function Header({
                 d="M13 10V3L4 14h7v7l9-11h-7z"
               />
             </svg>
-            Expedited Only
+            {getFilterLabel(expeditedFilter, 'expedited')}
           </button>
         )}
 
-        {/* Hide Personalized Toggle */}
-        {setHidePersonalized && (
+        {/* Personalized Filter Toggle (3-state) */}
+        {setPersonalizedFilter && (
           <button
             type="button"
-            onClick={() => setHidePersonalized(!hidePersonalized)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              hidePersonalized
-                ? 'bg-purple-500 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-            title="Hide orders with personalized/engraved items"
+            onClick={() => setPersonalizedFilter(cycleFilterMode(personalizedFilter))}
+            className={getFilterButtonClass(personalizedFilter, 'personalized')}
+            title="Click to cycle: All → PERS Only → Non-PERS"
           >
             <svg
               className="w-4 h-4"
@@ -130,7 +171,7 @@ export default function Header({
                 d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
               />
             </svg>
-            Hide Personalized
+            {getFilterLabel(personalizedFilter, 'personalized')}
           </button>
         )}
 
@@ -199,7 +240,7 @@ export default function Header({
         </div>
         <span className="text-gray-700 border-l border-gray-200 pl-4">Welcome, Brandegee C Pierce</span>
         {showProcessButton && onProcessClick && (
-          <button 
+          <button
             onClick={onProcessClick}
             disabled={processButtonDisabled}
             className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
@@ -228,4 +269,3 @@ export default function Header({
     </div>
   )
 }
-

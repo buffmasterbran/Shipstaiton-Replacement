@@ -2,7 +2,16 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 
+// Filter modes: 'all' = show everything, 'only' = show only matching, 'hide' = hide matching
+export type FilterMode = 'all' | 'only' | 'hide'
+
 interface ExpeditedFilterContextType {
+  // 3-state filter APIs
+  expeditedFilter: FilterMode
+  setExpeditedFilter: (value: FilterMode) => void
+  personalizedFilter: FilterMode
+  setPersonalizedFilter: (value: FilterMode) => void
+  // Legacy boolean APIs (for backwards compatibility - derived from filter modes)
   expeditedOnly: boolean
   setExpeditedOnly: (value: boolean) => void
   hidePersonalized: boolean
@@ -75,37 +84,74 @@ export function isOrderPersonalized(rawPayload: any): boolean {
   return false
 }
 
+/** Apply filter mode to check if order should be shown */
+export function shouldShowOrder(
+  rawPayload: any,
+  personalizedFilter: FilterMode,
+  expeditedFilter: FilterMode,
+  customerReachedOut?: boolean
+): boolean {
+  const isPersonalized = isOrderPersonalized(rawPayload)
+  const isExpedited = isOrderExpedited(rawPayload, customerReachedOut)
+
+  // Check personalized filter
+  if (personalizedFilter === 'only' && !isPersonalized) return false
+  if (personalizedFilter === 'hide' && isPersonalized) return false
+
+  // Check expedited filter
+  if (expeditedFilter === 'only' && !isExpedited) return false
+  if (expeditedFilter === 'hide' && isExpedited) return false
+
+  return true
+}
+
 export function ExpeditedFilterProvider({ children }: { children: ReactNode }) {
-  const [expeditedOnly, setExpeditedOnly] = useState(false)
-  const [hidePersonalized, setHidePersonalized] = useState(true) // Default to hiding personalized
+  const [expeditedFilter, setExpeditedFilter] = useState<FilterMode>('hide') // Default: Shipping: Standard (hide expedited)
+  const [personalizedFilter, setPersonalizedFilter] = useState<FilterMode>('hide') // Default: Non-PERS (hide personalized)
 
   // Persist to localStorage
   useEffect(() => {
-    const storedExpedited = localStorage.getItem('expeditedOnly')
-    if (storedExpedited === 'true') {
-      setExpeditedOnly(true)
+    const storedExpedited = localStorage.getItem('expeditedFilter')
+    if (storedExpedited === 'all' || storedExpedited === 'only' || storedExpedited === 'hide') {
+      setExpeditedFilter(storedExpedited)
     }
 
-    const storedPersonalized = localStorage.getItem('hidePersonalized')
-    // Default to true (hide personalized) unless explicitly set to false
-    if (storedPersonalized === 'false') {
-      setHidePersonalized(false)
+    const storedPersonalized = localStorage.getItem('personalizedFilter')
+    if (storedPersonalized === 'all' || storedPersonalized === 'only' || storedPersonalized === 'hide') {
+      setPersonalizedFilter(storedPersonalized)
     }
   }, [])
 
+  const handleSetExpeditedFilter = (value: FilterMode) => {
+    setExpeditedFilter(value)
+    localStorage.setItem('expeditedFilter', value)
+  }
+
+  const handleSetPersonalizedFilter = (value: FilterMode) => {
+    setPersonalizedFilter(value)
+    localStorage.setItem('personalizedFilter', value)
+  }
+
+  // Legacy boolean APIs for backwards compatibility
+  const expeditedOnly = expeditedFilter === 'only'
+  const hidePersonalized = personalizedFilter === 'hide'
+
   const handleSetExpeditedOnly = (value: boolean) => {
-    setExpeditedOnly(value)
-    localStorage.setItem('expeditedOnly', value.toString())
+    handleSetExpeditedFilter(value ? 'only' : 'all')
   }
 
   const handleSetHidePersonalized = (value: boolean) => {
-    setHidePersonalized(value)
-    localStorage.setItem('hidePersonalized', value.toString())
+    handleSetPersonalizedFilter(value ? 'hide' : 'all')
   }
 
   return (
     <ExpeditedFilterContext.Provider
       value={{
+        expeditedFilter,
+        setExpeditedFilter: handleSetExpeditedFilter,
+        personalizedFilter,
+        setPersonalizedFilter: handleSetPersonalizedFilter,
+        // Legacy APIs
         expeditedOnly,
         setExpeditedOnly: handleSetExpeditedOnly,
         hidePersonalized,

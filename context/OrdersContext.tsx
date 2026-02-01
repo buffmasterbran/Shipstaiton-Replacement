@@ -63,6 +63,17 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
   }, [fetchOrders])
 
   const refreshOrders = useCallback(async () => {
+    // Recalculate all box suggestions first (handles signature changes, new feedback rules, etc.)
+    try {
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'recalculate-boxes', force: true }),
+      })
+    } catch (err) {
+      console.error('Error recalculating boxes:', err)
+    }
+    // Then fetch fresh data
     await fetchOrders()
   }, [fetchOrders])
 

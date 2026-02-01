@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
 import packConfig from '@/pack-config.json'
-import { useExpeditedFilter, isOrderExpedited } from '@/context/ExpeditedFilterContext'
+import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
   id: string
@@ -115,8 +115,9 @@ function getCompatiblePacks(order: ProcessedOrder): string[] {
 }
 
 export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTableProps) {
-  const { expeditedOnly } = useExpeditedFilter()
+  const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBatchDialogOpen, setIsBatchDialogOpen] = useState(false)
   const [selectedSize, setSelectedSize] = useState<string>('all')
@@ -174,11 +175,23 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   const filteredOrders = useMemo(() => {
     let filtered = processedOrders
 
-    // Global expedited filter
-    if (expeditedOnly) {
+    // Personalized filter (3-state)
+    if (personalizedFilter === 'only') {
+      filtered = filtered.filter(order => isOrderPersonalized(order.log.rawPayload))
+    } else if (personalizedFilter === 'hide') {
+      filtered = filtered.filter(order => !isOrderPersonalized(order.log.rawPayload))
+    }
+
+    // Expedited filter (3-state)
+    if (expeditedFilter === 'only') {
       filtered = filtered.filter(order => {
         const customerReachedOut = (order.log as any).customerReachedOut || false
         return isOrderExpedited(order.log.rawPayload, customerReachedOut)
+      })
+    } else if (expeditedFilter === 'hide') {
+      filtered = filtered.filter(order => {
+        const customerReachedOut = (order.log as any).customerReachedOut || false
+        return !isOrderExpedited(order.log.rawPayload, customerReachedOut)
       })
     }
 
@@ -242,7 +255,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     }
 
     return filtered
-  }, [processedOrders, selectedSize, selectedPackSize, searchQuery, expeditedOnly])
+  }, [processedOrders, selectedSize, selectedPackSize, searchQuery, expeditedFilter, personalizedFilter])
 
   const handleRowClick = (order: ProcessedOrder) => {
     setSelectedOrder({
@@ -250,12 +263,14 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       orderKey: order.log.orderNumber,
       ...order.order,
     })
+    setSelectedRawPayload(order.log.rawPayload)
     setIsDialogOpen(true)
   }
 
   const handleCloseDialog = () => {
     setIsDialogOpen(false)
     setSelectedOrder(null)
+    setSelectedRawPayload(null)
   }
 
   const handleBatch = (packageInfo: { weight: string; dimensions: { length: string; width: string; height: string } }) => {
@@ -720,6 +735,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         isOpen={isDialogOpen}
         onClose={handleCloseDialog}
         order={selectedOrder}
+        rawPayload={selectedRawPayload}
       />
       <BatchDialog
         isOpen={isBatchDialogOpen}

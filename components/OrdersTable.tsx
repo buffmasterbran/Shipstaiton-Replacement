@@ -141,8 +141,9 @@ function getOrderType(log: OrderLog): OrderTypeFilter {
 }
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
-  const { expeditedOnly, hidePersonalized } = useExpeditedFilter()
+  const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<OrderTypeFilter>('all')
@@ -155,14 +156,18 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     const q = searchQuery.trim().toLowerCase()
     let list = logs
 
-    // Filter out personalized orders (global toggle from header, default ON)
-    if (hidePersonalized) {
+    // Filter by personalized (3-state: all, only, hide)
+    if (personalizedFilter === 'only') {
+      list = list.filter((log) => isOrderPersonalized(log.rawPayload))
+    } else if (personalizedFilter === 'hide') {
       list = list.filter((log) => !isOrderPersonalized(log.rawPayload))
     }
 
-    // Filter by expedited (global toggle from header)
-    if (expeditedOnly) {
+    // Filter by expedited (3-state: all, only, hide)
+    if (expeditedFilter === 'only') {
       list = list.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
+    } else if (expeditedFilter === 'hide') {
+      list = list.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut))
     }
 
     // Filter by type
@@ -215,21 +220,25 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [logs, hidePersonalized, expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
+  }, [logs, personalizedFilter, expeditedFilter, searchQuery, typeFilter, sortKey, sortDir])
   
   // Count orders by type for tab badges
   const typeCounts = useMemo(() => {
     // Apply global filters first
     let baseList = logs
 
-    // Filter out personalized orders if toggle is on
-    if (hidePersonalized) {
+    // Filter by personalized (3-state)
+    if (personalizedFilter === 'only') {
+      baseList = baseList.filter((log) => isOrderPersonalized(log.rawPayload))
+    } else if (personalizedFilter === 'hide') {
       baseList = baseList.filter((log) => !isOrderPersonalized(log.rawPayload))
     }
 
-    // Filter by expedited if toggle is on
-    if (expeditedOnly) {
+    // Filter by expedited (3-state)
+    if (expeditedFilter === 'only') {
       baseList = baseList.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
+    } else if (expeditedFilter === 'hide') {
+      baseList = baseList.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut))
     }
 
     const counts: Record<OrderTypeFilter, number> = {
@@ -245,7 +254,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       counts[t]++
     })
     return counts
-  }, [logs, hidePersonalized, expeditedOnly])
+  }, [logs, personalizedFilter, expeditedFilter])
 
   const totalFiltered = filteredAndSortedLogs.length
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize))
@@ -256,7 +265,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   useEffect(() => {
     setPage(1)
-  }, [hidePersonalized, expeditedOnly, searchQuery, typeFilter, sortKey, sortDir])
+  }, [personalizedFilter, expeditedFilter, searchQuery, typeFilter, sortKey, sortDir])
 
   useEffect(() => {
     if (page > totalPages) setPage(1)
@@ -276,12 +285,14 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     const payload = log.rawPayload as any
     const order = Array.isArray(payload) ? payload[0] : payload
     setSelectedOrder(order)
+    setSelectedRawPayload(payload)
     setIsDialogOpen(true)
   }
 
   const handleCloseDialog = () => {
     setIsDialogOpen(false)
     setSelectedOrder(null)
+    setSelectedRawPayload(null)
   }
 
   if (logs.length === 0) {
@@ -493,6 +504,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         isOpen={isDialogOpen}
         onClose={handleCloseDialog}
         order={selectedOrder}
+        rawPayload={selectedRawPayload}
       />
     </>
   )

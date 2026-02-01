@@ -65,9 +65,11 @@ export async function POST(request: NextRequest) {
     const action = body.action as string
 
     if (action === 'recalculate-boxes') {
-      // Get orders missing suggestedBox
+      const forceAll = body.force === true
+
+      // Get orders to update - either all orders or just ones missing suggestedBox
       const ordersToUpdate = await prisma.orderLog.findMany({
-        where: { suggestedBox: { equals: Prisma.JsonNull } },
+        where: forceAll ? {} : { suggestedBox: { equals: Prisma.JsonNull } },
         select: { id: true, rawPayload: true },
       })
 

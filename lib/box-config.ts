@@ -65,9 +65,18 @@ function addVolumeToBox(box: any): Box {
 
 /** Build normalized signature for an order (for feedback lookup) */
 export function buildComboSignature(items: { productId: string; quantity: number }[]): string {
-  return items
-    .filter(i => i.quantity > 0)
-    .map(i => `${i.productId}:${i.quantity}`)
+  // Aggregate items with the same productId first
+  // This handles cases where an order has multiple line items (different SKUs)
+  // that map to the same ProductSize (e.g., DPT16PWL + DPT16PYN both = 16oz tumbler)
+  const aggregated = new Map<string, number>()
+  for (const item of items) {
+    if (item.quantity > 0) {
+      aggregated.set(item.productId, (aggregated.get(item.productId) || 0) + item.quantity)
+    }
+  }
+
+  return Array.from(aggregated.entries())
+    .map(([productId, quantity]) => `${productId}:${quantity}`)
     .sort()
     .join('|')
 }

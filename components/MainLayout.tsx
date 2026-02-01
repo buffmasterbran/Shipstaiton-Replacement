@@ -14,7 +14,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { role, setRole } = useRole()
-  const { expeditedOnly, setExpeditedOnly, hidePersonalized, setHidePersonalized } = useExpeditedFilter()
+  const { expeditedFilter, setExpeditedFilter, personalizedFilter, setPersonalizedFilter } = useExpeditedFilter()
   const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders } = useOrders()
   const [canProcess, setCanProcess] = useState(true)
 
@@ -45,11 +45,11 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
         <Header
           role={role}
           setRole={setRole}
-          expeditedOnly={expeditedOnly}
-          setExpeditedOnly={setExpeditedOnly}
+          expeditedFilter={expeditedFilter}
+          setExpeditedFilter={setExpeditedFilter}
           hideExpeditedToggle={isExpeditedPage}
-          hidePersonalized={hidePersonalized}
-          setHidePersonalized={setHidePersonalized}
+          personalizedFilter={personalizedFilter}
+          setPersonalizedFilter={setPersonalizedFilter}
           showProcessButton={isSinglesPage}
           processButtonText="Process"
           processButtonDisabled={isSinglesPage && !canProcess}

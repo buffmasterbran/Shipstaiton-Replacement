@@ -1,8 +1,8 @@
 'use client'
 
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
-import { XMarkIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 
 interface OrderItem {
   sku?: string
@@ -68,6 +68,7 @@ interface OrderDialogProps {
   isOpen: boolean
   onClose: () => void
   order: Order | null
+  rawPayload?: any // Full JSON payload for debugging
 }
 
 function formatAddress(address: any) {
@@ -88,7 +89,9 @@ function formatCurrency(amount: number | string) {
   }).format(Number(amount))
 }
 
-export default function OrderDialog({ isOpen, onClose, order }: OrderDialogProps) {
+export default function OrderDialog({ isOpen, onClose, order, rawPayload }: OrderDialogProps) {
+  const [showJson, setShowJson] = useState(false)
+
   if (!order) return null
 
   return (
@@ -333,8 +336,26 @@ export default function OrderDialog({ isOpen, onClose, order }: OrderDialogProps
                   )}
                 </div>
 
+                {/* Raw JSON (when toggled) */}
+                {showJson && rawPayload && (
+                  <div className="px-6 pb-4">
+                    <div className="bg-gray-900 rounded-lg p-4 max-h-96 overflow-auto">
+                      <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">
+                        {JSON.stringify(rawPayload, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
                 {/* Footer */}
-                <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-end">
+                <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-between">
+                  <button
+                    onClick={() => setShowJson(!showJson)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    <CodeBracketIcon className="h-4 w-4" />
+                    {showJson ? 'Hide JSON' : 'Show JSON'}
+                  </button>
                   <button
                     onClick={onClose}
                     className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
