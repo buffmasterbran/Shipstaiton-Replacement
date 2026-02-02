@@ -3,7 +3,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
-import packConfig from '@/pack-config.json'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 interface OrderLog {
@@ -21,6 +20,14 @@ interface OrderLog {
   updatedAt: Date | string
 }
 
+interface Box {
+  id: string
+  name: string
+  priority: number
+  active: boolean
+  singleCupOnly: boolean
+}
+
 interface BoxSizeSpecificTableProps {
   orders: OrderLog[]
 }
@@ -34,84 +41,9 @@ interface ProcessedOrder {
     quantity: number
   }>
   totalQty: number
-  packSize: string
-  compatiblePacks: string[]
+  boxName: string | null
   customerName: string
   orderDate: string
-}
-
-function getProductSizeFromSku(sku: string): string | null {
-  if (!sku) return null
-  const upperSku = sku.toUpperCase()
-  if (upperSku.startsWith('DPT10') || upperSku.startsWith('PT10')) return 'DPT10'
-  if (upperSku.startsWith('DPT16') || upperSku.startsWith('PT16')) return 'DPT16'
-  if (upperSku.startsWith('DPT26') || upperSku.startsWith('PT26')) return 'DPT26'
-  return null
-}
-
-function canOrderFitInPackSize(order: ProcessedOrder, packSizeKey: string): boolean {
-  const packConfigData = packConfig.packSizes[packSizeKey as keyof typeof packConfig.packSizes]
-  if (!packConfigData) return false
-
-  const totalQuantity = order.totalQty
-
-  // Single pack - only orders with exactly 1 item
-  if (packSizeKey === 'single') {
-    return totalQuantity === 1
-  }
-
-  // For multi-pack sizes, total quantity must match the pack size
-  if (totalQuantity !== packConfigData.maxItems) {
-    return false
-  }
-
-  // Build product sizes array
-  const productSizes: string[] = []
-  order.items.forEach(item => {
-    const size = getProductSizeFromSku(item.sku)
-    if (size) {
-      for (let i = 0; i < item.quantity; i++) {
-        productSizes.push(size)
-      }
-    }
-  })
-
-  if (productSizes.length === 0) return false
-
-  // Check if the order items match any combination in the pack config
-  const sortedSizes = [...productSizes].sort().join(',')
-  
-  return packConfigData.combinations.some(combination => {
-    const sortedCombination = [...combination].sort().join(',')
-    return sortedSizes === sortedCombination
-  })
-}
-
-function getOptimalPackSize(order: ProcessedOrder): string {
-  const totalQty = order.totalQty
-
-  if (totalQty === 1) return 'Single'
-
-  // Check each pack size
-  for (const [key, config] of Object.entries(packConfig.packSizes)) {
-    if (canOrderFitInPackSize(order, key)) {
-      return config.name
-    }
-  }
-
-  return 'Custom'
-}
-
-function getCompatiblePacks(order: ProcessedOrder): string[] {
-  const compatible: string[] = []
-  
-  for (const [key, config] of Object.entries(packConfig.packSizes)) {
-    if (canOrderFitInPackSize(order, key)) {
-      compatible.push(config.name)
-    }
-  }
-
-  return compatible.length > 0 ? compatible : ['Custom']
 }
 
 export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTableProps) {
@@ -120,11 +52,30 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBatchDialogOpen, setIsBatchDialogOpen] = useState(false)
-  const [selectedSize, setSelectedSize] = useState<string>('all')
-  const [selectedPackSize, setSelectedPackSize] = useState<string>('all')
+  const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [boxes, setBoxes] = useState<Box[]>([])
+  const [loadingBoxes, setLoadingBoxes] = useState(true)
 
-  // Process orders to extract items and determine pack sizes
+  // Fetch boxes from API
+  useEffect(() => {
+    async function fetchBoxes() {
+      try {
+        const res = await fetch('/api/box-config')
+        if (res.ok) {
+          const data = await res.json()
+          setBoxes(data.boxes || [])
+        }
+      } catch (e) {
+        console.error('Failed to fetch boxes:', e)
+      } finally {
+        setLoadingBoxes(false)
+      }
+    }
+    fetchBoxes()
+  }, [])
+
+  // Process orders to extract items
   const processedOrders = useMemo(() => {
     return orders
       .map((log) => {
@@ -147,31 +98,45 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           quantity: item.quantity || 1,
         }))
 
-        const totalQty = processedItems.reduce((sum: number, item: { sku: string; name: string; quantity: number }) => sum + item.quantity, 0)
+        const totalQty = processedItems.reduce((sum: number, item: { quantity: number }) => sum + item.quantity, 0)
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
         const orderDate = order?.orderDate || log.createdAt
+
+        // Get box name from suggestedBox (already calculated during ingest)
+        const boxName = log.suggestedBox?.boxName || null
 
         const processedOrder: ProcessedOrder = {
           log,
           order,
           items: processedItems,
           totalQty,
-          packSize: '',
-          compatiblePacks: [],
+          boxName,
           customerName,
           orderDate: typeof orderDate === 'string' ? orderDate : orderDate.toISOString(),
         }
-
-        // Determine pack size and compatible packs
-        processedOrder.packSize = getOptimalPackSize(processedOrder)
-        processedOrder.compatiblePacks = getCompatiblePacks(processedOrder)
 
         return processedOrder
       })
       .filter((order): order is ProcessedOrder => order !== null)
   }, [orders])
 
-  // Filter orders based on size and pack size
+  // Get unique box names from orders for filter options
+  const boxNamesInOrders = useMemo(() => {
+    const names = new Set<string>()
+    processedOrders.forEach(order => {
+      if (order.boxName) {
+        names.add(order.boxName)
+      }
+    })
+    // Sort by box priority
+    return Array.from(names).sort((a, b) => {
+      const boxA = boxes.find(box => box.name === a)
+      const boxB = boxes.find(box => box.name === b)
+      return (boxA?.priority || 999) - (boxB?.priority || 999)
+    })
+  }, [processedOrders, boxes])
+
+  // Filter orders
   const filteredOrders = useMemo(() => {
     let filtered = processedOrders
 
@@ -195,47 +160,13 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       })
     }
 
-    // Size filter
-    if (selectedSize !== 'all') {
-      filtered = filtered.filter(order => {
-        return order.items.some(item => {
-          const sku = item.sku.toUpperCase()
-          if (selectedSize === '10oz') return sku.startsWith('DPT10') || sku.startsWith('PT10')
-          if (selectedSize === '16oz') return sku.startsWith('DPT16') || sku.startsWith('PT16')
-          if (selectedSize === '26oz') return sku.startsWith('DPT26') || sku.startsWith('PT26')
-          if (selectedSize === 'Accessories') {
-            return !sku.startsWith('DPT10') && !sku.startsWith('DPT16') && 
-                   !sku.startsWith('DPT26') && !sku.startsWith('PT10') && 
-                   !sku.startsWith('PT16') && !sku.startsWith('PT26')
-          }
-          return false
-        })
-      })
-    }
-
-    // Pack size filter
-    if (selectedPackSize !== 'all') {
-      // Map UI pack size names to pack-config.json keys
-      const packSizeMap: { [key: string]: string } = {
-        '2/4 Pack': '4pack',  // Maps to 4 Pack in config
-        '4/5 Pack': '5pack',  // Maps to 5 Pack in config
-        '6/10 Pack': '8pack', // Maps to 8 Pack in config
-        'Custom': 'custom',
-      }
-
-      const packKey = packSizeMap[selectedPackSize]
-      
-      if (packKey === 'custom') {
-        // Custom = orders that don't fit any standard pack
-        filtered = filtered.filter(order => {
-          const fitsAnyPack = Object.keys(packConfig.packSizes).some(key => 
-            canOrderFitInPackSize(order, key)
-          )
-          return !fitsAnyPack
-        })
-      } else if (packKey) {
-        // Filter orders that match the selected pack size from pack-config.json
-        filtered = filtered.filter(order => canOrderFitInPackSize(order, packKey))
+    // Box filter
+    if (selectedBoxFilter !== 'all') {
+      if (selectedBoxFilter === 'unknown') {
+        // Show orders with no box assigned
+        filtered = filtered.filter(order => !order.boxName)
+      } else {
+        filtered = filtered.filter(order => order.boxName === selectedBoxFilter)
       }
     }
 
@@ -246,8 +177,8 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         return (
           order.log.orderNumber.toLowerCase().includes(query) ||
           order.customerName.toLowerCase().includes(query) ||
-          order.items.some(item => 
-            item.sku.toLowerCase().includes(query) || 
+          order.items.some(item =>
+            item.sku.toLowerCase().includes(query) ||
             item.name.toLowerCase().includes(query)
           )
         )
@@ -255,7 +186,20 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     }
 
     return filtered
-  }, [processedOrders, selectedSize, selectedPackSize, searchQuery, expeditedFilter, personalizedFilter])
+  }, [processedOrders, selectedBoxFilter, searchQuery, expeditedFilter, personalizedFilter])
+
+  // Count orders per box
+  const orderCountsByBox = useMemo(() => {
+    const counts: Record<string, number> = { all: processedOrders.length, unknown: 0 }
+    processedOrders.forEach(order => {
+      if (order.boxName) {
+        counts[order.boxName] = (counts[order.boxName] || 0) + 1
+      } else {
+        counts.unknown++
+      }
+    })
+    return counts
+  }, [processedOrders])
 
   const handleRowClick = (order: ProcessedOrder) => {
     setSelectedOrder({
@@ -278,9 +222,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   }
 
   const generatePackingSlips = (orders: ProcessedOrder[], packageInfo: { weight: string; dimensions: { length: string; width: string; height: string } }) => {
-    // Generate barcode helper (simple representation)
     const generateBarcode = (orderNumber: string) => {
-      // Simple barcode representation - in production, use a barcode library
       return orderNumber.padStart(12, '0')
     }
 
@@ -290,115 +232,26 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 <head>
   <title>Packing Slips</title>
   <style>
-    @page {
-      size: letter;
-      margin: 0.5in;
-    }
-    body {
-      font-family: Arial, Helvetica, sans-serif;
-      margin: 0;
-      padding: 0;
-    }
-    .packing-slip {
-      width: 100%;
-      min-height: 10in;
-      border: 2px solid #000;
-      padding: 0.5in;
-      margin-bottom: 0.5in;
-      page-break-after: always;
-      box-sizing: border-box;
-    }
-    .packing-slip:last-child {
-      page-break-after: auto;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 20px;
-      border-bottom: 2px solid #000;
-      padding-bottom: 10px;
-    }
-    .order-info {
-      flex: 1;
-    }
-    .order-number {
-      font-size: 24px;
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-    .barcode-section {
-      text-align: right;
-    }
-    .barcode {
-      font-family: 'Courier New', monospace;
-      font-size: 36px;
-      font-weight: bold;
-      letter-spacing: 3px;
-      margin-bottom: 5px;
-    }
-    .barcode-lines {
-      height: 60px;
-      background: repeating-linear-gradient(
-        90deg,
-        #000 0px,
-        #000 2px,
-        transparent 2px,
-        transparent 4px
-      );
-      background-size: 4px 100%;
-      margin-top: 5px;
-    }
-    .content {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 30px;
-      margin-bottom: 20px;
-    }
-    .section {
-      margin-bottom: 15px;
-    }
-    .section-title {
-      font-weight: bold;
-      font-size: 14px;
-      margin-bottom: 5px;
-      border-bottom: 1px solid #000;
-      padding-bottom: 3px;
-    }
-    .section-content {
-      font-size: 12px;
-      line-height: 1.6;
-    }
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-    }
-    .items-table th,
-    .items-table td {
-      border: 1px solid #000;
-      padding: 8px;
-      text-align: left;
-    }
-    .items-table th {
-      background-color: #f0f0f0;
-      font-weight: bold;
-      font-size: 11px;
-    }
-    .items-table td {
-      font-size: 11px;
-    }
-    .package-info {
-      margin-top: 20px;
-      padding-top: 15px;
-      border-top: 2px solid #000;
-      font-size: 11px;
-    }
-    @media print {
-      .packing-slip {
-        page-break-inside: avoid;
-      }
-    }
+    @page { size: letter; margin: 0.5in; }
+    body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
+    .packing-slip { width: 100%; min-height: 10in; border: 2px solid #000; padding: 0.5in; margin-bottom: 0.5in; page-break-after: always; box-sizing: border-box; }
+    .packing-slip:last-child { page-break-after: auto; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+    .order-info { flex: 1; }
+    .order-number { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+    .barcode-section { text-align: right; }
+    .barcode { font-family: 'Courier New', monospace; font-size: 36px; font-weight: bold; letter-spacing: 3px; margin-bottom: 5px; }
+    .barcode-lines { height: 60px; background: repeating-linear-gradient(90deg, #000 0px, #000 2px, transparent 2px, transparent 4px); background-size: 4px 100%; margin-top: 5px; }
+    .content { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 20px; }
+    .section { margin-bottom: 15px; }
+    .section-title { font-weight: bold; font-size: 14px; margin-bottom: 5px; border-bottom: 1px solid #000; padding-bottom: 3px; }
+    .section-content { font-size: 12px; line-height: 1.6; }
+    .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    .items-table th, .items-table td { border: 1px solid #000; padding: 8px; text-align: left; }
+    .items-table th { background-color: #f0f0f0; font-weight: bold; font-size: 11px; }
+    .items-table td { font-size: 11px; }
+    .package-info { margin-top: 20px; padding-top: 15px; border-top: 2px solid #000; font-size: 11px; }
+    @media print { .packing-slip { page-break-inside: avoid; } }
   </style>
 </head>
 <body>
@@ -415,6 +268,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       <div class="order-info">
         <div class="order-number">Order #${orderData.log.orderNumber}</div>
         <div style="font-size: 12px; color: #666;">Date: ${new Date(orderData.orderDate).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}</div>
+        <div style="font-size: 14px; font-weight: bold; color: #333; margin-top: 5px;">Box: ${orderData.boxName || 'TBD'}</div>
       </div>
       <div class="barcode-section">
         <div class="barcode">${barcode}</div>
@@ -499,75 +353,71 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   if (processedOrders.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-12 text-center">
-        <p className="text-gray-500 text-lg">No box size specific orders found</p>
+        <p className="text-gray-500 text-lg">No orders found</p>
       </div>
     )
   }
 
   return (
     <>
-      {/* Size Filter */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Size Filter</label>
-        <div className="flex flex-wrap gap-2">
-          {['all', '10oz', '16oz', '26oz', 'Accessories'].map((size) => (
-            <button
-              key={size}
-              onClick={() => setSelectedSize(size)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                selectedSize === size
-                  ? 'bg-green-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
-              }`}
-            >
-              {size === 'all' ? 'All' : size}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Pack Sizes Filter */}
+      {/* Box Filter - Dynamic based on actual boxes */}
       <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Pack Sizes</label>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Box</label>
         <div className="flex flex-wrap gap-2">
-          {['All Packs', '2/4 Pack', '4/5 Pack', '6/10 Pack', 'Custom'].map((pack) => (
+          {/* All button */}
+          <button
+            onClick={() => setSelectedBoxFilter('all')}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-2 ${
+              selectedBoxFilter === 'all'
+                ? 'bg-green-600 text-white'
+                : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            All ({orderCountsByBox.all})
+          </button>
+
+          {/* Dynamic box buttons */}
+          {boxNamesInOrders.map((boxName) => {
+            const box = boxes.find(b => b.name === boxName)
+            const count = orderCountsByBox[boxName] || 0
+
+            return (
+              <button
+                key={boxName}
+                onClick={() => setSelectedBoxFilter(boxName)}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-2 ${
+                  selectedBoxFilter === boxName
+                    ? 'bg-green-600 text-white'
+                    : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
+                }`}
+              >
+                {box?.singleCupOnly && (
+                  <span className="w-2 h-2 rounded-full bg-purple-400"></span>
+                )}
+                {boxName} ({count})
+              </button>
+            )
+          })}
+
+          {/* Unknown/No Box button - only show if there are orders without boxes */}
+          {orderCountsByBox.unknown > 0 && (
             <button
-              key={pack}
-              onClick={() => setSelectedPackSize(pack === 'All Packs' ? 'all' : pack)}
+              onClick={() => setSelectedBoxFilter('unknown')}
               className={`px-4 py-2 rounded-full text-sm font-medium transition-colors flex items-center gap-2 ${
-                selectedPackSize === (pack === 'All Packs' ? 'all' : pack)
-                  ? 'bg-green-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
+                selectedBoxFilter === 'unknown'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-white text-red-600 hover:bg-red-50 border border-red-300'
               }`}
             >
-              {pack === 'All Packs' && (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              )}
-              {pack === '2/4 Pack' && (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              )}
-              {pack === '4/5 Pack' && (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              )}
-              {pack === '6/10 Pack' && (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              )}
-              {pack === 'Custom' && (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              )}
-              {pack}
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              No Box ({orderCountsByBox.unknown})
             </button>
-          ))}
+          )}
         </div>
       </div>
 
@@ -575,8 +425,8 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Box Size Specific Orders</h2>
-            <p className="text-sm text-gray-500 mt-1">Orders organized by box size requirements and pack compatibility</p>
+            <h2 className="text-lg font-semibold text-gray-900">Orders by Box Size</h2>
+            <p className="text-sm text-gray-500 mt-1">Orders organized by suggested box assignment</p>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600">Found {filteredOrders.length} orders</span>
@@ -625,13 +475,10 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                   ITEMS
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  PACK SIZE
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   BOX
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  COMPATIBLE PACKS
+                  CONFIDENCE
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   TOTAL QTY
@@ -653,6 +500,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
                 const displayedItems = order.items.slice(0, 2)
                 const remainingCount = order.items.length - 2
+                const suggestion = order.log.suggestedBox
 
                 return (
                   <tr
@@ -678,46 +526,33 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {order.packSize}
-                      </span>
-                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {(() => {
-                        const suggestion = order.log.suggestedBox
-                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
-                        if (!suggestion.boxName) {
-                          return <span className="text-sm text-red-600 font-medium">No fit</span>
-                        }
-                        const colorClass = suggestion.confidence === 'confirmed'
-                          ? 'text-green-600'
-                          : suggestion.confidence === 'calculated'
-                          ? 'text-amber-600'
-                          : 'text-red-600'
-                        return (
-                          <span className={`text-sm font-medium ${colorClass}`}>
-                            {suggestion.boxName}
-                          </span>
-                        )
-                      })()}
+                      {order.boxName ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          {order.boxName}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                          No fit
+                        </span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      <div className="flex flex-wrap gap-1">
-                        {order.compatiblePacks.slice(0, 2).map((pack, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"
-                          >
-                            {pack}
-                          </span>
-                        ))}
-                        {order.compatiblePacks.length > 2 && (
-                          <span className="text-xs text-gray-500">+{order.compatiblePacks.length - 2}</span>
-                        )}
-                      </div>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {suggestion ? (
+                        <span className={`font-medium ${
+                          suggestion.confidence === 'confirmed' ? 'text-green-600' :
+                          suggestion.confidence === 'calculated' ? 'text-amber-600' :
+                          'text-red-600'
+                        }`}>
+                          {suggestion.confidence === 'confirmed' ? '✓ Confirmed' :
+                           suggestion.confidence === 'calculated' ? '○ Calculated' :
+                           '? Unknown'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
                       {order.totalQty}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -746,4 +581,3 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     </>
   )
 }
-
