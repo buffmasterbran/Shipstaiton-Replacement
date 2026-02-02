@@ -64,6 +64,32 @@ async function calculateBoxSuggestion(
   }
 
   if (mappedItems.length === 0) {
+    // Check if all items are stickers (PL-STCK*)
+    const allStickers = nonInsuranceItems.every(item => {
+      const sku = (item.sku || '').toUpperCase()
+      return sku.startsWith('PL-STCK')
+    })
+
+    if (allStickers && nonInsuranceItems.length > 0) {
+      console.log(`${logPrefix} STICKER-ONLY ORDER: All ${nonInsuranceItems.length} item(s) are stickers`)
+      // Find a box named "Stickers" (case-insensitive)
+      const stickerBox = boxes.find(b => b.name.toLowerCase() === 'stickers' && b.active)
+      if (stickerBox) {
+        console.log(`${logPrefix} ✓ STICKER BOX FOUND: "${stickerBox.name}"`)
+        return {
+          suggestedBox: {
+            boxId: stickerBox.id,
+            boxName: stickerBox.name,
+            confidence: 'confirmed',
+            reason: 'sticker-only',
+          },
+          unmatchedSkus,
+        }
+      } else {
+        console.log(`${logPrefix} WARNING: No "Stickers" box found in database. Available boxes: ${boxes.map(b => b.name).join(', ')}`)
+      }
+    }
+
     console.log(`${logPrefix} No items matched to product sizes`)
     return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
   }

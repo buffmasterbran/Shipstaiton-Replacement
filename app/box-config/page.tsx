@@ -165,6 +165,9 @@ export default function BoxConfigPage() {
   // Matrix filter state
   const [hideConfirmed, setHideConfirmed] = useState(true)
 
+  // Pagination for combinations matrix
+  const [visibleCombos, setVisibleCombos] = useState(100)
+
   // Drag and drop sensors
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -600,7 +603,10 @@ export default function BoxConfigPage() {
             <input
               type="checkbox"
               checked={hideConfirmed}
-              onChange={(e) => setHideConfirmed(e.target.checked)}
+              onChange={(e) => {
+                setHideConfirmed(e.target.checked)
+                setVisibleCombos(100) // Reset pagination when filter changes
+              }}
               className="rounded"
             />
             <span>Hide confirmed</span>
@@ -623,10 +629,10 @@ export default function BoxConfigPage() {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {(() => {
-                // Generate ALL combinations from products (cups only, up to 4 total)
-                const cupProducts = products.filter(p => {
+                // Generate ALL combinations from products (cups and accessories)
+                const allProducts = products.filter(p => {
                   const cat = p.category?.toLowerCase() || ''
-                  return cat === 'tumbler' || cat === 'bottle'
+                  return cat === 'tumbler' || cat === 'bottle' || cat === 'accessory' || cat === 'other'
                 })
 
                 // Build combo signature helper
@@ -656,6 +662,15 @@ export default function BoxConfigPage() {
                       const product = products.find(p => p.id === item.productId)
                       return total + (product?.volume || 0) * item.quantity
                     }, 0)
+                    // Calculate actual cup count (only tumblers/bottles, not accessories)
+                    const cupCount = currentItems.reduce((count, item) => {
+                      const product = products.find(p => p.id === item.productId)
+                      const cat = product?.category?.toLowerCase() || ''
+                      if (cat === 'tumbler' || cat === 'bottle') {
+                        return count + item.quantity
+                      }
+                      return count
+                    }, 0)
                     const displayParts = currentItems
                       .filter(i => i.quantity > 0)
                       .map(i => {
@@ -667,14 +682,17 @@ export default function BoxConfigPage() {
                       items: currentItems.filter(i => i.quantity > 0),
                       displayName: displayParts.join(' + '),
                       orderVolume,
-                      cupCount: totalQty,
+                      cupCount,
                     })
                   }
 
                   // Try adding more products
-                  for (let i = productIndex; i < cupProducts.length; i++) {
-                    const product = cupProducts[i]
-                    for (let qty = 1; qty <= maxTotal - totalQty; qty++) {
+                  for (let i = productIndex; i < allProducts.length; i++) {
+                    const product = allProducts[i]
+                    // Limit stickers to max 2 in combinations (we don't sell 5+ sticker orders)
+                    const isSticker = product.name?.toLowerCase().includes('sticker')
+                    const maxQtyForProduct = isSticker ? Math.min(2, maxTotal - totalQty) : maxTotal - totalQty
+                    for (let qty = 1; qty <= maxQtyForProduct; qty++) {
                       generateCombos(
                         i + 1,
                         [...currentItems, { productId: product.id, quantity: qty }],
@@ -694,7 +712,10 @@ export default function BoxConfigPage() {
                   ? allCombos.filter(combo => !feedbackRules.some(r => r.comboSignature === combo.signature && r.fits))
                   : allCombos
 
-                return filteredCombos.map((combo) => {
+                // Apply pagination - only show first N combos
+                const displayedCombos = filteredCombos.slice(0, visibleCombos)
+
+                return displayedCombos.map((combo) => {
                   const comboRules = feedbackRules.filter(r => r.comboSignature === combo.signature)
 
                   return (
@@ -767,18 +788,52 @@ export default function BoxConfigPage() {
             </tbody>
           </table>
         </div>
-        <div className="p-2 border-t bg-gray-50 text-xs text-gray-500">
+        <div className="p-3 border-t bg-gray-50 flex items-center justify-between">
+          <div className="text-xs text-gray-500">
+            {(() => {
+              // Calculate total combinations (including accessories now)
+              const allProducts = products.filter(p => {
+                const cat = p.category?.toLowerCase() || ''
+                return cat === 'tumbler' || cat === 'bottle' || cat === 'accessory' || cat === 'other'
+              })
+              // Quick count calculation
+              let totalCount = 0
+              const maxTotal = 10
+              const generateCount = (idx: number, total: number) => {
+                if (total > 0) totalCount++
+                for (let i = idx; i < allProducts.length; i++) {
+                  for (let qty = 1; qty <= maxTotal - total; qty++) {
+                    generateCount(i + 1, total + qty)
+                  }
+                }
+              }
+              generateCount(0, 0)
+              const confirmedCount = feedbackRules.filter(r => r.fits).length
+
+              // Calculate filtered count based on hideConfirmed
+              const unconfirmedCount = totalCount - confirmedCount
+              const filteredTotal = hideConfirmed ? unconfirmedCount : totalCount
+              const showingCount = Math.min(visibleCombos, filteredTotal)
+
+              return (
+                <>
+                  Showing {showingCount} of {filteredTotal} {hideConfirmed ? 'unconfirmed ' : ''}combinations
+                  {' '}({confirmedCount} confirmed total) - click any cell to confirm
+                </>
+              )
+            })()}
+          </div>
           {(() => {
-            const cupProducts = products.filter(p => {
+            // Calculate if we need Load More button
+            const allProducts = products.filter(p => {
               const cat = p.category?.toLowerCase() || ''
-              return cat === 'tumbler' || cat === 'bottle'
+              return cat === 'tumbler' || cat === 'bottle' || cat === 'accessory' || cat === 'other'
             })
-            // Quick count calculation
             let totalCount = 0
             const maxTotal = 10
             const generateCount = (idx: number, total: number) => {
               if (total > 0) totalCount++
-              for (let i = idx; i < cupProducts.length; i++) {
+              for (let i = idx; i < allProducts.length; i++) {
                 for (let qty = 1; qty <= maxTotal - total; qty++) {
                   generateCount(i + 1, total + qty)
                 }
@@ -787,9 +842,19 @@ export default function BoxConfigPage() {
             generateCount(0, 0)
             const confirmedCount = feedbackRules.filter(r => r.fits).length
             const unconfirmedCount = totalCount - confirmedCount
-            return hideConfirmed
-              ? `Showing ${unconfirmedCount} unconfirmed of ${totalCount} total - click any cell to confirm`
-              : `Showing all ${totalCount} combinations (${confirmedCount} confirmed) - click any cell to confirm`
+            const filteredTotal = hideConfirmed ? unconfirmedCount : totalCount
+
+            if (visibleCombos < filteredTotal) {
+              return (
+                <button
+                  onClick={() => setVisibleCombos(prev => prev + 100)}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                >
+                  Load 100 More
+                </button>
+              )
+            }
+            return null
           })()}
         </div>
       </div>

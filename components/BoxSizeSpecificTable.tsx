@@ -3,7 +3,9 @@
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
+import BoxConfirmDialog from './BoxConfirmDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
+import { getColorFromSku, getSizeFromSku } from '@/lib/order-utils'
 
 interface OrderLog {
   id: string
@@ -39,6 +41,8 @@ interface ProcessedOrder {
     sku: string
     name: string
     quantity: number
+    color: string
+    size: string
   }>
   totalQty: number
   boxName: string | null
@@ -56,6 +60,10 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   const [searchQuery, setSearchQuery] = useState('')
   const [boxes, setBoxes] = useState<Box[]>([])
   const [loadingBoxes, setLoadingBoxes] = useState(true)
+
+  // Box confirm dialog state
+  const [isBoxConfirmOpen, setIsBoxConfirmOpen] = useState(false)
+  const [boxConfirmOrder, setBoxConfirmOrder] = useState<ProcessedOrder | null>(null)
 
   // Fetch boxes from API
   useEffect(() => {
@@ -92,13 +100,15 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
         if (nonInsuranceItems.length === 0) return null
 
-        const processedItems = nonInsuranceItems.map((item: any) => ({
+        const processedItems: Array<{ sku: string; name: string; quantity: number; color: string; size: string }> = nonInsuranceItems.map((item: any) => ({
           sku: item.sku || 'N/A',
           name: item.name || 'Unknown',
           quantity: item.quantity || 1,
+          color: getColorFromSku(item.sku || '', item.name, item.color),
+          size: getSizeFromSku(item.sku || ''),
         }))
 
-        const totalQty = processedItems.reduce((sum: number, item: { quantity: number }) => sum + item.quantity, 0)
+        const totalQty = processedItems.reduce((sum, item) => sum + item.quantity, 0)
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
         const orderDate = order?.orderDate || log.createdAt
 
@@ -215,6 +225,22 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     setIsDialogOpen(false)
     setSelectedOrder(null)
     setSelectedRawPayload(null)
+  }
+
+  const handleConfidenceClick = (order: ProcessedOrder, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent row click from opening order dialog
+    setBoxConfirmOrder(order)
+    setIsBoxConfirmOpen(true)
+  }
+
+  const handleBoxConfirmClose = () => {
+    setIsBoxConfirmOpen(false)
+    setBoxConfirmOrder(null)
+  }
+
+  const handleBoxFeedbackSaved = () => {
+    // Refresh the page to get updated box assignments
+    window.location.reload()
   }
 
   const handleBatch = (packageInfo: { weight: string; dimensions: { length: string; width: string; height: string } }) => {
@@ -475,6 +501,9 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                   ITEMS
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  COLORS
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   BOX
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -526,6 +555,18 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         )}
                       </div>
                     </td>
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      <div className="space-y-1">
+                        {displayedItems.map((item, idx) => (
+                          <div key={idx} className="text-xs">
+                            {item.color}
+                          </div>
+                        ))}
+                        {remainingCount > 0 && (
+                          <div className="text-xs text-gray-500">...</div>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {order.boxName ? (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -539,17 +580,31 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {suggestion ? (
-                        <span className={`font-medium ${
-                          suggestion.confidence === 'confirmed' ? 'text-green-600' :
-                          suggestion.confidence === 'calculated' ? 'text-amber-600' :
-                          'text-red-600'
-                        }`}>
-                          {suggestion.confidence === 'confirmed' ? '✓ Confirmed' :
-                           suggestion.confidence === 'calculated' ? '○ Calculated' :
-                           '? Unknown'}
-                        </span>
+                        suggestion.confidence === 'confirmed' ? (
+                          <span className="font-medium text-green-600">
+                            ✓ Confirmed
+                          </span>
+                        ) : (
+                          <button
+                            onClick={(e) => handleConfidenceClick(order, e)}
+                            className={`font-medium px-2 py-1 rounded hover:bg-gray-100 transition-colors ${
+                              suggestion.confidence === 'calculated' ? 'text-amber-600 hover:text-amber-700' :
+                              'text-red-600 hover:text-red-700'
+                            }`}
+                            title="Click to confirm or change box"
+                          >
+                            {suggestion.confidence === 'calculated' ? '○ Calculated' : '? Unknown'}
+                            <span className="ml-1 text-xs">→</span>
+                          </button>
+                        )
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <button
+                          onClick={(e) => handleConfidenceClick(order, e)}
+                          className="text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                          title="Click to set box"
+                        >
+                          — Set box
+                        </button>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
@@ -578,6 +633,17 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         onBatch={handleBatch}
         orderCount={filteredOrders.length}
       />
+      {boxConfirmOrder && (
+        <BoxConfirmDialog
+          isOpen={isBoxConfirmOpen}
+          onClose={handleBoxConfirmClose}
+          orderNumber={boxConfirmOrder.log.orderNumber}
+          items={boxConfirmOrder.items}
+          currentBoxName={boxConfirmOrder.boxName}
+          currentConfidence={boxConfirmOrder.log.suggestedBox?.confidence || 'unknown'}
+          onFeedbackSaved={handleBoxFeedbackSaved}
+        />
+      )}
     </>
   )
 }

@@ -7,6 +7,7 @@ import { XMarkIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 interface OrderItem {
   sku?: string
   name?: string
+  color?: string
   quantity?: number
   unitPrice?: number
   weight?: {
@@ -284,6 +285,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload }: Orde
                               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Item
                               </th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Color
+                              </th>
                               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Qty
                               </th>
@@ -303,6 +307,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload }: Orde
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
                                   <div className="font-medium">{item.name || 'Unnamed Item'}</div>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                                  {item.color || '—'}
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
                                   {item.quantity || 0}

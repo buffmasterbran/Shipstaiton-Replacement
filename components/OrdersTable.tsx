@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
+import BoxConfirmDialog from './BoxConfirmDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
@@ -148,6 +149,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<OrderTypeFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('orderDate')
+
+  // Box confirm dialog state
+  const [isBoxConfirmOpen, setIsBoxConfirmOpen] = useState(false)
+  const [boxConfirmLog, setBoxConfirmLog] = useState<OrderLog | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
@@ -295,6 +300,22 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     setSelectedRawPayload(null)
   }
 
+  const handleBoxClick = (log: OrderLog, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent row click from opening order dialog
+    setBoxConfirmLog(log)
+    setIsBoxConfirmOpen(true)
+  }
+
+  const handleBoxConfirmClose = () => {
+    setIsBoxConfirmOpen(false)
+    setBoxConfirmLog(null)
+  }
+
+  const handleBoxFeedbackSaved = () => {
+    // Refresh the page to get updated box assignments
+    window.location.reload()
+  }
+
   if (logs.length === 0) {
     return (
       <div className="bg-white rounded shadow p-6 text-center">
@@ -430,19 +451,48 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                     <td className="px-3 py-2 whitespace-nowrap">
                       {(() => {
                         const suggestion = log.suggestedBox
-                        if (!suggestion) return <span className="text-sm text-gray-400">—</span>
-                        if (!suggestion.boxName) {
-                          return <span className="text-sm text-red-600 font-medium">No fit</span>
+                        if (!suggestion) {
+                          return (
+                            <button
+                              onClick={(e) => handleBoxClick(log, e)}
+                              className="text-sm text-gray-400 hover:text-gray-600 hover:underline"
+                              title="Click to set box"
+                            >
+                              — Set
+                            </button>
+                          )
                         }
-                        const colorClass = suggestion.confidence === 'confirmed'
-                          ? 'text-green-600'
-                          : suggestion.confidence === 'calculated'
-                          ? 'text-amber-600'
-                          : 'text-red-600'
+                        if (!suggestion.boxName) {
+                          return (
+                            <button
+                              onClick={(e) => handleBoxClick(log, e)}
+                              className="text-sm text-red-600 font-medium hover:text-red-800 hover:underline"
+                              title="Click to set box"
+                            >
+                              No fit →
+                            </button>
+                          )
+                        }
+                        // Confirmed = not clickable
+                        if (suggestion.confidence === 'confirmed') {
+                          return (
+                            <span className="text-sm font-medium text-green-600">
+                              {suggestion.boxName}
+                            </span>
+                          )
+                        }
+                        // Calculated or Unknown = clickable
+                        const colorClass = suggestion.confidence === 'calculated'
+                          ? 'text-amber-600 hover:text-amber-800'
+                          : 'text-red-600 hover:text-red-800'
                         return (
-                          <span className={`text-sm font-medium ${colorClass}`}>
-                            {suggestion.boxName}
-                          </span>
+                          <button
+                            onClick={(e) => handleBoxClick(log, e)}
+                            className={`text-sm font-medium ${colorClass} hover:underline`}
+                            title="Click to confirm or change box"
+                          >
+                            {suggestion.boxName} →
+                          </button>
                         )
                       })()}
                     </td>
@@ -506,6 +556,26 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         order={selectedOrder}
         rawPayload={selectedRawPayload}
       />
+      {boxConfirmLog && (() => {
+        const payload = boxConfirmLog.rawPayload as any
+        const order = Array.isArray(payload) ? payload[0] : payload
+        const items = (order?.items || []).map((item: any) => ({
+          sku: item.sku || 'N/A',
+          name: item.name || 'Unknown',
+          quantity: item.quantity || 1,
+        }))
+        return (
+          <BoxConfirmDialog
+            isOpen={isBoxConfirmOpen}
+            onClose={handleBoxConfirmClose}
+            orderNumber={order?.orderNumber || boxConfirmLog.orderNumber}
+            items={items}
+            currentBoxName={boxConfirmLog.suggestedBox?.boxName || null}
+            currentConfidence={boxConfirmLog.suggestedBox?.confidence || 'unknown'}
+            onFeedbackSaved={handleBoxFeedbackSaved}
+          />
+        )
+      })()}
     </>
   )
 }

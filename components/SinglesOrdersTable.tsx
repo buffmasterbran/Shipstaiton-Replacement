@@ -100,7 +100,8 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         if (!mainItem) return null
         
         const size = getSizeFromSku(mainItem.sku || '')
-        const color = getColorFromSku(mainItem.sku || '', mainItem.name)
+        // Use color from payload if available (sent from NetSuite), otherwise parse from SKU
+        const color = getColorFromSku(mainItem.sku || '', mainItem.name, mainItem.color)
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
         const customerId = order?.shipTo?.name ? order?.shipTo?.name.split(' ')[0] : undefined
         
@@ -1524,6 +1525,9 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                   Size
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Color
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Box
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1546,7 +1550,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={11} className="px-6 py-8 text-center text-gray-500">
                     No orders found matching your filters
                   </td>
                 </tr>
@@ -1581,6 +1585,9 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{processedOrder.size}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{processedOrder.color}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {(() => {
