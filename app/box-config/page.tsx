@@ -26,6 +26,7 @@ interface Box {
   lengthInches: number
   widthInches: number
   heightInches: number
+  weightLbs: number
   volume: number
   priority: number
   active: boolean
@@ -109,6 +110,7 @@ function SortableBoxRow({
       <td className="px-4 py-3 text-gray-600">
         {box.lengthInches}" × {box.widthInches}" × {box.heightInches}"
       </td>
+      <td className="px-4 py-3 text-gray-600">{box.weightLbs ? `${box.weightLbs} lbs` : '-'}</td>
       <td className="px-4 py-3 text-gray-600">{box.volume.toFixed(0)} in³</td>
       <td className="px-4 py-3 text-gray-600">{(box.volume * packingEfficiency).toFixed(0)} in³</td>
       <td className="px-4 py-3 text-gray-500 text-xs">{box.priority}</td>
@@ -154,6 +156,7 @@ export default function BoxConfigPage() {
     length: '',
     width: '',
     height: '',
+    weight: '',
     active: true,
     inStock: true,
     singleCupOnly: false,
@@ -211,6 +214,7 @@ export default function BoxConfigPage() {
       length: '',
       width: '',
       height: '',
+      weight: '',
       active: true,
       inStock: true,
       singleCupOnly: false,
@@ -225,6 +229,7 @@ export default function BoxConfigPage() {
       length: String(box.lengthInches),
       width: String(box.widthInches),
       height: String(box.heightInches),
+      weight: box.weightLbs ? String(box.weightLbs) : '',
       active: box.active,
       inStock: box.inStock,
       singleCupOnly: box.singleCupOnly ?? false,
@@ -248,6 +253,7 @@ export default function BoxConfigPage() {
           lengthInches: parseFloat(boxForm.length) || 0,
           widthInches: parseFloat(boxForm.width) || 0,
           heightInches: parseFloat(boxForm.height) || 0,
+          weightLbs: parseFloat(boxForm.weight) || 0,
           // Priority is now managed by drag-and-drop; new boxes get added at the end
           active: boxForm.active,
           inStock: boxForm.inStock,
@@ -486,6 +492,17 @@ export default function BoxConfigPage() {
                   className="w-full border rounded px-3 py-2 text-sm"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Weight (lbs)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={boxForm.weight}
+                  onChange={(e) => setBoxForm({ ...boxForm, weight: e.target.value })}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="0.0"
+                />
+              </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
               <div className="flex items-end gap-4 flex-wrap">
@@ -548,6 +565,7 @@ export default function BoxConfigPage() {
                 <th className="px-2 py-3 w-8"></th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Internal Dims</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Weight</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Volume</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usable ({(packingEfficiency * 100).toFixed(0)}%)</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase text-gray-400">#</th>
@@ -558,7 +576,7 @@ export default function BoxConfigPage() {
             <tbody className="divide-y divide-gray-200">
               {boxes.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                     No boxes configured. Click "Add Box" to create one.
                   </td>
                 </tr>

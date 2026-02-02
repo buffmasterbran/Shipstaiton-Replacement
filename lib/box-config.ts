@@ -11,6 +11,7 @@ export interface Box {
   lengthInches: number
   widthInches: number
   heightInches: number
+  weightLbs: number // Box weight in pounds (for shipping calculations)
   volume: number // Calculated: L × W × H
   priority: number
   active: boolean
@@ -58,6 +59,7 @@ function addVolumeToBox(box: any): Box {
   const { createdAt, updatedAt, ...rest } = box
   return {
     ...rest,
+    weightLbs: box.weightLbs ?? 0,
     volume: calculateBoxVolume(box.lengthInches, box.widthInches, box.heightInches),
     singleCupOnly: box.singleCupOnly ?? false,
   }
@@ -317,6 +319,7 @@ export async function addBox(
     lengthInches: number
     widthInches: number
     heightInches: number
+    weightLbs?: number
     priority?: number
     active?: boolean
     inStock?: boolean
@@ -341,6 +344,7 @@ export async function addBox(
       lengthInches: data.lengthInches,
       widthInches: data.widthInches,
       heightInches: data.heightInches,
+      weightLbs: data.weightLbs ?? 0,
       priority,
       active: data.active ?? true,
       inStock: data.inStock ?? true,
@@ -359,6 +363,7 @@ export async function updateBox(
     lengthInches: number
     widthInches: number
     heightInches: number
+    weightLbs: number
     priority: number
     active: boolean
     inStock: boolean

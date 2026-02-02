@@ -1,14 +1,24 @@
 'use client'
 
-import { Fragment, useState } from 'react'
+import { Fragment, useState, useEffect } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+
+interface SuggestedBox {
+  boxId?: string
+  boxName?: string
+  lengthInches?: number
+  widthInches?: number
+  heightInches?: number
+  weightLbs?: number
+}
 
 interface BatchDialogProps {
   isOpen: boolean
   onClose: () => void
   onBatch: (packageInfo: { weight: string; dimensions: { length: string; width: string; height: string } }) => void
   orderCount: number
+  suggestedBox?: SuggestedBox | null
 }
 
 export default function BatchDialog({
@@ -16,6 +26,7 @@ export default function BatchDialog({
   onClose,
   onBatch,
   orderCount,
+  suggestedBox,
 }: BatchDialogProps) {
   const [weight, setWeight] = useState('')
   const [dimensions, setDimensions] = useState({
@@ -24,8 +35,32 @@ export default function BatchDialog({
     height: '',
   })
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
+  const [autoPopulatedBox, setAutoPopulatedBox] = useState<string | null>(null)
+
+  // Auto-populate from suggestedBox when dialog opens
+  useEffect(() => {
+    if (isOpen && suggestedBox) {
+      const boxName = suggestedBox.boxName || 'Suggested Box'
+      if (suggestedBox.weightLbs) {
+        setWeight(String(suggestedBox.weightLbs))
+      }
+      if (suggestedBox.lengthInches && suggestedBox.widthInches && suggestedBox.heightInches) {
+        setDimensions({
+          length: String(suggestedBox.lengthInches),
+          width: String(suggestedBox.widthInches),
+          height: String(suggestedBox.heightInches),
+        })
+      }
+      setAutoPopulatedBox(boxName)
+      setErrors({})
+    }
+  }, [isOpen, suggestedBox])
 
   const handleChange = (field: string, value: string) => {
+    // Clear auto-populated indicator on manual change
+    if (autoPopulatedBox) {
+      setAutoPopulatedBox(null)
+    }
     if (field.startsWith('dimensions.')) {
       const dimField = field.split('.')[1]
       setDimensions((prev) => ({
@@ -71,6 +106,7 @@ export default function BatchDialog({
     setWeight('')
     setDimensions({ length: '', width: '', height: '' })
     setErrors({})
+    setAutoPopulatedBox(null)
     onClose()
   }
 
@@ -126,6 +162,15 @@ export default function BatchDialog({
                 {/* Content */}
                 <div className="max-h-[calc(100vh-300px)] overflow-y-auto p-6">
                   <div className="space-y-6">
+                    {/* Auto-populated indicator */}
+                    {autoPopulatedBox && (
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-sm text-green-700">
+                          <span className="font-medium">Using box:</span> {autoPopulatedBox}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Weight */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">

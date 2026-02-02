@@ -326,7 +326,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   }
 
   const Th = ({ columnKey, children }: { columnKey: SortKey; children: React.ReactNode }) => (
-    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
+    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
       <button
         type="button"
         onClick={() => handleSort(columnKey)}
@@ -402,7 +402,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                 <Th columnKey="orderNumber">Order #</Th>
                 <Th columnKey="customer">Customer</Th>
                 <Th columnKey="items">Items</Th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Box
                 </th>
                 <Th columnKey="amount">Amount</Th>
@@ -432,12 +432,12 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                     onClick={() => handleRowClick(log)}
                     className={`cursor-pointer transition-colors ${rowStyle}`}
                   >
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <span className="text-sm font-semibold text-gray-900">
                         {order?.orderNumber || log.orderNumber}
                       </span>
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{customerName}</div>
                       {order?.shipTo?.city && order?.shipTo?.state && (
                         <div className="text-xs text-gray-500">
@@ -445,10 +445,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                       {itemCount}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {(() => {
                         const suggestion = log.suggestedBox
                         if (!suggestion) {
@@ -496,16 +496,16 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                         )
                       })()}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                       {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {order?.orderDate ? new Date(order.orderDate).toLocaleDateString() : '—'}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {new Date(log.createdAt).toLocaleDateString()}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <span
                         className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                           highlightType === 'red' || highlightType === 'orange'

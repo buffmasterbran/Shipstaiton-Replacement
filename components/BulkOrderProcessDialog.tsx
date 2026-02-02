@@ -37,6 +37,15 @@ interface ShippingRate {
   service: string
 }
 
+interface BoxOption {
+  id: string
+  name: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  weightLbs: number
+}
+
 interface BulkOrderProcessDialogProps {
   isOpen: boolean
   onClose: () => void
@@ -46,6 +55,7 @@ interface BulkOrderProcessDialogProps {
   onSavePackageInfo: (info: PackageInfo) => void
   sendToQueueLoading?: boolean
   sendToQueueError?: string | null
+  boxes?: BoxOption[]
 }
 
 export default function BulkOrderProcessDialog({
@@ -57,11 +67,26 @@ export default function BulkOrderProcessDialog({
   onSavePackageInfo,
   sendToQueueLoading = false,
   sendToQueueError = null,
+  boxes = [],
 }: BulkOrderProcessDialogProps) {
   const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
   const [isProcessDialogOpen, setIsProcessDialogOpen] = useState(false)
 
   if (!group) return null
+
+  // Extract suggestedBox from the first order in the group
+  const firstOrderLog = group.orders[0]?.log
+  const suggestedBoxData = firstOrderLog?.rawPayload?.suggestedBox || (firstOrderLog as any)?.suggestedBox
+
+  // Build the suggestedBox object for the PackageInfoDialog
+  const suggestedBox = suggestedBoxData ? {
+    boxId: suggestedBoxData.boxId,
+    boxName: suggestedBoxData.boxName,
+    lengthInches: suggestedBoxData.lengthInches,
+    widthInches: suggestedBoxData.widthInches,
+    heightInches: suggestedBoxData.heightInches,
+    weightLbs: suggestedBoxData.weightLbs,
+  } : null
 
   const handleClose = () => {
     setIsPackageInfoDialogOpen(false)
@@ -160,6 +185,18 @@ export default function BulkOrderProcessDialog({
                         {/* Package Info Section */}
                         <div>
                           <h5 className="text-sm font-medium text-gray-700 mb-3">Package Information</h5>
+                          {suggestedBox?.boxName && (
+                            <div className="mb-3 p-2 bg-green-50 border border-green-200 rounded-lg">
+                              <p className="text-sm text-green-700">
+                                <span className="font-medium">Suggested box:</span> {suggestedBox.boxName}
+                                {suggestedBox.lengthInches && suggestedBox.widthInches && suggestedBox.heightInches && (
+                                  <span className="text-green-600 ml-1">
+                                    ({suggestedBox.lengthInches}" × {suggestedBox.widthInches}" × {suggestedBox.heightInches}")
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
                           <button
                             onClick={handlePackageInfoClick}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -268,6 +305,8 @@ export default function BulkOrderProcessDialog({
         isOpen={isPackageInfoDialogOpen}
         onClose={() => setIsPackageInfoDialogOpen(false)}
         onSave={handlePackageInfoSave}
+        suggestedBox={suggestedBox}
+        boxes={boxes}
       />
 
       {/* Send to queue confirmation (max 24 orders per packer batch) */}

@@ -83,6 +83,30 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const [autoProcessEnabled, setAutoProcessEnabled] = useState(false)
   const [autoProcessThreshold, setAutoProcessThreshold] = useState<number>(10)
   const [isBatchPackageInfoDialogOpen, setIsBatchPackageInfoDialogOpen] = useState(false)
+  const [boxes, setBoxes] = useState<Array<{
+    id: string
+    name: string
+    lengthInches: number
+    widthInches: number
+    heightInches: number
+    weightLbs: number
+  }>>([])
+
+  // Fetch boxes from API
+  useEffect(() => {
+    const fetchBoxes = async () => {
+      try {
+        const res = await fetch('/api/box-config')
+        if (res.ok) {
+          const data = await res.json()
+          setBoxes(data.boxes || [])
+        }
+      } catch (error) {
+        console.error('Failed to fetch boxes:', error)
+      }
+    }
+    fetchBoxes()
+  }, [])
 
   // Process orders to extract main item, size, and color
   const processedOrders = useMemo(() => {
@@ -278,6 +302,35 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       return rate && rate.price && rate.service
     })
   }, [filteredOrders, shippingRates, rateShoppingActive])
+
+  // Determine suggested box for the filtered orders
+  // If all filtered orders have the same suggested box, use that; otherwise null
+  const suggestedBoxForDialog = useMemo(() => {
+    if (filteredOrders.length === 0) return null
+
+    const firstSuggestion = filteredOrders[0]?.log.suggestedBox
+    if (!firstSuggestion?.boxId) return null
+
+    // Check if all orders have the same suggested box
+    const allSame = filteredOrders.every(order =>
+      order.log.suggestedBox?.boxId === firstSuggestion.boxId
+    )
+
+    if (!allSame) return null
+
+    // Find the box details from our boxes array
+    const box = boxes.find(b => b.id === firstSuggestion.boxId)
+    if (!box) return null
+
+    return {
+      boxId: box.id,
+      boxName: box.name,
+      lengthInches: box.lengthInches,
+      widthInches: box.widthInches,
+      heightInches: box.heightInches,
+      weightLbs: box.weightLbs,
+    }
+  }, [filteredOrders, boxes])
 
   // Notify header about process button availability
   useEffect(() => {
@@ -1512,37 +1565,37 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Order ID
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Customer
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Item SKU
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Size
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Color
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Box
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Quantity
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Ordered Date
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Shipping Price
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Shipping Service
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   View Order
                 </th>
               </tr>
@@ -1560,7 +1613,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                     key={processedOrder.log.id}
                     className="hover:bg-gray-50 transition-colors"
                   >
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm font-semibold text-gray-900">
                         #{processedOrder.log.orderNumber}
                       </div>
@@ -1570,7 +1623,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
                         {processedOrder.customerId && (
                           <span className="font-medium">{processedOrder.customerId} </span>
@@ -1578,18 +1631,18 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                         {processedOrder.customerName}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm font-mono text-gray-900">
                         {processedOrder.mainItem.sku || 'N/A'}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{processedOrder.size}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{processedOrder.color}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {(() => {
                         const suggestion = processedOrder.log.suggestedBox
                         if (!suggestion) return <span className="text-sm text-gray-400">—</span>
@@ -1608,21 +1661,21 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                         )
                       })()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
                         {processedOrder.mainItem.quantity || 1}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {new Date(processedOrder.orderDate).toLocaleDateString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {shippingRates.get(processedOrder.log.id)?.price || ''}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {shippingRates.get(processedOrder.log.id)?.service || ''}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -1678,6 +1731,8 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         isOpen={isPackageInfoDialogOpen}
         onClose={() => setIsPackageInfoDialogOpen(false)}
         onSave={handleSavePackageInfo}
+        suggestedBox={suggestedBoxForDialog}
+        boxes={boxes}
       />
 
       <BatchPackageInfoDialog

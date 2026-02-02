@@ -61,6 +61,7 @@ model Box {
   lengthInches  Float    @map("length_inches")
   widthInches   Float    @map("width_inches")
   heightInches  Float    @map("height_inches")
+  weightLbs     Float    @default(0) @map("weight_lbs")
   priority      Int      @default(1)
   active        Boolean  @default(true)
   inStock       Boolean  @default(true) @map("in_stock")
@@ -109,9 +110,7 @@ model ProductSkuPattern {
 
   @@map("product_sku_patterns")
   @@index([productSizeId])
-}
-
-model ProductSku {
+}model ProductSku {
   sku           String      @id
   productSizeId String      @map("product_size_id")
   name          String?

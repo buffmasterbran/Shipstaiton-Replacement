@@ -1,13 +1,33 @@
 'use client'
 
-import { Fragment, useState } from 'react'
+import { Fragment, useState, useEffect } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+
+interface SuggestedBox {
+  boxId?: string
+  boxName?: string
+  lengthInches?: number
+  widthInches?: number
+  heightInches?: number
+  weightLbs?: number
+}
+
+interface BoxOption {
+  id: string
+  name: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  weightLbs: number
+}
 
 interface PackageInfoDialogProps {
   isOpen: boolean
   onClose: () => void
   onSave: (packageInfo: PackageInfo) => void
+  suggestedBox?: SuggestedBox | null
+  boxes?: BoxOption[]
 }
 
 export interface PackageInfo {
@@ -76,6 +96,8 @@ export default function PackageInfoDialog({
   isOpen,
   onClose,
   onSave,
+  suggestedBox,
+  boxes = [],
 }: PackageInfoDialogProps) {
   const [formData, setFormData] = useState<PackageInfo>({
     weight: '',
@@ -91,11 +113,50 @@ export default function PackageInfoDialog({
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
   const [selectedPreset, setSelectedPreset] = useState<string>('')
+  const [autoPopulatedBox, setAutoPopulatedBox] = useState<string | null>(null)
+
+  // Auto-populate from suggestedBox when dialog opens
+  useEffect(() => {
+    if (isOpen && suggestedBox) {
+      const boxName = suggestedBox.boxName || 'Suggested Box'
+      setFormData(prev => ({
+        ...prev,
+        weight: suggestedBox.weightLbs ? String(suggestedBox.weightLbs) : prev.weight,
+        dimensions: {
+          length: suggestedBox.lengthInches ? String(suggestedBox.lengthInches) : prev.dimensions.length,
+          width: suggestedBox.widthInches ? String(suggestedBox.widthInches) : prev.dimensions.width,
+          height: suggestedBox.heightInches ? String(suggestedBox.heightInches) : prev.dimensions.height,
+        },
+      }))
+      setAutoPopulatedBox(boxName)
+      setErrors({})
+    }
+  }, [isOpen, suggestedBox])
+
+  // Generate dynamic presets from boxes array
+  const dynamicPresets: Preset[] = boxes.map(box => ({
+    name: box.name,
+    packageInfo: {
+      weight: String(box.weightLbs || 0),
+      dimensions: {
+        length: String(box.lengthInches),
+        width: String(box.widthInches),
+        height: String(box.heightInches),
+      },
+      carrier: '',
+      service: '',
+      packaging: 'Package',
+    },
+  }))
+
+  // Use dynamic presets if available, otherwise fall back to hardcoded PRESETS
+  const availablePresets = dynamicPresets.length > 0 ? dynamicPresets : PRESETS
 
   const handlePresetChange = (presetName: string) => {
     setSelectedPreset(presetName)
+    setAutoPopulatedBox(null) // Clear auto-populated indicator when manually selecting preset
     if (presetName) {
-      const preset = PRESETS.find((p) => p.name === presetName)
+      const preset = availablePresets.find((p) => p.name === presetName)
       if (preset) {
         setFormData(preset.packageInfo)
         setErrors({}) // Clear any errors since preset fills all required fields
@@ -104,9 +165,12 @@ export default function PackageInfoDialog({
   }
 
   const handleChange = (field: string, value: string) => {
-    // Clear preset selection on manual change
+    // Clear preset selection and auto-populated indicator on manual change
     if (selectedPreset) {
       setSelectedPreset('')
+    }
+    if (autoPopulatedBox) {
+      setAutoPopulatedBox(null)
     }
     if (field.startsWith('dimensions.')) {
       const dimField = field.split('.')[1]
@@ -183,6 +247,8 @@ export default function PackageInfoDialog({
       packaging: '',
     })
     setErrors({})
+    setAutoPopulatedBox(null)
+    setSelectedPreset('')
     onClose()
   }
 
@@ -231,10 +297,19 @@ export default function PackageInfoDialog({
                 {/* Content */}
                 <div className="max-h-[calc(100vh-300px)] overflow-y-auto p-6">
                   <div className="space-y-6">
+                    {/* Auto-populated indicator */}
+                    {autoPopulatedBox && (
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-sm text-green-700">
+                          <span className="font-medium">Using box:</span> {autoPopulatedBox}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Presets */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Presets
+                        {boxes.length > 0 ? 'Box Presets' : 'Presets'}
                       </label>
                       <select
                         value={selectedPreset}
@@ -242,7 +317,7 @@ export default function PackageInfoDialog({
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">Select a preset...</option>
-                        {PRESETS.map((preset) => (
+                        {availablePresets.map((preset) => (
                           <option key={preset.name} value={preset.name}>
                             {preset.name}
                           </option>

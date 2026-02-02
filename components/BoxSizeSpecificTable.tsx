@@ -25,6 +25,10 @@ interface OrderLog {
 interface Box {
   id: string
   name: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  weightLbs: number
   priority: number
   active: boolean
   singleCupOnly: boolean
@@ -210,6 +214,21 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     })
     return counts
   }, [processedOrders])
+
+  // Get current box info for the selected filter
+  const currentBoxInfo = useMemo(() => {
+    if (selectedBoxFilter === 'all' || selectedBoxFilter === 'unknown') return null
+    const box = boxes.find(b => b.name === selectedBoxFilter)
+    if (!box) return null
+    return {
+      boxId: box.id,
+      boxName: box.name,
+      lengthInches: box.lengthInches,
+      widthInches: box.widthInches,
+      heightInches: box.heightInches,
+      weightLbs: box.weightLbs,
+    }
+  }, [selectedBoxFilter, boxes])
 
   const handleRowClick = (order: ProcessedOrder) => {
     setSelectedOrder({
@@ -491,28 +510,28 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ORDER ID
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   CUSTOMER
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ITEMS
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   COLORS
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   BOX
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   CONFIDENCE
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   TOTAL QTY
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ORDERED DATE
                 </th>
               </tr>
@@ -537,13 +556,13 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                     className="hover:bg-gray-50 cursor-pointer"
                     onClick={() => handleRowClick(order)}
                   >
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                       #{order.log.orderNumber}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                       {order.customerName}
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                    <td className="px-4 py-3 text-sm text-gray-900">
                       <div className="space-y-1">
                         {displayedItems.map((item, idx) => (
                           <div key={idx} className="font-mono text-xs">
@@ -555,7 +574,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                    <td className="px-4 py-3 text-sm text-gray-900">
                       <div className="space-y-1">
                         {displayedItems.map((item, idx) => (
                           <div key={idx} className="text-xs">
@@ -567,7 +586,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {order.boxName ? (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {order.boxName}
@@ -578,7 +597,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm">
                       {suggestion ? (
                         suggestion.confidence === 'confirmed' ? (
                           <span className="font-medium text-green-600">
@@ -607,10 +626,10 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         </button>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-center">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
                       {order.totalQty}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {orderDate}
                     </td>
                   </tr>
@@ -632,6 +651,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         onClose={() => setIsBatchDialogOpen(false)}
         onBatch={handleBatch}
         orderCount={filteredOrders.length}
+        suggestedBox={currentBoxInfo}
       />
       {boxConfirmOrder && (
         <BoxConfirmDialog

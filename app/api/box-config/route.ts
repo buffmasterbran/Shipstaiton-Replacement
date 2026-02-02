@@ -57,6 +57,7 @@ export async function POST(request: NextRequest) {
           lengthInches,
           widthInches,
           heightInches,
+          weightLbs: body.weightLbs !== undefined ? Number(body.weightLbs) : 0,
           priority: body.priority !== undefined ? Number(body.priority) : undefined,
           active: body.active !== false,
           inStock: body.inStock !== false,
@@ -83,6 +84,7 @@ export async function POST(request: NextRequest) {
           updates.heightInches = Number(body.internalDimensions.height)
         }
 
+        if (body.weightLbs !== undefined) updates.weightLbs = Number(body.weightLbs)
         if (body.priority !== undefined) updates.priority = Number(body.priority)
         if (body.active !== undefined) updates.active = body.active
         if (body.inStock !== undefined) updates.inStock = body.inStock
