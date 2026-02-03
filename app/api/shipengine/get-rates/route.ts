@@ -255,7 +255,7 @@ export async function POST(request: NextRequest) {
             (selectedServicesSetting.value as any).services.length > 0) {
           const services = (selectedServicesSetting.value as any).services
           // Extract unique carrier IDs and service codes
-          carrierIds = [...new Set(services.map((s: any) => s.carrierId))]
+          carrierIds = Array.from(new Set(services.map((s: any) => s.carrierId))) as string[]
           serviceCodes = services.map((s: any) => s.serviceCode)
         } else {
           // Fall back to fetching all available carriers from ShipEngine

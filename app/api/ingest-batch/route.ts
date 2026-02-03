@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { OrderStatus } from '@prisma/client'
 import { getBoxes, getFeedbackRules, getPackingEfficiency, findBestBox } from '@/lib/box-config'
 import { getProductSizes, matchSkuToSize, recordUnmatchedSkus, ProductSize } from '@/lib/products'
 import {
@@ -408,7 +409,7 @@ export async function POST(request: NextRequest) {
 
       return {
         orderNumber: String(orderNumber),
-        status: 'AWAITING_SHIPMENT',
+        status: OrderStatus.AWAITING_SHIPMENT,
         rawPayload: order,
         suggestedBox: suggestedBox as any,
         orderType,

@@ -327,7 +327,7 @@ export async function shopRates(
     }
 
     // Extract carrier IDs and service codes from rate shopper profile
-    const carrierIds = [...new Set(rateShopper.services.map(s => s.carrierId))]
+    const carrierIds = Array.from(new Set(rateShopper.services.map(s => s.carrierId)))
     const serviceCodes = rateShopper.services.map(s => s.serviceCode)
 
     if (carrierIds.length === 0) {
