@@ -85,6 +85,9 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
   }, [fetchOrders])
 
   const refreshOrders = useCallback(async () => {
+    // Set loading immediately so user sees feedback
+    setLoading(true)
+    
     // Recalculate all box suggestions first (handles signature changes, new feedback rules, etc.)
     try {
       await fetch('/api/orders', {
@@ -95,7 +98,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error('Error recalculating boxes:', err)
     }
-    // Then fetch fresh data
+    // Then fetch fresh data (this will also set loading to false when done)
     await fetchOrders()
   }, [fetchOrders])
 

@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import ProcessDialog from './ProcessDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
-import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
+import { getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders } from '@/context/OrdersContext'
 
@@ -182,7 +182,8 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         
         if (!mainItem) return null
         
-        const size = getSizeFromSku(mainItem.sku || '')
+        // Use box name for size/grouping (instead of SKU-derived size)
+        const size = log.suggestedBox?.boxName || 'No Box Assigned'
         // Use color from payload if available (sent from NetSuite), otherwise parse from SKU
         const color = getColorFromSku(mainItem.sku || '', mainItem.name, mainItem.color)
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
@@ -216,8 +217,17 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
     return counts
   }, [processedOrders, selectedSize])
 
-  // Get unique sizes
-  const sizes = ['All Cup Sizes', '10oz', '16oz', '26oz', 'Accessories']
+  // Get unique box names (sizes) dynamically from orders, sorted alphabetically
+  const sizes = useMemo(() => {
+    const uniqueBoxNames = new Set<string>()
+    processedOrders.forEach((order) => {
+      uniqueBoxNames.add(order.size) // size is now boxName or 'No Box Assigned'
+    })
+    // Sort alphabetically (numbers before letters, so 10oz, 16oz... come before Envelope, Padded...)
+    const sortedBoxNames = Array.from(uniqueBoxNames).sort((a, b) => a.localeCompare(b))
+    return ['All Boxes', ...sortedBoxNames]
+  }, [processedOrders])
+  
   const colors = ['All Colors', ...Object.keys(colorCounts).sort()]
 
   // Filter orders
@@ -1456,10 +1466,10 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           {sizes.map((size) => (
             <button
               key={size}
-              onClick={() => setSelectedSize(size === 'All Cup Sizes' ? 'all' : size)}
+              onClick={() => setSelectedSize(size === 'All Boxes' ? 'all' : size)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                (size === 'All Cup Sizes' && selectedSize === 'all') ||
-                (size !== 'All Cup Sizes' && selectedSize === size)
+                (size === 'All Boxes' && selectedSize === 'all') ||
+                (size !== 'All Boxes' && selectedSize === size)
                   ? 'bg-green-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}

@@ -272,6 +272,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Filter out wholesale/B2B orders (NetSuite Sales Orders start with "SO")
+    // Shopify orders start with "#" - we only want those
+    const originalCount = orders.length
+    orders = orders.filter(order => {
+      const orderNumber = String(
+        order.order_number ||
+        order.orderNumber ||
+        order.order_id ||
+        order.id ||
+        order.number ||
+        ''
+      )
+      // Skip orders that start with "SO" (NetSuite Sales Orders = wholesale)
+      if (orderNumber.toUpperCase().startsWith('SO')) {
+        console.log(`[Ingest] Skipping wholesale order: ${orderNumber}`)
+        return false
+      }
+      return true
+    })
+    
+    const skippedCount = originalCount - orders.length
+    if (skippedCount > 0) {
+      console.log(`[Ingest] Filtered out ${skippedCount} wholesale order(s) (SO prefix)`)
+    }
+
     // Load box config data and rate shopping config once for all orders
     const [sizes, boxes, feedbackRules, packingEfficiency, rateShopper, singlesCarrier] = await Promise.all([
       getProductSizes(prisma),
