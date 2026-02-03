@@ -6,6 +6,7 @@ import ProcessDialog from './ProcessDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
+import { useOrders } from '@/context/OrdersContext'
 
 interface OrderLog {
   id: string
@@ -76,6 +77,7 @@ interface LabelInfo {
 
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
+  const { updateOrdersInPlace } = useOrders()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -403,6 +405,11 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         totalUpdated += data.updated || 0
         processed += batchIds.length
         setFetchProgress({ current: processed, total: orderIds.length })
+        
+        // Update orders in real-time as each batch completes
+        if (data.updatedOrders && data.updatedOrders.length > 0) {
+          updateOrdersInPlace(data.updatedOrders)
+        }
       }
       
       if (cancelled) {
@@ -418,20 +425,14 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             : `Set service for ${totalUpdated} orders`,
         })
       }
-      
-      // Refresh the page to show updated data
-      if (totalUpdated > 0) {
-        setTimeout(() => window.location.reload(), 1500)
-      }
+      // No page reload needed - orders are updated in real-time
     } catch (err: any) {
       if (err.name === 'AbortError') {
         setFetchRatesMessage({
           type: 'success',
           text: `Cancelled after ${totalUpdated} orders`,
         })
-        if (totalUpdated > 0) {
-          setTimeout(() => window.location.reload(), 1500)
-        }
+        // No page reload needed - orders already updated in real-time
       } else {
         setFetchRatesMessage({
           type: 'error',

@@ -46,6 +46,7 @@ interface OrdersContextType {
   error: string | null
   lastFetchedAt: Date | null
   refreshOrders: () => Promise<void>
+  updateOrdersInPlace: (updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => void
 }
 
 const OrdersContext = createContext<OrdersContextType | null>(null)
@@ -98,8 +99,27 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     await fetchOrders()
   }, [fetchOrders])
 
+  // Update specific orders in place without full refresh (for real-time rate updates)
+  const updateOrdersInPlace = useCallback((updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => {
+    setOrders(prevOrders => {
+      return prevOrders.map(order => {
+        const update = updates.find(u => u.id === order.id)
+        if (update) {
+          return {
+            ...order,
+            preShoppedRate: update.preShoppedRate,
+            shippedWeight: update.shippedWeight,
+            rateShopStatus: update.rateShopStatus as 'SUCCESS' | 'FAILED' | 'SKIPPED' | null,
+            rateShopError: update.rateShopError,
+          }
+        }
+        return order
+      })
+    })
+  }, [])
+
   return (
-    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders }}>
+    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace }}>
       {children}
     </OrdersContext.Provider>
   )

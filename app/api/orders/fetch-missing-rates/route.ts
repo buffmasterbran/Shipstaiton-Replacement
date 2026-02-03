@@ -279,6 +279,14 @@ export async function POST(request: NextRequest) {
 
     let updated = 0
     const errors: Array<{ orderNumber: string; error: string }> = []
+    const updatedOrders: Array<{
+      id: string
+      orderNumber: string
+      preShoppedRate: any
+      shippedWeight: number
+      rateShopStatus: string
+      rateShopError: string | null
+    }> = []
 
     for (const order of orders) {
       try {
@@ -366,16 +374,29 @@ export async function POST(request: NextRequest) {
           rateId: rateId,
         }
 
+        const rateShopStatus = action === 'get-rates' ? (rateFetched ? 'SUCCESS' : 'FAILED') : 'ASSIGNED'
+        const rateShopError = action === 'get-rates' && !rateFetched ? 'Could not fetch rate from ShipEngine' : null
+
         // Update the order with the assigned carrier and rate
         await prisma.orderLog.update({
           where: { id: order.id },
           data: {
             preShoppedRate: preShoppedRate,
             shippedWeight: totalWeight,
-            rateShopStatus: action === 'get-rates' ? (rateFetched ? 'SUCCESS' : 'FAILED') : 'ASSIGNED',
-            rateShopError: action === 'get-rates' && !rateFetched ? 'Could not fetch rate from ShipEngine' : null,
+            rateShopStatus,
+            rateShopError,
             rateFetchedAt: new Date(),
           },
+        })
+
+        // Add to updated orders list for real-time UI update
+        updatedOrders.push({
+          id: order.id,
+          orderNumber: order.orderNumber,
+          preShoppedRate,
+          shippedWeight: totalWeight,
+          rateShopStatus,
+          rateShopError,
         })
 
         updated++
@@ -400,6 +421,7 @@ export async function POST(request: NextRequest) {
       action,
       updated,
       total: orders.length,
+      updatedOrders, // Return updated order data for real-time UI updates
       errors: errors.length > 0 ? errors : undefined,
     })
   } catch (error: any) {
