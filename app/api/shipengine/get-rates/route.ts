@@ -237,20 +237,33 @@ export async function POST(request: NextRequest) {
       },
     }
 
-    // Get carrier IDs - either from request or fetch all available carriers
+    // Get carrier IDs - either from request, saved settings, or fetch all available carriers
     let carrierIds = body.carrierIds
     if (!carrierIds || carrierIds.length === 0) {
       try {
-        // Fetch all available carriers from ShipEngine
-        const carriersResponse = await fetch('https://api.shipengine.com/v1/carriers', {
-          headers: {
-            'API-Key': SHIPENGINE_API_KEY,
-          },
+        // First, try to get selected carriers from app settings
+        const selectedCarriersSetting = await prisma.appSetting.findUnique({
+          where: { key: 'selected_carriers' },
         })
-        
-        if (carriersResponse.ok) {
-          const carriersData = await carriersResponse.json()
-          carrierIds = (carriersData.carriers || []).map((c: any) => c.carrier_id)
+
+        if (selectedCarriersSetting?.value && 
+            typeof selectedCarriersSetting.value === 'object' &&
+            'carrierIds' in selectedCarriersSetting.value &&
+            Array.isArray((selectedCarriersSetting.value as any).carrierIds) &&
+            (selectedCarriersSetting.value as any).carrierIds.length > 0) {
+          carrierIds = (selectedCarriersSetting.value as any).carrierIds
+        } else {
+          // Fall back to fetching all available carriers from ShipEngine
+          const carriersResponse = await fetch('https://api.shipengine.com/v1/carriers', {
+            headers: {
+              'API-Key': SHIPENGINE_API_KEY,
+            },
+          })
+          
+          if (carriersResponse.ok) {
+            const carriersData = await carriersResponse.json()
+            carrierIds = (carriersData.carriers || []).map((c: any) => c.carrier_id)
+          }
         }
       } catch (err) {
         console.error('Error fetching carriers:', err)
