@@ -198,14 +198,16 @@ async function fetchRateFromShipEngine(
  * Request body:
  * - action: "set-service" | "get-rates"
  * - orderIds: string[] - IDs of orders to process (from UI's visible/filtered orders)
+ * - serviceOverride: optional { carrierId, carrierCode, carrier, serviceCode, serviceName } to use instead of default
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
     const action = body.action || 'set-service'
     const orderIds: string[] = body.orderIds || []
+    const serviceOverride = body.serviceOverride || null
 
-    console.log(`[fetch-missing-rates] Action: ${action}, Order IDs: ${orderIds.length}`)
+    console.log(`[fetch-missing-rates] Action: ${action}, Order IDs: ${orderIds.length}${serviceOverride ? `, Service Override: ${serviceOverride.serviceName}` : ''}`)
 
     if (orderIds.length === 0) {
       return NextResponse.json({
@@ -216,8 +218,8 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Get the singles carrier setting
-    const singlesCarrier = await getSinglesCarrier(prisma)
+    // Get the singles carrier setting (or use override)
+    let singlesCarrier = serviceOverride || await getSinglesCarrier(prisma)
 
     if (!singlesCarrier) {
       return NextResponse.json(

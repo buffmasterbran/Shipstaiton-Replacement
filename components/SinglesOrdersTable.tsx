@@ -75,6 +75,14 @@ interface LabelInfo {
   }
 }
 
+interface CarrierService {
+  carrierId: string
+  carrierCode: string
+  carrierName: string
+  serviceCode: string
+  serviceName: string
+}
+
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const { updateOrdersInPlace } = useOrders()
@@ -92,6 +100,9 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const [fetchRatesMessage, setFetchRatesMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [fetchProgress, setFetchProgress] = useState<{ current: number; total: number } | null>(null)
   const [abortController, setAbortController] = useState<AbortController | null>(null)
+  const [availableServices, setAvailableServices] = useState<CarrierService[]>([])
+  const [selectedService, setSelectedService] = useState<string>('')
+  const [defaultServiceKey, setDefaultServiceKey] = useState<string>('')
   const [boxes, setBoxes] = useState<Array<{
     id: string
     name: string
@@ -101,7 +112,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
     weightLbs: number
   }>>([])
 
-  // Fetch boxes from API
+  // Fetch boxes and available services from API
   useEffect(() => {
     const fetchBoxes = async () => {
       try {
@@ -114,7 +125,46 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         console.error('Failed to fetch boxes:', error)
       }
     }
+    
+    const fetchServices = async () => {
+      try {
+        // First get the default singles carrier from settings
+        const settingsRes = await fetch('/api/settings')
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json()
+          if (settingsData.singles_carrier) {
+            const sc = settingsData.singles_carrier
+            const key = `${sc.carrierId}:${sc.serviceCode}`
+            setDefaultServiceKey(key)
+            setSelectedService(key)
+          }
+        }
+        
+        // Then get all available services
+        const res = await fetch('/api/shipengine/carriers?includeServices=true')
+        if (res.ok) {
+          const data = await res.json()
+          const services: CarrierService[] = []
+          for (const carrier of data.carriers || []) {
+            for (const service of carrier.services || []) {
+              services.push({
+                carrierId: carrier.carrier_id,
+                carrierCode: carrier.carrier_code,
+                carrierName: carrier.friendly_name,
+                serviceCode: service.service_code,
+                serviceName: service.name,
+              })
+            }
+          }
+          setAvailableServices(services)
+        }
+      } catch (error) {
+        console.error('Failed to fetch services:', error)
+      }
+    }
+    
     fetchBoxes()
+    fetchServices()
   }, [])
 
   // Process orders to extract main item, size, and color
@@ -214,6 +264,14 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       return true
     })
   }, [processedOrders, selectedSize, selectedColor, searchQuery, personalizedFilter, expeditedFilter])
+
+  // Count orders without rates (price = 0 or null)
+  const ordersWithoutRates = useMemo(() => {
+    return filteredOrders.filter(order => {
+      const preShoppedRate = (order.log as any).preShoppedRate
+      return !preShoppedRate || !preShoppedRate.price || preShoppedRate.price === 0
+    })
+  }, [filteredOrders])
 
   // Group orders for auto-processing
   interface OrderBatch {
@@ -352,19 +410,26 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
     setSelectedRawPayload(null)
   }
 
-  const handleFetchMissingRates = async (action: 'set-service' | 'get-rates' = 'set-service') => {
-    // Collect order IDs from the visible/filtered orders
-    const orderIds = filteredOrders.map(order => order.log.id)
+  const handleFetchMissingRates = async (
+    action: 'set-service' | 'get-rates' = 'set-service',
+    options?: { missingOnly?: boolean; serviceOverride?: CarrierService }
+  ) => {
+    const missingOnly = options?.missingOnly || false
+    const serviceOverride = options?.serviceOverride
+    
+    // Collect order IDs from the visible/filtered orders (or only missing if specified)
+    const targetOrders = missingOnly ? ordersWithoutRates : filteredOrders
+    const orderIds = targetOrders.map(order => order.log.id)
     
     if (orderIds.length === 0) {
       setFetchRatesMessage({
         type: 'error',
-        text: 'No orders to process',
+        text: missingOnly ? 'No orders missing rates' : 'No orders to process',
       })
       return
     }
 
-    console.log(`[UI] ${action} for ${orderIds.length} orders`)
+    console.log(`[UI] ${action} for ${orderIds.length} orders${missingOnly ? ' (missing only)' : ''}`)
     setFetchingMissingRates(true)
     setFetchRatesMessage(null)
     setFetchProgress({ current: 0, total: orderIds.length })
@@ -389,10 +454,22 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         
         const batchIds = orderIds.slice(i, i + BATCH_SIZE)
         
+        // Build request body with optional service override
+        const requestBody: any = { action, orderIds: batchIds }
+        if (serviceOverride) {
+          requestBody.serviceOverride = {
+            carrierId: serviceOverride.carrierId,
+            carrierCode: serviceOverride.carrierCode,
+            carrier: serviceOverride.carrierName,
+            serviceCode: serviceOverride.serviceCode,
+            serviceName: serviceOverride.serviceName,
+          }
+        }
+        
         const res = await fetch('/api/orders/fetch-missing-rates', { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action, orderIds: batchIds }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         })
         
@@ -1483,30 +1560,69 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                 </>
               ) : (
                 <>
-                  {/* Set Service button - fast, no API calls */}
-                  <button
-                    onClick={() => handleFetchMissingRates('set-service')}
-                    disabled={selectedSize === 'all' || filteredOrders.length === 0}
-                    className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-                    title={selectedSize === 'all' ? 'Select a size first' : `Assign carrier to ${filteredOrders.length} visible orders (no price lookup)`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {selectedSize === 'all' ? 'Select Size First' : `Set Service (${filteredOrders.length})`}
-                  </button>
-                  {/* Get Rates button - slower, fetches prices from ShipEngine */}
-                  <button
-                    onClick={() => handleFetchMissingRates('get-rates')}
-                    disabled={selectedSize === 'all' || filteredOrders.length === 0}
-                    className="px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-                    title={selectedSize === 'all' ? 'Select a size first' : `Fetch actual prices for ${filteredOrders.length} visible orders`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {selectedSize === 'all' ? 'Select Size First' : `Get Rates (${filteredOrders.length})`}
-                  </button>
+                  {/* Service dropdown + Set Service button */}
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={selectedService}
+                      onChange={(e) => setSelectedService(e.target.value)}
+                      className="px-2 py-1.5 text-sm border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white max-w-[200px]"
+                      disabled={selectedSize === 'all' || filteredOrders.length === 0}
+                    >
+                      {availableServices.map((service) => {
+                        const key = `${service.carrierId}:${service.serviceCode}`
+                        const isDefault = key === defaultServiceKey
+                        return (
+                          <option key={key} value={key}>
+                            {service.carrierName} - {service.serviceName}{isDefault ? ' (default)' : ''}
+                          </option>
+                        )
+                      })}
+                    </select>
+                    <button
+                      onClick={() => {
+                        const service = availableServices.find(
+                          s => `${s.carrierId}:${s.serviceCode}` === selectedService
+                        )
+                        handleFetchMissingRates('set-service', { serviceOverride: service })
+                      }}
+                      disabled={selectedSize === 'all' || filteredOrders.length === 0 || !selectedService}
+                      className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-r-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                      title={selectedSize === 'all' ? 'Select a size first' : `Assign service to ${filteredOrders.length} visible orders (no price lookup)`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Set ({filteredOrders.length})
+                    </button>
+                  </div>
+                  
+                  {/* Get Rates buttons */}
+                  <div className="flex items-center gap-2">
+                    {/* Get Missing Rates - only orders without price */}
+                    <button
+                      onClick={() => handleFetchMissingRates('get-rates', { missingOnly: true })}
+                      disabled={selectedSize === 'all' || ordersWithoutRates.length === 0}
+                      className="px-3 py-1.5 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                      title={selectedSize === 'all' ? 'Select a size first' : `Fetch prices for ${ordersWithoutRates.length} orders missing rates`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Get Missing ({ordersWithoutRates.length})
+                    </button>
+                    {/* Get All Rates - refetch all visible */}
+                    <button
+                      onClick={() => handleFetchMissingRates('get-rates')}
+                      disabled={selectedSize === 'all' || filteredOrders.length === 0}
+                      className="px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                      title={selectedSize === 'all' ? 'Select a size first' : `Fetch prices for ALL ${filteredOrders.length} visible orders`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Refresh All ({filteredOrders.length})
+                    </button>
+                  </div>
                 </>
               )}
             </div>
