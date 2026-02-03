@@ -59,6 +59,9 @@ const navSections: NavSection[] = [
     items: [
       { name: 'Products', href: '/products', access: 'admin' },
       { name: 'Box Config', href: '/box-config', access: 'admin' },
+      { name: 'Carriers', href: '/carriers', access: 'admin' },
+      { name: 'Locations', href: '/locations', access: 'admin' },
+      { name: 'Rate Shopping', href: '/rate-shopping', access: 'admin' },
       { name: 'Settings', href: '/settings', access: 'admin' },
       { name: 'ShipEngine Test', href: '/shipengine-test', access: 'admin' },
     ],

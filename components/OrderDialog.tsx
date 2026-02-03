@@ -70,6 +70,7 @@ interface OrderDialogProps {
   onClose: () => void
   order: Order | null
   rawPayload?: any // Full JSON payload for debugging
+  onGetRates?: () => void // Callback to open rate test dialog
 }
 
 function formatAddress(address: any) {
@@ -90,7 +91,7 @@ function formatCurrency(amount: number | string) {
   }).format(Number(amount))
 }
 
-export default function OrderDialog({ isOpen, onClose, order, rawPayload }: OrderDialogProps) {
+export default function OrderDialog({ isOpen, onClose, order, rawPayload, onGetRates }: OrderDialogProps) {
   const [showJson, setShowJson] = useState(false)
 
   if (!order) return null
@@ -356,13 +357,23 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload }: Orde
 
                 {/* Footer */}
                 <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-between">
-                  <button
-                    onClick={() => setShowJson(!showJson)}
-                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
-                  >
-                    <CodeBracketIcon className="h-4 w-4" />
-                    {showJson ? 'Hide JSON' : 'Show JSON'}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowJson(!showJson)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
+                    >
+                      <CodeBracketIcon className="h-4 w-4" />
+                      {showJson ? 'Hide JSON' : 'Show JSON'}
+                    </button>
+                    {onGetRates && (
+                      <button
+                        onClick={onGetRates}
+                        className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                      >
+                        🚚 Get Rates (Test)
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={onClose}
                     className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"

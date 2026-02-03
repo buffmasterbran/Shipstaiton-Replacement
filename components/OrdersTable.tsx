@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BoxConfirmDialog from './BoxConfirmDialog'
+import RateTestDialog from './RateTestDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
@@ -156,6 +157,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+
+  // Rate test dialog state
+  const [isRateTestOpen, setIsRateTestOpen] = useState(false)
+  const [rateTestOrder, setRateTestOrder] = useState<any | null>(null)
 
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -314,6 +319,19 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const handleBoxFeedbackSaved = () => {
     // Refresh the page to get updated box assignments
     window.location.reload()
+  }
+
+  const handleGetRates = () => {
+    // Transfer the selected order to rate test dialog
+    setRateTestOrder(selectedOrder)
+    setIsRateTestOpen(true)
+    // Optionally close the order dialog
+    setIsDialogOpen(false)
+  }
+
+  const handleCloseRateTest = () => {
+    setIsRateTestOpen(false)
+    setRateTestOrder(null)
   }
 
   if (logs.length === 0) {
@@ -555,6 +573,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         onClose={handleCloseDialog}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
+        onGetRates={handleGetRates}
       />
       {boxConfirmLog && (() => {
         const payload = boxConfirmLog.rawPayload as any
@@ -576,6 +595,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           />
         )
       })()}
+      <RateTestDialog
+        isOpen={isRateTestOpen}
+        onClose={handleCloseRateTest}
+        order={rateTestOrder}
+      />
     </>
   )
 }

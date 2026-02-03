@@ -160,3 +160,52 @@ model UnmatchedSku {
   @@index([dismissed])
   @@index([lastSeen])
 }
+
+// ============================================================================
+// RATE SHOPPER - saved rate comparison configurations (like ShipStation)
+// ============================================================================
+
+model RateShopper {
+  id                      String   @id @default(cuid())
+  name                    String
+  services                Json     // Array of { carrierId, carrierName, serviceCode, serviceName }
+  transitTimeRestriction  String?  @map("transit_time_restriction") // "no_restriction", "1_day", "2_days", "3_days", "5_days", "7_days"
+  preferenceEnabled       Boolean  @default(false) @map("preference_enabled")
+  preferredServiceCode    String?  @map("preferred_service_code")
+  preferenceType          String?  @map("preference_type") // "dollar" or "percentage"
+  preferenceValue         Float?   @map("preference_value") // Dollar amount or percentage
+  isDefault               Boolean  @default(false) @map("is_default")
+  active                  Boolean  @default(true)
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  @@map("rate_shoppers")
+  @@index([active])
+  @@index([isDefault])
+}
+
+// ============================================================================
+// LOCATIONS - Ship-from warehouse locations for shipping labels
+// ============================================================================
+
+model Location {
+  id          String   @id @default(cuid())
+  name        String   // e.g., "Main Warehouse", "Kansas City Fulfillment"
+  company     String?
+  addressLine1 String  @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city        String
+  state       String
+  postalCode  String   @map("postal_code")
+  country     String   @default("US")
+  phone       String
+  email       String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("locations")
+  @@index([active])
+  @@index([isDefault])
+}
