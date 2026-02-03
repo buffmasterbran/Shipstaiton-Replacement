@@ -65,6 +65,40 @@ export async function GET() {
   }
 }
 
+/** DELETE /api/orders - Delete one or more orders by ID */
+export async function DELETE(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const orderIds: string[] = body.orderIds
+
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      return NextResponse.json(
+        { error: 'orderIds array is required' },
+        { status: 400 }
+      )
+    }
+
+    // Delete the orders
+    const result = await prisma.orderLog.deleteMany({
+      where: {
+        id: { in: orderIds },
+      },
+    })
+
+    return NextResponse.json({
+      success: true,
+      deleted: result.count,
+      message: `Deleted ${result.count} order(s)`,
+    })
+  } catch (error: unknown) {
+    console.error('Error deleting orders:', error)
+    return NextResponse.json(
+      { error: 'Failed to delete orders' },
+      { status: 500 }
+    )
+  }
+}
+
 /** POST /api/orders - Recalculate suggestedBox for orders missing it */
 export async function POST(request: NextRequest) {
   try {

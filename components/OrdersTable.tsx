@@ -5,6 +5,7 @@ import OrderDialog from './OrderDialog'
 import BoxConfirmDialog from './BoxConfirmDialog'
 import RateTestDialog from './RateTestDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
+import { useOrders } from '@/context/OrdersContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
@@ -144,6 +145,7 @@ function getOrderType(log: OrderLog): OrderTypeFilter {
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
+  const { refreshOrders } = useOrders()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -161,6 +163,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   // Rate test dialog state
   const [isRateTestOpen, setIsRateTestOpen] = useState(false)
   const [rateTestOrder, setRateTestOrder] = useState<any | null>(null)
+
+  // Delete confirmation state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [orderToDelete, setOrderToDelete] = useState<OrderLog | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -334,6 +341,45 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     setRateTestOrder(null)
   }
 
+  const handleDeleteClick = (log: OrderLog, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent row click
+    setOrderToDelete(log)
+    setDeleteConfirmOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!orderToDelete) return
+    
+    setDeleting(true)
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds: [orderToDelete.id] }),
+      })
+      
+      if (res.ok) {
+        setDeleteConfirmOpen(false)
+        setOrderToDelete(null)
+        // Refresh the orders list
+        refreshOrders()
+      } else {
+        const data = await res.json()
+        alert(data.error || 'Failed to delete order')
+      }
+    } catch (err) {
+      console.error('Error deleting order:', err)
+      alert('Failed to delete order')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleCancelDelete = () => {
+    setDeleteConfirmOpen(false)
+    setOrderToDelete(null)
+  }
+
   if (logs.length === 0) {
     return (
       <div className="bg-white rounded shadow p-6 text-center">
@@ -427,6 +473,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                 <Th columnKey="orderDate">Order Date</Th>
                 <Th columnKey="received">Received</Th>
                 <Th columnKey="status">Status</Th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -534,6 +583,21 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                         {log.status}
                       </span>
                     </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <button
+                        onClick={(e) => handleDeleteClick(log, e)}
+                        className={`p-1.5 rounded hover:bg-red-100 transition-colors ${
+                          highlightType === 'red' || highlightType === 'orange'
+                            ? 'text-white hover:text-red-600 hover:bg-white/20'
+                            : 'text-gray-400 hover:text-red-600'
+                        }`}
+                        title="Delete order"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
@@ -600,6 +664,55 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         onClose={handleCloseRateTest}
         order={rateTestOrder}
       />
+
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirmOpen && orderToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
+            <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={handleCancelDelete} />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-auto p-6 z-10">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Order</h3>
+              </div>
+              <p className="text-gray-600 mb-6">
+                Are you sure you want to delete order <span className="font-semibold">{getOrderNumber(orderToDelete)}</span>? 
+                This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={handleCancelDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {deleting ? (
+                    <>
+                      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
