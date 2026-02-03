@@ -21,6 +21,20 @@ interface BulkOrderGroup {
       orderNumber: string
       status: string
       rawPayload: any
+      suggestedBox?: any
+      preShoppedRate?: {
+        carrierId: string
+        carrierCode: string
+        carrier: string
+        serviceCode: string
+        serviceName: string
+        price: number
+        currency: string
+        deliveryDays: number | null
+        rateId?: string
+      } | null
+      rateShopStatus?: string | null
+      shippedWeight?: number | null
       createdAt: Date | string
       updatedAt: Date | string
     }
@@ -29,12 +43,6 @@ interface BulkOrderGroup {
     orderDate: string
   }>
   totalOrders: number
-}
-
-interface ShippingRate {
-  groupId: string
-  price: string
-  service: string
 }
 
 interface BoxOption {
@@ -51,7 +59,6 @@ interface BulkOrderProcessDialogProps {
   onClose: () => void
   group: BulkOrderGroup | null
   onProceed: () => void
-  shippingRate?: ShippingRate
   onSavePackageInfo: (info: PackageInfo) => void
   sendToQueueLoading?: boolean
   sendToQueueError?: string | null
@@ -63,7 +70,6 @@ export default function BulkOrderProcessDialog({
   onClose,
   group,
   onProceed,
-  shippingRate,
   onSavePackageInfo,
   sendToQueueLoading = false,
   sendToQueueError = null,
@@ -88,6 +94,20 @@ export default function BulkOrderProcessDialog({
     weightLbs: suggestedBoxData.weightLbs,
   } : null
 
+  // Get pre-shopped rate from first order (all orders in bulk group have same rate)
+  const preShoppedRate = firstOrderLog?.preShoppedRate
+  const rateShopStatus = (firstOrderLog as any)?.rateShopStatus
+  const hasPreShoppedRate = preShoppedRate && rateShopStatus === 'SUCCESS'
+
+  // Use pre-shopped rate as the shipping rate
+  const effectiveShippingRate = hasPreShoppedRate
+    ? {
+        groupId: group.signature,
+        price: `$${preShoppedRate.price?.toFixed(2)}`,
+        service: `${preShoppedRate.carrier} ${preShoppedRate.serviceName}`,
+      }
+    : null
+
   const handleClose = () => {
     setIsPackageInfoDialogOpen(false)
     setIsProcessDialogOpen(false)
@@ -99,7 +119,7 @@ export default function BulkOrderProcessDialog({
   }
 
   const handleProcessOrdersClick = () => {
-    if (shippingRate && shippingRate.price && shippingRate.service) {
+    if (effectiveShippingRate && effectiveShippingRate.price && effectiveShippingRate.service) {
       setIsProcessDialogOpen(true)
     } else {
       // If no rates, open package info first
@@ -197,11 +217,26 @@ export default function BulkOrderProcessDialog({
                               </p>
                             </div>
                           )}
+                          {hasPreShoppedRate && (
+                            <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                              <p className="text-sm text-blue-700">
+                                <span className="font-medium">Pre-shopped rate:</span> {preShoppedRate.carrier} {preShoppedRate.serviceName}
+                                <span className="text-blue-600 ml-1 font-medium">
+                                  ${preShoppedRate.price?.toFixed(2)}
+                                </span>
+                                {preShoppedRate.deliveryDays && (
+                                  <span className="text-blue-500 ml-1">
+                                    ({preShoppedRate.deliveryDays} day{preShoppedRate.deliveryDays !== 1 ? 's' : ''})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
                           <button
                             onClick={handlePackageInfoClick}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                           >
-                            Set Package Info
+                            {hasPreShoppedRate ? 'Override Carrier' : 'Set Package Info'}
                           </button>
                         </div>
                       </div>
@@ -253,10 +288,10 @@ export default function BulkOrderProcessDialog({
                                     {orderDate}
                                   </td>
                                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                    {shippingRate?.service || '-'}
+                                    {effectiveShippingRate?.service || '-'}
                                   </td>
                                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                    {shippingRate?.price || '-'}
+                                    {effectiveShippingRate?.price || '-'}
                                   </td>
                                 </tr>
                               )
@@ -282,9 +317,9 @@ export default function BulkOrderProcessDialog({
                       </button>
                       <button
                         onClick={handleProcessOrdersClick}
-                        disabled={!shippingRate || !shippingRate.price || !shippingRate.service || sendToQueueLoading}
+                        disabled={!effectiveShippingRate || !effectiveShippingRate.price || !effectiveShippingRate.service || sendToQueueLoading}
                         className={`px-4 py-2 rounded-lg transition-colors ${
-                          shippingRate && shippingRate.price && shippingRate.service && !sendToQueueLoading
+                          effectiveShippingRate && effectiveShippingRate.price && effectiveShippingRate.service && !sendToQueueLoading
                             ? 'bg-green-600 text-white hover:bg-green-700'
                             : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                         }`}

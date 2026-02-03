@@ -30,6 +30,8 @@ export default function RateTestDialog({ isOpen, onClose, order }: RateTestDialo
   const [error, setError] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
   const [defaultLocation, setDefaultLocation] = useState<any | null>(null)
+  const [selectedServiceCount, setSelectedServiceCount] = useState<number>(0)
+  const [filteredByServices, setFilteredByServices] = useState<boolean>(false)
 
   async function fetchRates() {
     try {
@@ -118,6 +120,8 @@ export default function RateTestDialog({ isOpen, onClose, order }: RateTestDialo
       }
 
       setRates(data.rates || [])
+      setFilteredByServices(data.filteredByServices || false)
+      setSelectedServiceCount(data.selectedServiceCount || 0)
       setFetched(true)
     } catch (err: any) {
       console.error('Error fetching rates:', err)
@@ -212,7 +216,7 @@ export default function RateTestDialog({ isOpen, onClose, order }: RateTestDialo
                 disabled={loading}
                 className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold mb-4"
               >
-                {loading ? 'Loading Rates...' : 'Get Rates from All Carriers'}
+                {loading ? 'Loading Rates...' : 'Get Rates from Selected Services'}
               </button>
             )}
 
@@ -241,9 +245,16 @@ export default function RateTestDialog({ isOpen, onClose, order }: RateTestDialo
             {fetched && rates.length > 0 && (
               <div>
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-lg font-semibold">
-                    Available Rates ({rates.length})
-                  </h3>
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      Available Rates ({rates.length})
+                    </h3>
+                    {filteredByServices && (
+                      <p className="text-xs text-green-600 mt-1">
+                        Filtered to {selectedServiceCount} selected service{selectedServiceCount !== 1 ? 's' : ''} from Carriers page
+                      </p>
+                    )}
+                  </div>
                   <button
                     onClick={fetchRates}
                     className="text-sm text-blue-600 hover:text-blue-700"

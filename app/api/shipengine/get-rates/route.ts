@@ -237,21 +237,26 @@ export async function POST(request: NextRequest) {
       },
     }
 
-    // Get carrier IDs - either from request, saved settings, or fetch all available carriers
+    // Get carrier IDs and service codes from request or saved settings
     let carrierIds = body.carrierIds
-    if (!carrierIds || carrierIds.length === 0) {
+    let serviceCodes = body.serviceCodes
+
+    if ((!carrierIds || carrierIds.length === 0) && (!serviceCodes || serviceCodes.length === 0)) {
       try {
-        // First, try to get selected carriers from app settings
-        const selectedCarriersSetting = await prisma.appSetting.findUnique({
-          where: { key: 'selected_carriers' },
+        // First, try to get selected services from app settings
+        const selectedServicesSetting = await prisma.appSetting.findUnique({
+          where: { key: 'selected_services' },
         })
 
-        if (selectedCarriersSetting?.value && 
-            typeof selectedCarriersSetting.value === 'object' &&
-            'carrierIds' in selectedCarriersSetting.value &&
-            Array.isArray((selectedCarriersSetting.value as any).carrierIds) &&
-            (selectedCarriersSetting.value as any).carrierIds.length > 0) {
-          carrierIds = (selectedCarriersSetting.value as any).carrierIds
+        if (selectedServicesSetting?.value && 
+            typeof selectedServicesSetting.value === 'object' &&
+            'services' in selectedServicesSetting.value &&
+            Array.isArray((selectedServicesSetting.value as any).services) &&
+            (selectedServicesSetting.value as any).services.length > 0) {
+          const services = (selectedServicesSetting.value as any).services
+          // Extract unique carrier IDs and service codes
+          carrierIds = [...new Set(services.map((s: any) => s.carrierId))]
+          serviceCodes = services.map((s: any) => s.serviceCode)
         } else {
           // Fall back to fetching all available carriers from ShipEngine
           const carriersResponse = await fetch('https://api.shipengine.com/v1/carriers', {
@@ -266,11 +271,14 @@ export async function POST(request: NextRequest) {
           }
         }
       } catch (err) {
-        console.error('Error fetching carriers:', err)
+        console.error('Error fetching carriers/services:', err)
       }
     }
 
     // ShipEngine requires rate_options with carrier_ids
+    // Note: ShipEngine doesn't support filtering by specific service codes in rate requests,
+    // so we only pass carrier_ids to limit the query to relevant carriers.
+    // The service-level filtering happens after we receive the results.
     if (carrierIds && carrierIds.length > 0) {
       rateRequest.rate_options = {
         carrier_ids: carrierIds,
@@ -308,7 +316,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Transform rates for frontend
-    const rates = (data.rate_response?.rates || []).map((rate: any) => ({
+    let rates = (data.rate_response?.rates || []).map((rate: any) => ({
       rateId: rate.rate_id,
       carrier: rate.carrier_friendly_name,
       carrierCode: rate.carrier_code,
@@ -326,6 +334,11 @@ export async function POST(request: NextRequest) {
       errorMessages: rate.error_messages || [],
     }))
 
+    // Filter rates to only include selected services (if we have service codes selected)
+    if (serviceCodes && serviceCodes.length > 0) {
+      rates = rates.filter((rate: any) => serviceCodes.includes(rate.serviceCode))
+    }
+
     // Sort: best_value first, then cheapest to most expensive
     rates.sort((a: any, b: any) => {
       if (a.attributes.includes('best_value')) return -1
@@ -338,6 +351,8 @@ export async function POST(request: NextRequest) {
       invalidRates: data.rate_response?.invalid_rates || [],
       shipmentId: data.rate_response?.shipment_id,
       rateRequestId: data.rate_response?.rate_request_id,
+      filteredByServices: serviceCodes && serviceCodes.length > 0,
+      selectedServiceCount: serviceCodes?.length || 0,
     })
   } catch (error: any) {
     console.error('ShipEngine Get Rates Error:', error)

@@ -14,7 +14,28 @@ export interface OrderLog {
     boxName: string | null
     confidence: 'confirmed' | 'calculated' | 'unknown'
     reason?: string
+    lengthInches?: number
+    widthInches?: number
+    heightInches?: number
+    weightLbs?: number
   } | null
+  // Rate shopping fields
+  orderType?: 'SINGLE' | 'BULK' | 'EXPEDITED' | 'ERROR' | null
+  shippedWeight?: number | null
+  preShoppedRate?: {
+    carrierId: string
+    carrierCode: string
+    carrier: string
+    serviceCode: string
+    serviceName: string
+    price: number
+    currency: string
+    deliveryDays: number | null
+    rateId?: string
+  } | null
+  rateFetchedAt?: string | null
+  rateShopStatus?: 'SUCCESS' | 'FAILED' | 'SKIPPED' | null
+  rateShopError?: string | null
   createdAt: string
   updatedAt: string
 }

@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getBoxes, getFeedbackRules, getPackingEfficiency, findBestBox } from '@/lib/box-config'
 import { getProductSizes, matchSkuToSize, recordUnmatchedSkus, ProductSize } from '@/lib/products'
+import {
+  classifyOrder,
+  calculateShipmentWeight,
+  getDefaultRateShopper,
+  shopRates,
+  getSinglesCarrier,
+  type OrderType,
+  type ShipToAddress,
+} from '@/lib/rate-shop'
 
 // Type for the cached box suggestion
 interface SuggestedBox {
@@ -9,12 +18,30 @@ interface SuggestedBox {
   boxName: string | null
   confidence: 'confirmed' | 'calculated' | 'unknown'
   reason?: string
+  // Box dimensions and weight for rate shopping
+  lengthInches?: number
+  widthInches?: number
+  heightInches?: number
+  weightLbs?: number
 }
 
 // Result from calculateBoxSuggestion including unmatched SKUs
 interface BoxSuggestionResult {
   suggestedBox: SuggestedBox
   unmatchedSkus: Array<{ sku: string; itemName: string | null }>
+}
+
+// Rate shopping result stored on order
+interface PreShoppedRate {
+  carrierId: string
+  carrierCode: string
+  carrier: string
+  serviceCode: string
+  serviceName: string
+  price: number
+  currency: string
+  deliveryDays: number | null
+  rateId?: string
 }
 
 // Calculate box suggestion for an order's items
@@ -82,6 +109,10 @@ async function calculateBoxSuggestion(
             boxName: stickerBox.name,
             confidence: 'confirmed',
             reason: 'sticker-only',
+            lengthInches: stickerBox.lengthInches,
+            widthInches: stickerBox.widthInches,
+            heightInches: stickerBox.heightInches,
+            weightLbs: stickerBox.weightLbs,
           },
           unmatchedSkus,
         }
@@ -114,6 +145,10 @@ async function calculateBoxSuggestion(
             boxName: dedicatedBox.name,
             confidence: 'confirmed',
             reason: 'dedicated-box',
+            lengthInches: dedicatedBox.lengthInches,
+            widthInches: dedicatedBox.widthInches,
+            heightInches: dedicatedBox.heightInches,
+            weightLbs: dedicatedBox.weightLbs,
           },
           unmatchedSkus,
         }
@@ -138,6 +173,10 @@ async function calculateBoxSuggestion(
       boxId: result.box?.id || null,
       boxName: result.box?.name || null,
       confidence: result.confidence as 'confirmed' | 'calculated' | 'unknown',
+      lengthInches: result.box?.lengthInches,
+      widthInches: result.box?.widthInches,
+      heightInches: result.box?.heightInches,
+      weightLbs: result.box?.weightLbs,
     },
     unmatchedSkus,
   }
@@ -232,21 +271,22 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Load box config data once for all orders
-    const [sizes, boxes, feedbackRules, packingEfficiency] = await Promise.all([
+    // Load box config data and rate shopping config once for all orders
+    const [sizes, boxes, feedbackRules, packingEfficiency, rateShopper, singlesCarrier] = await Promise.all([
       getProductSizes(prisma),
       getBoxes(prisma),
       getFeedbackRules(prisma),
       getPackingEfficiency(prisma),
+      getDefaultRateShopper(prisma),
+      getSinglesCarrier(prisma),
     ])
 
     // Collect all unmatched SKUs across orders
     const allUnmatchedSkus: Array<{ sku: string; orderNumber: string; itemName: string | null }> = []
 
-    // Validate and transform orders with box suggestions
+    // Validate and transform orders with box suggestions and rate shopping
     const orderLogs = await Promise.all(orders.map(async (order) => {
       // Extract order_number from the JSON payload
-      // Try common field names: order_number, orderNumber, order_id, id
       const orderNumber =
         order.order_number ||
         order.orderNumber ||
@@ -254,6 +294,8 @@ export async function POST(request: NextRequest) {
         order.id ||
         order.number ||
         'UNKNOWN'
+
+      const logPrefix = `[Ingest ${orderNumber}]`
 
       // Calculate box suggestion based on items
       const items = order.items || []
@@ -268,11 +310,113 @@ export async function POST(request: NextRequest) {
         })
       }
 
+      // Classify the order
+      const orderType = classifyOrder(order)
+      console.log(`${logPrefix} Order type: ${orderType}`)
+
+      // Initialize rate shopping fields
+      let preShoppedRate: PreShoppedRate | null = null
+      let shippedWeight: number | null = null
+      let rateShopStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED' = 'SKIPPED'
+      let rateShopError: string | null = null
+
+      // Handle based on order type
+      if (orderType === 'SINGLE') {
+        // Singles use fixed carrier (USPS First Class Mail by default)
+        if (singlesCarrier) {
+          preShoppedRate = {
+            carrierId: singlesCarrier.carrierId,
+            carrierCode: singlesCarrier.carrierCode,
+            carrier: singlesCarrier.carrier,
+            serviceCode: singlesCarrier.serviceCode,
+            serviceName: singlesCarrier.serviceName,
+            price: 0, // Price not pre-fetched for singles
+            currency: 'USD',
+            deliveryDays: null,
+          }
+          rateShopStatus = 'SUCCESS'
+          console.log(`${logPrefix} Singles carrier set: ${singlesCarrier.serviceName}`)
+        }
+      } else if (orderType === 'EXPEDITED') {
+        // Expedited orders keep their original carrier - don't rate shop
+        rateShopStatus = 'SKIPPED'
+        console.log(`${logPrefix} Expedited order - skipping rate shopping`)
+      } else if (orderType === 'BULK') {
+        // Bulk orders need rate shopping
+        if (!rateShopper) {
+          rateShopStatus = 'SKIPPED'
+          console.log(`${logPrefix} No rate shopper profile configured - skipping rate shopping`)
+        } else if (!suggestedBox.boxId || !suggestedBox.lengthInches || !suggestedBox.widthInches || !suggestedBox.heightInches) {
+          rateShopStatus = 'FAILED'
+          rateShopError = 'No box suggestion available for rate shopping'
+          console.log(`${logPrefix} Rate shopping failed: no box suggestion`)
+        } else {
+          // Calculate shipment weight (box + products)
+          const boxWeight = suggestedBox.weightLbs || 0
+          shippedWeight = await calculateShipmentWeight(prisma, items, boxWeight)
+          console.log(`${logPrefix} Calculated weight: ${shippedWeight} lbs (box: ${boxWeight} lbs)`)
+
+          // Get ship-to address from order
+          const shipTo = order.shipTo || {}
+          const shipToAddress: ShipToAddress = {
+            name: shipTo.name || order.billTo?.name,
+            company: shipTo.company,
+            street1: shipTo.street1 || shipTo.address1 || '',
+            street2: shipTo.street2 || shipTo.address2,
+            city: shipTo.city || '',
+            state: shipTo.state || '',
+            postalCode: shipTo.postalCode || shipTo.zip || '',
+            country: shipTo.country || 'US',
+            phone: shipTo.phone,
+            residential: shipTo.residential !== false,
+          }
+
+          // Perform rate shopping
+          const rateResult = await shopRates(
+            prisma,
+            shipToAddress,
+            shippedWeight,
+            {
+              length: suggestedBox.lengthInches,
+              width: suggestedBox.widthInches,
+              height: suggestedBox.heightInches,
+            },
+            rateShopper
+          )
+
+          if (rateResult.success && rateResult.rate) {
+            preShoppedRate = {
+              carrierId: rateResult.rate.carrierId,
+              carrierCode: rateResult.rate.carrierCode,
+              carrier: rateResult.rate.carrier,
+              serviceCode: rateResult.rate.serviceCode,
+              serviceName: rateResult.rate.serviceName,
+              price: rateResult.rate.price,
+              currency: rateResult.rate.currency,
+              deliveryDays: rateResult.rate.deliveryDays,
+              rateId: rateResult.rate.rateId,
+            }
+            rateShopStatus = 'SUCCESS'
+            console.log(`${logPrefix} Rate shopping success: ${rateResult.rate.carrier} ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
+          } else {
+            rateShopStatus = 'FAILED'
+            rateShopError = rateResult.error || 'Unknown rate shopping error'
+            console.log(`${logPrefix} Rate shopping failed: ${rateShopError}`)
+          }
+        }
+      }
+
       return {
         orderNumber: String(orderNumber),
-        status: 'RECEIVED',
+        status: 'AWAITING_SHIPMENT',
         rawPayload: order,
-        suggestedBox: suggestedBox as any, // Prisma Json type
+        suggestedBox: suggestedBox as any,
+        orderType,
+        shippedWeight,
+        preShoppedRate: preShoppedRate as any,
+        rateFetchedAt: rateShopStatus === 'SUCCESS' ? new Date() : null,
+        rateShopStatus,
+        rateShopError,
       }
     }))
 
@@ -285,6 +429,8 @@ export async function POST(request: NextRequest) {
     interface OrderResult {
       orderId: string
       success: boolean
+      orderType?: string
+      rateShopStatus?: string
       errorMessage?: string
     }
 
@@ -300,10 +446,23 @@ export async function POST(request: NextRequest) {
         })
 
         if (existing) {
-          // Order already exists - still success, just use existing ID
+          // Order already exists - update rate shopping fields if needed
+          await prisma.orderLog.update({
+            where: { id: existing.id },
+            data: {
+              orderType: orderData.orderType,
+              shippedWeight: orderData.shippedWeight,
+              preShoppedRate: orderData.preShoppedRate,
+              rateFetchedAt: orderData.rateFetchedAt,
+              rateShopStatus: orderData.rateShopStatus,
+              rateShopError: orderData.rateShopError,
+            },
+          })
           results.push({
             orderId: existing.id,
             success: true,
+            orderType: orderData.orderType,
+            rateShopStatus: orderData.rateShopStatus,
           })
         } else {
           // Create new order
@@ -315,6 +474,8 @@ export async function POST(request: NextRequest) {
           results.push({
             orderId: created.id,
             success: true,
+            orderType: orderData.orderType,
+            rateShopStatus: orderData.rateShopStatus,
           })
         }
       } catch (err: any) {

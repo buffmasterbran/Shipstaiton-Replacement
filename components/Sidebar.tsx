@@ -27,6 +27,7 @@ const navSections: NavSection[] = [
     items: [
       { name: 'All Orders', href: '/', access: 'admin' },
       { name: 'Expedited Orders', href: '/expedited', access: 'admin' },
+      { name: 'Error Orders', href: '/errors', access: 'admin' },
       { name: 'Singles', href: '/singles', access: 'admin' },
       { name: 'Bulk Orders', href: '/bulk', access: 'admin' },
       { name: 'Bulk Verification', href: '/bulk-verification', access: 'operator' },
@@ -71,24 +72,32 @@ const navSections: NavSection[] = [
 export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
   const [expeditedCount, setExpeditedCount] = useState(0)
+  const [errorCount, setErrorCount] = useState(0)
 
-  // Fetch expedited order count
+  // Fetch expedited and error order counts
   useEffect(() => {
-    async function fetchExpeditedCount() {
+    async function fetchCounts() {
       try {
-        const res = await fetch('/api/orders/expedited-count')
-        if (res.ok) {
-          const data = await res.json()
+        const [expeditedRes, errorRes] = await Promise.all([
+          fetch('/api/orders/expedited-count'),
+          fetch('/api/orders/error-count'),
+        ])
+        if (expeditedRes.ok) {
+          const data = await expeditedRes.json()
           setExpeditedCount(data.count || 0)
         }
+        if (errorRes.ok) {
+          const data = await errorRes.json()
+          setErrorCount(data.count || 0)
+        }
       } catch (error) {
-        console.error('Failed to fetch expedited count:', error)
+        console.error('Failed to fetch counts:', error)
       }
     }
 
-    fetchExpeditedCount()
+    fetchCounts()
     // Refresh every 30 seconds
-    const interval = setInterval(fetchExpeditedCount, 30000)
+    const interval = setInterval(fetchCounts, 30000)
     return () => clearInterval(interval)
   }, [])
 
@@ -129,14 +138,18 @@ export default function Sidebar({ role }: { role: UserRole }) {
               {section.items.map((item) => {
                 const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
                 const isExpedited = item.href === '/expedited'
+                const isErrors = item.href === '/errors'
                 const hasExpeditedOrders = isExpedited && expeditedCount > 0
+                const hasErrorOrders = isErrors && errorCount > 0
 
-                // Bright red background when there are expedited orders (unless currently on that page)
+                // Bright red background when there are expedited or error orders (unless currently on that page)
                 let className = 'block px-4 py-2.5 rounded-lg transition-colors text-sm '
                 if (isActive) {
                   className += 'bg-green-600 text-white'
                 } else if (hasExpeditedOrders) {
                   className += 'bg-[#ff0000] text-white font-bold hover:bg-red-700'
+                } else if (hasErrorOrders) {
+                  className += 'bg-orange-600 text-white font-bold hover:bg-orange-700'
                 } else {
                   className += 'text-gray-300 hover:bg-gray-800 hover:text-white'
                 }
@@ -159,6 +172,11 @@ export default function Sidebar({ role }: { role: UserRole }) {
                         {hasExpeditedOrders && (
                           <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-red-600 rounded-full">
                             {expeditedCount}
+                          </span>
+                        )}
+                        {hasErrorOrders && (
+                          <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-orange-600 rounded-full">
+                            {errorCount}
                           </span>
                         )}
                       </Link>

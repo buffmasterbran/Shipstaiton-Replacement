@@ -16,6 +16,13 @@ export async function GET() {
         rawPayload: true,
         customerReachedOut: true,
         suggestedBox: true,
+        // Rate shopping fields
+        orderType: true,
+        shippedWeight: true,
+        preShoppedRate: true,
+        rateFetchedAt: true,
+        rateShopStatus: true,
+        rateShopError: true,
         createdAt: true,
         updatedAt: true,
       },

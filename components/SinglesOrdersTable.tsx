@@ -1,9 +1,8 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import ProcessDialog from './ProcessDialog'
-import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
@@ -19,6 +18,22 @@ interface OrderLog {
     confidence: 'confirmed' | 'calculated' | 'unknown'
     reason?: string
   } | null
+  // Rate shopping fields (assigned at ingestion for singles)
+  orderType?: string | null
+  shippedWeight?: number | null
+  preShoppedRate?: {
+    carrierId: string
+    carrierCode: string
+    carrier: string
+    serviceCode: string
+    serviceName: string
+    price: number
+    currency: string
+    deliveryDays: number | null
+    rateId?: string
+  } | null
+  rateShopStatus?: string | null
+  rateShopError?: string | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -46,12 +61,6 @@ function formatCurrency(amount: number | string) {
   }).format(Number(amount))
 }
 
-interface ShippingRate {
-  orderId: string
-  price: string
-  service: string
-}
-
 // LabelInfo interface for PDF generation
 interface LabelInfo {
   carrier: string
@@ -71,18 +80,16 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isProcessDialogOpen, setIsProcessDialogOpen] = useState(false)
-  const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
   const [selectedSize, setSelectedSize] = useState<string>('all')
   const [selectedColor, setSelectedColor] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [packageInfo, setPackageInfo] = useState<PackageInfo | null>(null)
-  const [shippingRates, setShippingRates] = useState<Map<string, ShippingRate>>(new Map())
-  const [rateShoppingActive, setRateShoppingActive] = useState(false)
-  const rateShoppingIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const isFetchingRatesRef = useRef<boolean>(false)
   const [autoProcessEnabled, setAutoProcessEnabled] = useState(false)
   const [autoProcessThreshold, setAutoProcessThreshold] = useState<number>(10)
   const [isBatchPackageInfoDialogOpen, setIsBatchPackageInfoDialogOpen] = useState(false)
+  const [fetchingMissingRates, setFetchingMissingRates] = useState(false)
+  const [fetchRatesMessage, setFetchRatesMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [fetchProgress, setFetchProgress] = useState<{ current: number; total: number } | null>(null)
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
   const [boxes, setBoxes] = useState<Array<{
     id: string
     name: string
@@ -293,57 +300,28 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
     return batches
   }, [filteredOrders, autoProcessEnabled, selectedSize, selectedColor, autoProcessThreshold])
 
-  // Check if all filtered orders have shipping rates with both price and service
+  // Check if all filtered orders have pre-assigned shipping rates (from ingestion)
   const allOrdersHaveRates = useMemo(() => {
     if (filteredOrders.length === 0) return false
-    if (!rateShoppingActive) return false // If not fetching rates, don't allow processing
+    // Singles orders have rates pre-assigned at ingestion - check if they have preShoppedRate
     return filteredOrders.every(order => {
-      const rate = shippingRates.get(order.log.id)
-      return rate && rate.price && rate.service
+      const preShoppedRate = (order.log as any).preShoppedRate
+      return preShoppedRate && preShoppedRate.price
     })
-  }, [filteredOrders, shippingRates, rateShoppingActive])
-
-  // Determine suggested box for the filtered orders
-  // If all filtered orders have the same suggested box, use that; otherwise null
-  const suggestedBoxForDialog = useMemo(() => {
-    if (filteredOrders.length === 0) return null
-
-    const firstSuggestion = filteredOrders[0]?.log.suggestedBox
-    if (!firstSuggestion?.boxId) return null
-
-    // Check if all orders have the same suggested box
-    const allSame = filteredOrders.every(order =>
-      order.log.suggestedBox?.boxId === firstSuggestion.boxId
-    )
-
-    if (!allSame) return null
-
-    // Find the box details from our boxes array
-    const box = boxes.find(b => b.id === firstSuggestion.boxId)
-    if (!box) return null
-
-    return {
-      boxId: box.id,
-      boxName: box.name,
-      lengthInches: box.lengthInches,
-      widthInches: box.widthInches,
-      heightInches: box.heightInches,
-      weightLbs: box.weightLbs,
-    }
-  }, [filteredOrders, boxes])
+  }, [filteredOrders])
 
   // Notify header about process button availability
   useEffect(() => {
     const event = new CustomEvent('processButtonAvailability', {
-      detail: { canProcess: allOrdersHaveRates || !rateShoppingActive }
+      detail: { canProcess: allOrdersHaveRates }
     })
     window.dispatchEvent(event)
-  }, [allOrdersHaveRates, rateShoppingActive])
+  }, [allOrdersHaveRates])
 
   // Listen for custom event from header button
   useEffect(() => {
     const handleOpenProcessDialog = () => {
-      if (filteredOrders.length > 0 && (allOrdersHaveRates || !rateShoppingActive)) {
+      if (filteredOrders.length > 0 && allOrdersHaveRates) {
         if (autoProcessEnabled && orderBatches.length > 0) {
           // Open batch package info dialog for auto-process
           setIsBatchPackageInfoDialogOpen(true)
@@ -353,12 +331,12 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         }
       }
     }
-    
+
     window.addEventListener('openProcessDialog', handleOpenProcessDialog)
     return () => {
       window.removeEventListener('openProcessDialog', handleOpenProcessDialog)
     }
-  }, [filteredOrders.length, allOrdersHaveRates, rateShoppingActive, autoProcessEnabled, orderBatches.length])
+  }, [filteredOrders.length, allOrdersHaveRates, autoProcessEnabled, orderBatches.length])
 
   const handleRowClick = (processedOrder: ProcessedOrder) => {
     setSelectedOrder(processedOrder.order)
@@ -372,170 +350,133 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
     setSelectedRawPayload(null)
   }
 
-  // Mock function to simulate rate shopping API call
-  const fetchShippingRate = async (order: ProcessedOrder, packageInfo: PackageInfo): Promise<ShippingRate> => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000))
+  const handleFetchMissingRates = async (action: 'set-service' | 'get-rates' = 'set-service') => {
+    // Collect order IDs from the visible/filtered orders
+    const orderIds = filteredOrders.map(order => order.log.id)
     
-    const payload = order.log.rawPayload as any
-    const orderData = Array.isArray(payload) ? payload[0] : payload
-    const shipTo = orderData?.shipTo || {}
+    if (orderIds.length === 0) {
+      setFetchRatesMessage({
+        type: 'error',
+        text: 'No orders to process',
+      })
+      return
+    }
+
+    console.log(`[UI] ${action} for ${orderIds.length} orders`)
+    setFetchingMissingRates(true)
+    setFetchRatesMessage(null)
+    setFetchProgress({ current: 0, total: orderIds.length })
     
-    // Check if rate shopping mode is selected
-    const isRateShoppingCheapest = packageInfo.carrier === 'Rate Shopper - Cheapest'
-    const isRateShoppingFastest = packageInfo.carrier === 'Rate Shopper - Fastest'
+    // Create abort controller for cancellation
+    const controller = new AbortController()
+    setAbortController(controller)
     
-    // Mock rate data - in real implementation, this would call an actual rate shopping API
-    const mockRates = [
-      { carrier: 'USPS', service: 'First Class', price: (4.50 + Math.random() * 2).toFixed(2), days: 3 },
-      { carrier: 'USPS', service: 'Priority Mail', price: (7.50 + Math.random() * 3).toFixed(2), days: 2 },
-      { carrier: 'UPS', service: 'Ground', price: (8.00 + Math.random() * 4).toFixed(2), days: 5 },
-      { carrier: 'UPS', service: '2nd Day Air', price: (15.00 + Math.random() * 5).toFixed(2), days: 2 },
-      { carrier: 'FedEx', service: 'Ground', price: (9.00 + Math.random() * 4).toFixed(2), days: 4 },
-      { carrier: 'FedEx', service: '2Day', price: (18.00 + Math.random() * 6).toFixed(2), days: 2 },
-    ]
+    // Process in batches for better progress tracking
+    const BATCH_SIZE = action === 'get-rates' ? 5 : 20 // Smaller batches for rate fetching
+    let processed = 0
+    let totalUpdated = 0
+    let cancelled = false
     
-    let selectedRate
-    
-    if (isRateShoppingCheapest) {
-      // Find cheapest rate
-      selectedRate = mockRates.reduce((min, rate) => 
-        parseFloat(rate.price) < parseFloat(min.price) ? rate : min
-      )
-    } else if (isRateShoppingFastest) {
-      // Find fastest rate
-      selectedRate = mockRates.reduce((fastest, rate) => 
-        rate.days < fastest.days ? rate : fastest
-      )
-    } else {
-      // Use the selected carrier and service, or find a matching rate
-      const matchingRate = mockRates.find(
-        rate => rate.carrier === packageInfo.carrier && rate.service === packageInfo.service
-      )
+    try {
+      for (let i = 0; i < orderIds.length; i += BATCH_SIZE) {
+        // Check if cancelled
+        if (controller.signal.aborted) {
+          cancelled = true
+          break
+        }
+        
+        const batchIds = orderIds.slice(i, i + BATCH_SIZE)
+        
+        const res = await fetch('/api/orders/fetch-missing-rates', { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, orderIds: batchIds }),
+          signal: controller.signal,
+        })
+        
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || 'Failed to process orders')
+        }
+        
+        const data = await res.json()
+        totalUpdated += data.updated || 0
+        processed += batchIds.length
+        setFetchProgress({ current: processed, total: orderIds.length })
+      }
       
-      if (matchingRate) {
-        // Add some variation to the price
-        selectedRate = {
-          ...matchingRate,
-          price: (parseFloat(matchingRate.price) + (Math.random() * 0.5 - 0.25)).toFixed(2)
+      if (cancelled) {
+        setFetchRatesMessage({
+          type: 'success',
+          text: `Cancelled after ${totalUpdated} orders`,
+        })
+      } else {
+        setFetchRatesMessage({
+          type: 'success',
+          text: action === 'get-rates' 
+            ? `Fetched rates for ${totalUpdated} orders` 
+            : `Set service for ${totalUpdated} orders`,
+        })
+      }
+      
+      // Refresh the page to show updated data
+      if (totalUpdated > 0) {
+        setTimeout(() => window.location.reload(), 1500)
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        setFetchRatesMessage({
+          type: 'success',
+          text: `Cancelled after ${totalUpdated} orders`,
+        })
+        if (totalUpdated > 0) {
+          setTimeout(() => window.location.reload(), 1500)
         }
       } else {
-        // Fallback: use first matching carrier or default
-        const carrierRate = mockRates.find(rate => rate.carrier === packageInfo.carrier) || mockRates[0]
-        selectedRate = {
-          ...carrierRate,
-          service: packageInfo.service || carrierRate.service,
-          price: (parseFloat(carrierRate.price) + (Math.random() * 0.5 - 0.25)).toFixed(2)
-        }
+        setFetchRatesMessage({
+          type: 'error',
+          text: err.message || 'Failed to process orders',
+        })
       }
-    }
-    
-    return {
-      orderId: order.log.id,
-      price: `$${selectedRate.price}`,
-      service: `${selectedRate.carrier} ${selectedRate.service}`,
+    } finally {
+      setFetchingMissingRates(false)
+      setFetchProgress(null)
+      setAbortController(null)
     }
   }
 
-  const handleSavePackageInfo = (info: PackageInfo) => {
-    setPackageInfo(info)
-    
-    // Start fetching rates for any carrier/service selection
-    // Clear any existing interval first
-    if (rateShoppingIntervalRef.current) {
-      clearInterval(rateShoppingIntervalRef.current)
-      rateShoppingIntervalRef.current = null
+  const handleCancelFetch = () => {
+    if (abortController) {
+      abortController.abort()
     }
-    
-    // Only start rate fetching if carrier is selected
-    if (info.carrier) {
-      setRateShoppingActive(true)
-      
-      // Clear existing rates
-      setShippingRates(new Map())
-      
-      // Start fetching rates for all filtered orders, one at a time
-      const fetchRatesForOrders = async () => {
-        // Prevent multiple concurrent fetches
-        if (isFetchingRatesRef.current) {
-          return
-        }
-        
-        isFetchingRatesRef.current = true
-        
-        try {
-          // Fetch rates one at a time, updating the UI as each rate comes in
-          for (let i = 0; i < filteredOrders.length; i++) {
-            const order = filteredOrders[i]
-            const rate = await fetchShippingRate(order, info)
-            
-            // Update state using functional update to avoid stale closures
-            setShippingRates((prevRates) => {
-              const updatedRates = new Map(prevRates)
-              updatedRates.set(rate.orderId, rate)
-              return updatedRates
-            })
-            
-            // Small delay between requests to simulate real API behavior
-            if (i < filteredOrders.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 300))
-            }
-          }
-        } finally {
-          isFetchingRatesRef.current = false
-        }
-      }
-      
-      // Start initial fetch
-      fetchRatesForOrders()
-      
-      // Set up interval to refresh rates every few seconds
-      rateShoppingIntervalRef.current = setInterval(() => {
-        fetchRatesForOrders()
-      }, 3000) // Refresh every 3 seconds
-    } else {
-      setRateShoppingActive(false)
-      isFetchingRatesRef.current = false
-    }
-    
-    console.log('Package info saved:', info)
   }
-  
-  // Cleanup interval on unmount
-  useEffect(() => {
-    return () => {
-      if (rateShoppingIntervalRef.current) {
-        clearInterval(rateShoppingIntervalRef.current)
-        rateShoppingIntervalRef.current = null
-      }
-    }
-  }, [])
 
   const handleProceed = () => {
-    // Use packageInfo if available, otherwise create a default LabelInfo
-    if (packageInfo) {
-      const labelInfo: LabelInfo = {
-        carrier: packageInfo.carrier,
-        service: packageInfo.service,
-        packaging: packageInfo.packaging,
-        weight: packageInfo.weight,
-        dimensions: packageInfo.dimensions,
-      }
-      generatePickListAndLabels(filteredOrders, labelInfo)
-    } else {
-      // Fallback if no package info is set
-      const defaultLabelInfo: LabelInfo = {
-        carrier: 'USPS',
-        service: 'First Class',
-        packaging: 'Package',
-        weight: '0.5',
-        dimensions: { length: '7', width: '7', height: '2' },
-      }
-      generatePickListAndLabels(filteredOrders, defaultLabelInfo)
-    }
+    // Use pre-shopped rate info from the first order for label generation
+    const firstOrder = filteredOrders[0]
+    const preShoppedRate = (firstOrder?.log as any)?.preShoppedRate
+
+    // Build label info from pre-shopped rate
+    const labelInfo: LabelInfo = preShoppedRate
+      ? {
+          carrier: preShoppedRate.carrier || 'USPS',
+          service: preShoppedRate.serviceName || 'First Class',
+          packaging: 'Package',
+          weight: ((firstOrder?.log as any)?.shippedWeight || 0.5).toString(),
+          dimensions: { length: '7', width: '7', height: '2' },
+        }
+      : {
+          carrier: 'USPS',
+          service: 'First Class',
+          packaging: 'Package',
+          weight: '0.5',
+          dimensions: { length: '7', width: '7', height: '2' },
+        }
+
+    generatePickListAndLabels(filteredOrders, labelInfo)
   }
 
-  const handleBatchProceed = (batchPackageInfo: Map<string, PackageInfo>) => {
+  const handleBatchProceed = (batchPackageInfo: Map<string, { carrier: string; service: string; packaging: string; weight: string; dimensions: { length: string; width: string; height: string } }>) => {
     // Process all batches with their respective package info
     const allOrders: ProcessedOrder[] = []
     const batchLabels: Array<{ batch: OrderBatch; labelInfo: LabelInfo }> = []
@@ -1513,29 +1454,69 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       {/* Single Item Orders Section */}
       <div className="bg-white rounded-lg shadow">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Single Item Orders</h2>
+          <div className="flex items-center gap-4">
+            <h2 className="text-lg font-semibold text-gray-900">Single Item Orders</h2>
+            <div className="flex items-center gap-2">
+              {fetchingMissingRates ? (
+                <>
+                  {/* Progress indicator */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
+                    <svg className="animate-spin h-4 w-4 text-amber-500" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="text-sm font-medium text-gray-700">
+                      {fetchProgress ? `${fetchProgress.current} / ${fetchProgress.total}` : 'Processing...'}
+                    </span>
+                  </div>
+                  {/* Cancel button */}
+                  <button
+                    onClick={handleCancelFetch}
+                    className="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Set Service button - fast, no API calls */}
+                  <button
+                    onClick={() => handleFetchMissingRates('set-service')}
+                    disabled={selectedSize === 'all' || filteredOrders.length === 0}
+                    className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    title={selectedSize === 'all' ? 'Select a size first' : `Assign carrier to ${filteredOrders.length} visible orders (no price lookup)`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {selectedSize === 'all' ? 'Select Size First' : `Set Service (${filteredOrders.length})`}
+                  </button>
+                  {/* Get Rates button - slower, fetches prices from ShipEngine */}
+                  <button
+                    onClick={() => handleFetchMissingRates('get-rates')}
+                    disabled={selectedSize === 'all' || filteredOrders.length === 0}
+                    className="px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    title={selectedSize === 'all' ? 'Select a size first' : `Fetch actual prices for ${filteredOrders.length} visible orders`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {selectedSize === 'all' ? 'Select Size First' : `Get Rates (${filteredOrders.length})`}
+                  </button>
+                </>
+              )}
+            </div>
+            {fetchRatesMessage && (
+              <span className={`text-sm ${fetchRatesMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                {fetchRatesMessage.text}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600">Found {filteredOrders.length} orders</span>
-            <button
-              onClick={() => setIsPackageInfoDialogOpen(true)}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-              title="Set package information"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                />
-              </svg>
-              Package Info
-            </button>
             <div className="relative">
               <input
                 type="text"
@@ -1670,10 +1651,22 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                       {new Date(processedOrder.orderDate).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {shippingRates.get(processedOrder.log.id)?.price || ''}
+                      {(() => {
+                        const preShoppedRate = (processedOrder.log as any).preShoppedRate
+                        if (preShoppedRate?.price) {
+                          return <span className="text-green-600 font-medium">${preShoppedRate.price.toFixed(2)}</span>
+                        }
+                        return <span className="text-gray-400">—</span>
+                      })()}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {shippingRates.get(processedOrder.log.id)?.service || ''}
+                      {(() => {
+                        const preShoppedRate = (processedOrder.log as any).preShoppedRate
+                        if (preShoppedRate?.carrier && preShoppedRate?.serviceName) {
+                          return `${preShoppedRate.carrier} ${preShoppedRate.serviceName}`
+                        }
+                        return <span className="text-gray-400">—</span>
+                      })()}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <button
@@ -1725,14 +1718,6 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         onClose={() => setIsProcessDialogOpen(false)}
         orderCount={filteredOrders.length}
         onProceed={handleProceed}
-      />
-
-      <PackageInfoDialog
-        isOpen={isPackageInfoDialogOpen}
-        onClose={() => setIsPackageInfoDialogOpen(false)}
-        onSave={handleSavePackageInfo}
-        suggestedBox={suggestedBoxForDialog}
-        boxes={boxes}
       />
 
       <BatchPackageInfoDialog

@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import OrderDialog from './OrderDialog'
 import BulkOrderProcessDialog from './BulkOrderProcessDialog'
-import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
+import { PackageInfo } from './PackageInfoDialog'
 import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getSizeFromSku, getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
@@ -19,7 +19,27 @@ interface OrderLog {
     boxName: string | null
     confidence: 'confirmed' | 'calculated' | 'unknown'
     reason?: string
+    lengthInches?: number
+    widthInches?: number
+    heightInches?: number
+    weightLbs?: number
   } | null
+  // Rate shopping fields
+  orderType?: string | null
+  shippedWeight?: number | null
+  preShoppedRate?: {
+    carrierId: string
+    carrierCode: string
+    carrier: string
+    serviceCode: string
+    serviceName: string
+    price: number
+    currency: string
+    deliveryDays: number | null
+    rateId?: string
+  } | null
+  rateShopStatus?: string | null
+  rateShopError?: string | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -50,12 +70,6 @@ interface BulkOrderGroup {
   totalOrders: number
 }
 
-interface ShippingRate {
-  groupId: string
-  price: string
-  service: string
-}
-
 interface LabelInfo {
   carrier: string
   service: string
@@ -76,13 +90,8 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkProcessDialogOpen, setIsBulkProcessDialogOpen] = useState(false)
-  const [isPackageInfoDialogOpen, setIsPackageInfoDialogOpen] = useState(false)
   const [selectedGroup, setSelectedGroup] = useState<BulkOrderGroup | null>(null)
   const [packageInfo, setPackageInfo] = useState<PackageInfo | null>(null)
-  const [shippingRates, setShippingRates] = useState<Map<string, ShippingRate>>(new Map())
-  const [rateShoppingActive, setRateShoppingActive] = useState(false)
-  const rateShoppingIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const isFetchingRatesRef = useRef<boolean>(false)
   const [autoProcessEnabled, setAutoProcessEnabled] = useState(false)
   const [autoProcessThreshold, setAutoProcessThreshold] = useState<number>(2)
   const [isBatchPackageInfoDialogOpen, setIsBatchPackageInfoDialogOpen] = useState(false)
@@ -273,16 +282,6 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     })
   }, [filteredBulkGroups, autoProcessEnabled])
 
-  // Check if selected group has shipping rates
-  const selectedGroupHasRates = useMemo(() => {
-    if (!selectedGroup) return false
-    if (rateShoppingActive) {
-      const rate = shippingRates.get(selectedGroup.signature)
-      return rate && rate.price && rate.service
-    }
-    return true
-  }, [selectedGroup, shippingRates, rateShoppingActive])
-
   const handleRowClick = (group: BulkOrderGroup) => {
     // Show first order in dialog for now
     if (group.orders.length > 0) {
@@ -308,99 +307,10 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     setIsBulkProcessDialogOpen(true)
   }
 
-  // Mock function to simulate rate shopping API call
-  const fetchShippingRate = async (group: BulkOrderGroup, packageInfo: PackageInfo): Promise<ShippingRate> => {
-    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000))
-
-    const mockRates = [
-      { carrier: 'USPS', service: 'First Class', price: (4.50 + Math.random() * 2).toFixed(2), days: 3 },
-      { carrier: 'USPS', service: 'Priority Mail', price: (7.50 + Math.random() * 3).toFixed(2), days: 2 },
-      { carrier: 'UPS', service: 'Ground', price: (8.00 + Math.random() * 4).toFixed(2), days: 5 },
-      { carrier: 'UPS', service: '2nd Day Air', price: (15.00 + Math.random() * 5).toFixed(2), days: 2 },
-      { carrier: 'FedEx', service: 'Ground', price: (9.00 + Math.random() * 4).toFixed(2), days: 4 },
-      { carrier: 'FedEx', service: '2Day', price: (18.00 + Math.random() * 6).toFixed(2), days: 2 },
-    ]
-
-    let selectedRate: typeof mockRates[0] | undefined
-
-    if (packageInfo.carrier === 'Rate Shopper - Cheapest') {
-      selectedRate = mockRates.reduce((min, rate) =>
-        parseFloat(rate.price) < parseFloat(min.price) ? rate : min
-      )
-    } else if (packageInfo.carrier === 'Rate Shopper - Fastest') {
-      selectedRate = mockRates.reduce((fastest, rate) =>
-        rate.days < fastest.days ? fastest : fastest
-      )
-    } else {
-      selectedRate = mockRates.find(rate =>
-        rate.carrier === packageInfo.carrier && rate.service === packageInfo.service
-      )
-      if (!selectedRate) {
-        selectedRate = mockRates.find(rate => rate.carrier === packageInfo.carrier) || mockRates[0]
-      }
-    }
-
-    return {
-      groupId: group.signature,
-      price: `$${selectedRate.price}`,
-      service: `${selectedRate.carrier} ${selectedRate.service}`,
-    }
-  }
-
+  // Handle package info save - just store it for use with bulk queue
   const handleSavePackageInfo = (info: PackageInfo) => {
     setPackageInfo(info)
-
-    if (!selectedGroup) return
-
-    if (rateShoppingIntervalRef.current) {
-      clearInterval(rateShoppingIntervalRef.current)
-      rateShoppingIntervalRef.current = null
-    }
-
-    const isRateShoppingMode = !!info.carrier && !!info.packaging && !!info.weight && !!info.dimensions.length && !!info.dimensions.width && !!info.dimensions.height
-
-    if (isRateShoppingMode) {
-      setRateShoppingActive(true)
-
-      const fetchRatesForGroup = async () => {
-        if (isFetchingRatesRef.current) return
-
-        isFetchingRatesRef.current = true
-
-        try {
-          const rate = await fetchShippingRate(selectedGroup, info)
-          setShippingRates((prevRates) => {
-            const updatedRates = new Map(prevRates)
-            updatedRates.set(rate.groupId, rate)
-            return updatedRates
-          })
-        } finally {
-          isFetchingRatesRef.current = false
-        }
-      }
-
-      fetchRatesForGroup()
-
-      rateShoppingIntervalRef.current = setInterval(() => {
-        fetchRatesForGroup()
-      }, 3000)
-    } else {
-      if (rateShoppingIntervalRef.current) {
-        clearInterval(rateShoppingIntervalRef.current)
-        rateShoppingIntervalRef.current = null
-      }
-      setRateShoppingActive(false)
-      setShippingRates(new Map())
-    }
   }
-
-  useEffect(() => {
-    return () => {
-      if (rateShoppingIntervalRef.current) {
-        clearInterval(rateShoppingIntervalRef.current)
-      }
-    }
-  }, [])
 
   const handleProceed = async () => {
     if (!selectedGroup || !packageInfo) return
@@ -1637,7 +1547,6 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {displayGroups.map((group, index) => {
-                const rate = shippingRates.get(group.signature)
                 const queueStatus = getGroupStatus(group.signature)
                 const statusLabel =
                   queueStatus === 'pending'
@@ -1706,13 +1615,38 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
                       })()}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center">
-                        {rate && rate.service && rate.price ? (
-                          <div className="w-3 h-3 bg-green-500 rounded-full" title={rate.service} />
-                        ) : (
-                          <div className="w-3 h-3 bg-red-500 rounded-full" title="No service set" />
-                        )}
-                      </div>
+                      {(() => {
+                        // Check if first order has a pre-shopped rate
+                        const firstOrder = group.orders[0]?.log as any
+                        const preShoppedRate = firstOrder?.preShoppedRate
+                        const rateShopStatus = firstOrder?.rateShopStatus
+
+                        if (preShoppedRate && rateShopStatus === 'SUCCESS') {
+                          return (
+                            <div className="flex items-center gap-2">
+                              <div className="w-3 h-3 bg-green-500 rounded-full" />
+                              <div className="text-sm">
+                                <span className="font-medium text-gray-900">{preShoppedRate.carrier}</span>
+                                <span className="text-gray-500 ml-1">${preShoppedRate.price?.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          )
+                        } else if (rateShopStatus === 'FAILED') {
+                          return (
+                            <div className="flex items-center gap-2">
+                              <div className="w-3 h-3 bg-red-500 rounded-full" />
+                              <span className="text-sm text-red-600">Error</span>
+                            </div>
+                          )
+                        } else {
+                          return (
+                            <div className="flex items-center gap-2">
+                              <div className="w-3 h-3 bg-gray-400 rounded-full" />
+                              <span className="text-sm text-gray-400">Not shopped</span>
+                            </div>
+                          )
+                        }
+                      })()}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
                       {queueStatus === 'pending' && (
@@ -1756,7 +1690,6 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
         }}
         group={selectedGroup}
         onProceed={handleProceed}
-        shippingRate={selectedGroup ? shippingRates.get(selectedGroup.signature) : undefined}
         onSavePackageInfo={handleSavePackageInfo}
         sendToQueueLoading={sendToQueueLoading}
         sendToQueueError={sendToQueueError}

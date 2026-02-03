@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(timeout:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx next build)",
+      "Bash(node -e:*)",
+      "Bash(curl:*)",
+      "Bash(node scripts/backfill-boxes.js:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nSimplify ingest API response to return internal order IDs\n\n- Switch from createMany to individual creates to capture IDs\n- Return orderId, success, and errorMessage \\(on failure only\\)\n- Check for existing orders to prevent duplicates\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(npx vercel --prod)",
+      "Bash(npm install:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd drag-and-drop reordering for boxes\n\nReplace numeric priority input with visual drag-and-drop ordering:\n- Add @dnd-kit/core and @dnd-kit/sortable for DnD functionality\n- Create SortableBoxRow component with drag handle\n- Add reorder-boxes API action for persisting order\n- Remove priority input from box edit form\n- Add helper text explaining drag-to-reorder behavior\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd debug endpoint for product/box diagnostics\n\nGET /api/debug/products returns:\n- All product sizes with their singleBoxId values\n- All boxes with priority and singleCupOnly flags\n- Summary of how many sizes have singleBoxId set\n\nUse this to verify database state matches UI display.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "WebFetch(domain:shipstation-replacement.vercel.app)",
+      "WebFetch(domain:shipstation-replacement-4zp5ibvgz-brandegee-pierces-projects.vercel.app)",
+      "Bash(git restore:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nMake Orders by Size page dynamic based on box config\n\n- Remove hardcoded pack sizes \\(2/4, 4/5, 6/10, Custom\\)\n- Fetch boxes from /api/box-config dynamically\n- Filter buttons now show actual box names from database\n- Show order counts per box in filter buttons\n- Use suggestedBox.boxName from orders \\(already calculated at ingest\\)\n- Add \"No Box\" filter for orders without box assignment\n- Show confidence level \\(Confirmed/Calculated/Unknown\\) in table\n- Remove dependency on pack-config.json\n- Single-cup boxes shown with purple dot indicator\n\nAdding/changing boxes in Box Config now automatically updates this page.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd color columns, box confirmation dialog, and UI improvements\n\n- Add Color column to Singles, Orders by Size, and Order Details\n- Simplify color extraction to use NetSuite color field directly\n- Add clickable box confirmation from All Orders and Orders by Size pages\n- Add BoxConfirmDialog for confirming/changing box assignments inline\n- Add pagination to Box Config combinations matrix \\(100 at a time\\)\n- Limit sticker combinations to max 2 in the matrix\n- Add sticker-only order handling in ingest API\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(claude install:*)"
+    ]
+  }
+}

@@ -9,19 +9,67 @@ datasource db {
 }
 
 model OrderLog {
-  id                  String   @id @default(cuid())
-  orderNumber         String   @map("order_number")
-  status              String   @default("RECEIVED")
-  rawPayload          Json     @map("raw_payload")
-  customerReachedOut  Boolean  @default(false) @map("customer_reached_out")
-  suggestedBox        Json?    @map("suggested_box")  // { boxId, boxName, confidence, reason? }
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                  String      @id @default(cuid())
+  orderNumber         String      @map("order_number")
+  status              OrderStatus @default(AWAITING_SHIPMENT)
+  rawPayload          Json        @map("raw_payload")
+  customerReachedOut  Boolean     @default(false) @map("customer_reached_out")
+  suggestedBox        Json?       @map("suggested_box")  // { boxId, boxName, confidence, reason? }
+
+  // Order classification & rate shopping fields
+  orderType           String?     @map("order_type")      // "SINGLE" | "BULK" | "EXPEDITED" | "ERROR"
+  shippedWeight       Float?      @map("shipped_weight")  // Total weight in lbs (box + products)
+  preShoppedRate      Json?       @map("pre_shopped_rate") // { carrierId, carrierCode, serviceCode, serviceName, price, deliveryDays, rateId }
+  rateFetchedAt       DateTime?   @map("rate_fetched_at")
+  rateShopStatus      String?     @map("rate_shop_status") // "SUCCESS" | "FAILED" | "SKIPPED"
+  rateShopError       String?     @map("rate_shop_error")  // Error message if rate shopping failed
+
+  // Shipping & tracking fields
+  trackingNumber      String?     @map("tracking_number")
+  carrier             String?
+  labelUrl            String?     @map("label_url")
+  labelCost           Float?      @map("label_cost")
+  shippedAt           DateTime?   @map("shipped_at")
+
+  // Hold order fields
+  onHoldReason        String?     @map("on_hold_reason")
+  onHoldUntil         DateTime?   @map("on_hold_until")
+
+  // Customer notification fields
+  customerEmail       String?     @map("customer_email")
+  notificationSent    Boolean     @default(false) @map("notification_sent")
+  notificationSentAt  DateTime?   @map("notification_sent_at")
+
+  // Address validation fields
+  addressValidated    Boolean     @default(false) @map("address_validated")
+  addressOverridden   Boolean     @default(false) @map("address_overridden")
+
+  // Archive fields
+  archived            Boolean     @default(false)
+  archivedAt          DateTime?   @map("archived_at")
+
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
 
   @@map("order_logs")
   @@index([createdAt])
   @@index([orderNumber])
   @@index([customerReachedOut])
+  @@index([status])
+  @@index([trackingNumber])
+  @@index([archived])
+  @@index([orderType])
+  @@index([rateShopStatus])
+}
+
+enum OrderStatus {
+  AWAITING_SHIPMENT
+  ON_HOLD
+  SHIPPED
+  CANCELLED
+  DELIVERED
+  RETURNED
+  RECEIVED
 }
 
 // Packer batch = up to 24 orders. Admin sends bulk groups to queue as chunked BulkQueueItems.
