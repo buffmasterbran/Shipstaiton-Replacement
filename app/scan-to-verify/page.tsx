@@ -28,6 +28,16 @@ interface OrderData {
   preShoppedRate?: any
 }
 
+interface BoxConfig {
+  id: string
+  boxName: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  weightLbs: number
+  isActive: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Audio helpers
 // ---------------------------------------------------------------------------
@@ -82,8 +92,43 @@ export default function ScanToVerifyPage() {
   const [allVerified, setAllVerified] = useState(false)
   const [lastMatchedIndex, setLastMatchedIndex] = useState<number | null>(null)
 
+  // Box/package state
+  const [boxes, setBoxes] = useState<BoxConfig[]>([])
+  const [selectedBoxId, setSelectedBoxId] = useState<string>('')
+  const [dimensions, setDimensions] = useState({ length: '', width: '', height: '' })
+
   const orderInputRef = useRef<HTMLInputElement>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
+
+  // Fetch boxes on mount
+  useEffect(() => {
+    const fetchBoxes = async () => {
+      try {
+        const res = await fetch('/api/box-config')
+        if (res.ok) {
+          const data = await res.json()
+          setBoxes(data.boxes?.filter((b: BoxConfig) => b.isActive) || [])
+        }
+      } catch (error) {
+        console.error('Failed to fetch boxes:', error)
+      }
+    }
+    fetchBoxes()
+  }, [])
+
+  // Update dimensions when selected box changes
+  useEffect(() => {
+    if (selectedBoxId) {
+      const box = boxes.find(b => b.id === selectedBoxId)
+      if (box) {
+        setDimensions({
+          length: String(box.lengthInches || ''),
+          width: String(box.widthInches || ''),
+          height: String(box.heightInches || ''),
+        })
+      }
+    }
+  }, [selectedBoxId, boxes])
 
   // Focus management
   useEffect(() => { orderInputRef.current?.focus() }, [])
@@ -120,6 +165,8 @@ export default function ScanToVerifyPage() {
     setScanStatus('idle')
     setScanMessage('')
     setLastMatchedIndex(null)
+    setSelectedBoxId('')
+    setDimensions({ length: '', width: '', height: '' })
 
     try {
       const res = await fetch(`/api/orders/lookup?orderNumber=${encodeURIComponent(trimmed)}`)
@@ -152,6 +199,12 @@ export default function ScanToVerifyPage() {
 
       setOrder(orderData)
       setItems(verifyItems)
+
+      // Set default box from order's suggested box
+      if (orderData.suggestedBox?.id) {
+        setSelectedBoxId(orderData.suggestedBox.id)
+        // Dimensions will auto-populate via useEffect
+      }
     } catch (err: any) {
       setLookupError(err.message || 'Failed to look up order')
       playErrorSound()
@@ -524,14 +577,20 @@ export default function ScanToVerifyPage() {
                   </div>
                 </div>
 
-                {/* Package */}
+                {/* Package/Box */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">Package</label>
-                  <select className="w-full px-2 py-1 text-sm border border-gray-300 rounded">
-                    <option>Package</option>
-                    <option>Large Envelope</option>
-                    <option>Flat Rate Envelope</option>
-                    <option>Flat Rate Box</option>
+                  <select 
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    value={selectedBoxId}
+                    onChange={(e) => setSelectedBoxId(e.target.value)}
+                  >
+                    <option value="">Select a box...</option>
+                    {boxes.map((box) => (
+                      <option key={box.id} value={box.id}>
+                        {box.boxName}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -539,11 +598,29 @@ export default function ScanToVerifyPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">Size</label>
                   <div className="flex items-center gap-1">
-                    <input type="number" placeholder="L" className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs" />
+                    <input 
+                      type="number" 
+                      placeholder="L" 
+                      className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs"
+                      value={dimensions.length}
+                      onChange={(e) => setDimensions(d => ({ ...d, length: e.target.value }))}
+                    />
                     <span className="text-gray-400 text-xs">×</span>
-                    <input type="number" placeholder="W" className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs" />
+                    <input 
+                      type="number" 
+                      placeholder="W" 
+                      className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs"
+                      value={dimensions.width}
+                      onChange={(e) => setDimensions(d => ({ ...d, width: e.target.value }))}
+                    />
                     <span className="text-gray-400 text-xs">×</span>
-                    <input type="number" placeholder="H" className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs" />
+                    <input 
+                      type="number" 
+                      placeholder="H" 
+                      className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs"
+                      value={dimensions.height}
+                      onChange={(e) => setDimensions(d => ({ ...d, height: e.target.value }))}
+                    />
                     <span className="text-xs text-gray-500">in</span>
                   </div>
                 </div>
