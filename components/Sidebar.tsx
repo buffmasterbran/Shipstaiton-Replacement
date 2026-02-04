@@ -28,6 +28,7 @@ const navSections: NavSection[] = [
       { name: 'All Orders', href: '/', access: 'admin' },
       { name: 'Expedited Orders', href: '/expedited', access: 'admin' },
       { name: 'Error Orders', href: '/errors', access: 'admin' },
+      { name: 'Orders on Hold', href: '/hold', access: 'admin' },
       { name: 'Singles', href: '/singles', access: 'admin' },
       { name: 'Bulk Orders', href: '/bulk', access: 'admin' },
       { name: 'Bulk Verification', href: '/bulk-verification', access: 'operator' },
@@ -74,6 +75,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
   const [expeditedCount, setExpeditedCount] = useState(0)
   const [errorCount, setErrorCount] = useState(0)
+  const [holdCount, setHoldCount] = useState(0)
   const [pinnedItems, setPinnedItems] = useState<string[]>([])
 
   // Default pinned items
@@ -105,13 +107,14 @@ export default function Sidebar({ role }: { role: UserRole }) {
     localStorage.setItem('sidebar-pinned-items', JSON.stringify(newPinned))
   }
 
-  // Fetch expedited and error order counts
+  // Fetch expedited, error, and hold order counts
   useEffect(() => {
     async function fetchCounts() {
       try {
-        const [expeditedRes, errorRes] = await Promise.all([
+        const [expeditedRes, errorRes, holdRes] = await Promise.all([
           fetch('/api/orders/expedited-count'),
           fetch('/api/orders/error-count'),
+          fetch('/api/orders/hold-count'),
         ])
         if (expeditedRes.ok) {
           const data = await expeditedRes.json()
@@ -120,6 +123,10 @@ export default function Sidebar({ role }: { role: UserRole }) {
         if (errorRes.ok) {
           const data = await errorRes.json()
           setErrorCount(data.count || 0)
+        }
+        if (holdRes.ok) {
+          const data = await holdRes.json()
+          setHoldCount(data.count || 0)
         }
       } catch (error) {
         console.error('Failed to fetch counts:', error)
@@ -179,8 +186,10 @@ export default function Sidebar({ role }: { role: UserRole }) {
                 const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
                 const isExpedited = item.href === '/expedited'
                 const isErrors = item.href === '/errors'
+                const isHold = item.href === '/hold'
                 const hasExpeditedOrders = isExpedited && expeditedCount > 0
                 const hasErrorOrders = isErrors && errorCount > 0
+                const hasHoldOrders = isHold && holdCount > 0
 
                 let className = 'flex items-center justify-between px-4 py-2.5 rounded-lg transition-colors text-sm group '
                 if (isActive) {
@@ -189,6 +198,8 @@ export default function Sidebar({ role }: { role: UserRole }) {
                   className += 'bg-[#ff0000] text-white font-bold hover:bg-red-700'
                 } else if (hasErrorOrders) {
                   className += 'bg-orange-600 text-white font-bold hover:bg-orange-700'
+                } else if (hasHoldOrders) {
+                  className += 'bg-yellow-600 text-white font-bold hover:bg-yellow-700'
                 } else {
                   className += 'text-gray-300 hover:bg-gray-800 hover:text-white'
                 }
@@ -230,6 +241,11 @@ export default function Sidebar({ role }: { role: UserRole }) {
                               {errorCount}
                             </span>
                           )}
+                          {hasHoldOrders && (
+                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-yellow-600 rounded-full">
+                              {holdCount}
+                            </span>
+                          )}
                         </Link>
                         <button
                           onClick={(e) => togglePin(item.href, e)}
@@ -263,8 +279,10 @@ export default function Sidebar({ role }: { role: UserRole }) {
                     const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
                     const isExpedited = item.href === '/expedited'
                     const isErrors = item.href === '/errors'
+                    const isHold = item.href === '/hold'
                     const hasExpeditedOrders = isExpedited && expeditedCount > 0
                     const hasErrorOrders = isErrors && errorCount > 0
+                    const hasHoldOrders = isHold && holdCount > 0
                     const isPinned = pinnedItems.includes(item.externalHref || item.href)
 
                     let className = 'flex items-center justify-between px-4 py-2.5 rounded-lg transition-colors text-sm group '
@@ -274,6 +292,8 @@ export default function Sidebar({ role }: { role: UserRole }) {
                       className += 'bg-[#ff0000] text-white font-bold hover:bg-red-700'
                     } else if (hasErrorOrders) {
                       className += 'bg-orange-600 text-white font-bold hover:bg-orange-700'
+                    } else if (hasHoldOrders) {
+                      className += 'bg-yellow-600 text-white font-bold hover:bg-yellow-700'
                     } else {
                       className += 'text-gray-300 hover:bg-gray-800 hover:text-white'
                     }
@@ -313,6 +333,11 @@ export default function Sidebar({ role }: { role: UserRole }) {
                               {hasErrorOrders && (
                                 <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-orange-600 rounded-full">
                                   {errorCount}
+                                </span>
+                              )}
+                              {hasHoldOrders && (
+                                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-yellow-600 rounded-full">
+                                  {holdCount}
                                 </span>
                               )}
                             </Link>
