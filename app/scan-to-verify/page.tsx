@@ -121,67 +121,53 @@ export default function ScanToVerifyPage() {
   const [carrierServices, setCarrierServices] = useState<CarrierService[]>([])
   const [selectedService, setSelectedService] = useState<string>('')
 
+  // Cached reference data for instant order resolution (no DB calls per scan)
+  const [refData, setRefData] = useState<{
+    skuBarcodeMap: Record<string, string>
+    skuWeightMap: Record<string, number>
+    skuPatterns: Array<{ pattern: string; weightLbs: number }>
+    boxMap: Record<string, BoxConfig>
+  } | null>(null)
+
   const orderInputRef = useRef<HTMLInputElement>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch boxes, locations, and carrier services on mount
+  // Load ALL reference data in a single call on mount
+  // This replaces 3 separate fetches (boxes, locations, services)
+  // and also pre-loads SKU barcodes/weights so order lookup needs zero extra queries
   useEffect(() => {
-    const fetchBoxes = async () => {
+    const loadReferenceData = async () => {
       try {
-        const res = await fetch('/api/box-config')
-        if (res.ok) {
-          const data = await res.json()
-          setBoxes(data.boxes?.filter((b: BoxConfig) => b.active) || [])
-        }
+        const res = await fetch('/api/scan-to-verify/reference-data')
+        if (!res.ok) throw new Error('Failed to load reference data')
+        const data = await res.json()
+
+        // Boxes
+        setBoxes(data.boxes || [])
+
+        // Locations — auto-select default
+        const locs: ShipLocation[] = data.locations || []
+        setLocations(locs)
+        const defaultLoc = locs.find((l: ShipLocation) => l.isDefault)
+        if (defaultLoc) setSelectedLocationId(defaultLoc.id)
+        else if (locs.length > 0) setSelectedLocationId(locs[0].id)
+
+        // Carrier services
+        setCarrierServices(data.carrierServices || [])
+
+        // Cache the SKU resolution data for instant order lookups
+        setRefData({
+          skuBarcodeMap: data.skuBarcodeMap || {},
+          skuWeightMap: data.skuWeightMap || {},
+          skuPatterns: data.skuPatterns || [],
+          boxMap: data.boxMap || {},
+        })
       } catch (error) {
-        console.error('Failed to fetch boxes:', error)
+        console.error('Failed to load reference data:', error)
       }
     }
 
-    const fetchLocations = async () => {
-      try {
-        const res = await fetch('/api/locations')
-        if (res.ok) {
-          const data = await res.json()
-          const locs: ShipLocation[] = data.locations || []
-          setLocations(locs)
-          // Default to the default location
-          const defaultLoc = locs.find(l => l.isDefault)
-          if (defaultLoc) setSelectedLocationId(defaultLoc.id)
-          else if (locs.length > 0) setSelectedLocationId(locs[0].id)
-        }
-      } catch (error) {
-        console.error('Failed to fetch locations:', error)
-      }
-    }
-
-    const fetchServices = async () => {
-      try {
-        const res = await fetch('/api/shipengine/carriers?includeServices=true')
-        if (res.ok) {
-          const data = await res.json()
-          const services: CarrierService[] = []
-          for (const carrier of data.carriers || []) {
-            for (const service of carrier.services || []) {
-              services.push({
-                carrierId: carrier.carrier_id,
-                carrierCode: carrier.carrier_code,
-                carrierName: carrier.friendly_name,
-                serviceCode: service.service_code,
-                serviceName: service.name,
-              })
-            }
-          }
-          setCarrierServices(services)
-        }
-      } catch (error) {
-        console.error('Failed to fetch carrier services:', error)
-      }
-    }
-
-    fetchBoxes()
-    fetchLocations()
-    fetchServices()
+    loadReferenceData()
   }, [])
 
   // Update dimensions and weight when selected box changes
@@ -226,7 +212,29 @@ export default function ScanToVerifyPage() {
     }
   }, [lastMatchedIndex])
 
-  // Order lookup
+  // Resolve a SKU's weight using cached reference data
+  // Tries exact match first, then regex patterns (all in-memory, zero DB calls)
+  const resolveSkuWeight = useCallback((sku: string): number => {
+    if (!refData || !sku) return 0
+    // Exact match (original or uppercased)
+    const exactWeight = refData.skuWeightMap[sku] ?? refData.skuWeightMap[sku.toUpperCase()]
+    if (exactWeight !== undefined) return exactWeight
+    // Regex pattern fallback
+    for (const p of refData.skuPatterns) {
+      try {
+        if (new RegExp(p.pattern, 'i').test(sku)) return p.weightLbs
+      } catch { continue }
+    }
+    return 0
+  }, [refData])
+
+  // Resolve a SKU's barcode using cached reference data
+  const resolveSkuBarcode = useCallback((sku: string): string | null => {
+    if (!refData || !sku) return null
+    return refData.skuBarcodeMap[sku] || refData.skuBarcodeMap[sku.toUpperCase()] || null
+  }, [refData])
+
+  // Order lookup — single DB query, all resolution happens client-side
   const lookupOrder = useCallback(async (orderNumber: string) => {
     const trimmed = orderNumber.trim()
     if (!trimmed) return
@@ -253,24 +261,23 @@ export default function ScanToVerifyPage() {
 
       const data = await res.json()
       const orderData = data.order as OrderData
-      const skuBarcodeMap: Record<string, string> = data.skuBarcodeMap || {}
-      const skuWeightMap: Record<string, number> = data.skuWeightMap || {}
 
       const payload = orderData.rawPayload
       const orderObj = Array.isArray(payload) ? payload[0] : payload
       const rawItems = orderObj?.items || []
 
+      // All resolution happens client-side using cached reference data
       const verifyItems: VerifyItem[] = rawItems
         .filter((item: any) => !isShippingInsurance(item.sku || '', item.name || ''))
         .map((item: any) => ({
           sku: item.sku || 'UNKNOWN',
-          barcode: skuBarcodeMap[item.sku] || null,
+          barcode: resolveSkuBarcode(item.sku || ''),
           name: item.name || 'Unnamed Item',
           color: getColorFromSku(item.sku || '', item.name, item.color),
           size: getSizeFromSku(item.sku || ''),
           quantity: item.quantity || 1,
           scanned: 0,
-          weightLbs: skuWeightMap[item.sku] || 0,
+          weightLbs: resolveSkuWeight(item.sku || ''),
         }))
 
       if (verifyItems.length === 0) throw new Error('Order has no scannable items')
@@ -278,8 +285,8 @@ export default function ScanToVerifyPage() {
       setOrder(orderData)
       setItems(verifyItems)
 
-      // Store product-only weight for recalculation when box changes
-      const prodWeight = data.productWeightLbs || 0
+      // Calculate product-only weight from resolved items
+      const prodWeight = verifyItems.reduce((sum, item) => sum + (item.weightLbs * item.quantity), 0)
       setProductWeight(prodWeight)
 
       // Set default box from order's suggested box
@@ -301,7 +308,7 @@ export default function ScanToVerifyPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [resolveSkuBarcode, resolveSkuWeight])
 
   const handleOrderSubmit = (e: React.FormEvent) => {
     e.preventDefault()
