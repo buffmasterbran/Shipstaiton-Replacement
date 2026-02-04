@@ -164,7 +164,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
           <div className="mb-4 pb-4 border-b border-gray-700">
             <h2 className="px-4 py-2 text-xs font-semibold text-yellow-500 uppercase tracking-wider flex items-center gap-1">
               <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                <path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 1.5.7 2.8 1.8 3.7L12 22l2.7-11.8c1.1-.9 1.8-2.2 1.8-3.7C16.5 4 14.5 2 12 2zm0 7a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
               </svg>
               Pinned
             </h2>
@@ -212,7 +212,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
                           title="Unpin"
                         >
                           <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                            <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                            <path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 1.5.7 2.8 1.8 3.7L12 22l2.7-11.8c1.1-.9 1.8-2.2 1.8-3.7C16.5 4 14.5 2 12 2zm0 7a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
                           </svg>
                         </button>
                       </div>
@@ -237,7 +237,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
                           title="Unpin"
                         >
                           <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                            <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                            <path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 1.5.7 2.8 1.8 3.7L12 22l2.7-11.8c1.1-.9 1.8-2.2 1.8-3.7C16.5 4 14.5 2 12 2zm0 7a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
                           </svg>
                         </button>
                       </div>
@@ -297,7 +297,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
                               title={isPinned ? 'Unpin' : 'Pin to top'}
                             >
                               <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                                <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                                <path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 1.5.7 2.8 1.8 3.7L12 22l2.7-11.8c1.1-.9 1.8-2.2 1.8-3.7C16.5 4 14.5 2 12 2zm0 7a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
                               </svg>
                             </button>
                           </div>
@@ -322,7 +322,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
                               title={isPinned ? 'Unpin' : 'Pin to top'}
                             >
                               <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                                <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                                <path d="M12 2C9.5 2 7.5 4 7.5 6.5c0 1.5.7 2.8 1.8 3.7L12 22l2.7-11.8c1.1-.9 1.8-2.2 1.8-3.7C16.5 4 14.5 2 12 2zm0 7a2.5 2.5 0 110-5 2.5 2.5 0 010 5z" />
                               </svg>
                             </button>
                           </div>

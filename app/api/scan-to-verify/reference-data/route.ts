@@ -114,11 +114,7 @@ export async function GET() {
         active: b.active,
       })),
       boxMap,
-      locations: locations.map(l => ({
-        id: l.id,
-        name: l.name,
-        isDefault: l.isDefault,
-      })),
+      locations,
       carrierServices,
       skuBarcodeMap,
       skuWeightMap,

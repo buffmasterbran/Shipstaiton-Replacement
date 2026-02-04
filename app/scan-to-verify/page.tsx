@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { isShippingInsurance, getSizeFromSku, getColorFromSku } from '@/lib/order-utils'
 import { formatWeight } from '@/lib/weight-utils'
+import { useReferenceData, resolveBarcode, resolveWeight } from '@/lib/use-reference-data'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,30 +29,6 @@ interface OrderData {
   rawPayload: any
   suggestedBox?: any
   preShoppedRate?: any
-}
-
-interface BoxConfig {
-  id: string
-  name: string
-  lengthInches: number
-  widthInches: number
-  heightInches: number
-  weightLbs: number
-  active: boolean
-}
-
-interface ShipLocation {
-  id: string
-  name: string
-  isDefault: boolean
-}
-
-interface CarrierService {
-  carrierId: string
-  carrierCode: string
-  carrierName: string
-  serviceCode: string
-  serviceName: string
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +74,9 @@ function playAllVerifiedSound() {
 // ---------------------------------------------------------------------------
 
 export default function ScanToVerifyPage() {
+  // Shared reference data — single API call, cached in memory
+  const ref = useReferenceData()
+
   const [orderInput, setOrderInput] = useState('')
   const [order, setOrder] = useState<OrderData | null>(null)
   const [items, setItems] = useState<VerifyItem[]>([])
@@ -109,71 +89,29 @@ export default function ScanToVerifyPage() {
   const [lastMatchedIndex, setLastMatchedIndex] = useState<number | null>(null)
 
   // Box/package state
-  const [boxes, setBoxes] = useState<BoxConfig[]>([])
   const [selectedBoxId, setSelectedBoxId] = useState<string>('')
   const [dimensions, setDimensions] = useState({ length: '', width: '', height: '' })
   const [weight, setWeight] = useState({ lb: '', oz: '' })
   const [productWeight, setProductWeight] = useState(0) // product-only weight in lbs (no box)
 
   // Ship From & Service state
-  const [locations, setLocations] = useState<ShipLocation[]>([])
   const [selectedLocationId, setSelectedLocationId] = useState<string>('')
-  const [carrierServices, setCarrierServices] = useState<CarrierService[]>([])
   const [selectedService, setSelectedService] = useState<string>('')
-
-  // Cached reference data for instant order resolution (no DB calls per scan)
-  const [refData, setRefData] = useState<{
-    skuBarcodeMap: Record<string, string>
-    skuWeightMap: Record<string, number>
-    skuPatterns: Array<{ pattern: string; weightLbs: number }>
-    boxMap: Record<string, BoxConfig>
-  } | null>(null)
 
   const orderInputRef = useRef<HTMLInputElement>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
 
-  // Load ALL reference data in a single call on mount
-  // This replaces 3 separate fetches (boxes, locations, services)
-  // and also pre-loads SKU barcodes/weights so order lookup needs zero extra queries
+  // Auto-select default location when reference data loads
   useEffect(() => {
-    const loadReferenceData = async () => {
-      try {
-        const res = await fetch('/api/scan-to-verify/reference-data')
-        if (!res.ok) throw new Error('Failed to load reference data')
-        const data = await res.json()
-
-        // Boxes
-        setBoxes(data.boxes || [])
-
-        // Locations — auto-select default
-        const locs: ShipLocation[] = data.locations || []
-        setLocations(locs)
-        const defaultLoc = locs.find((l: ShipLocation) => l.isDefault)
-        if (defaultLoc) setSelectedLocationId(defaultLoc.id)
-        else if (locs.length > 0) setSelectedLocationId(locs[0].id)
-
-        // Carrier services
-        setCarrierServices(data.carrierServices || [])
-
-        // Cache the SKU resolution data for instant order lookups
-        setRefData({
-          skuBarcodeMap: data.skuBarcodeMap || {},
-          skuWeightMap: data.skuWeightMap || {},
-          skuPatterns: data.skuPatterns || [],
-          boxMap: data.boxMap || {},
-        })
-      } catch (error) {
-        console.error('Failed to load reference data:', error)
-      }
+    if (ref.defaultLocationId && !selectedLocationId) {
+      setSelectedLocationId(ref.defaultLocationId)
     }
-
-    loadReferenceData()
-  }, [])
+  }, [ref.defaultLocationId])
 
   // Update dimensions and weight when selected box changes
   useEffect(() => {
     if (selectedBoxId) {
-      const box = boxes.find(b => b.id === selectedBoxId)
+      const box = ref.boxes.find(b => b.id === selectedBoxId)
       if (box) {
         setDimensions({
           length: String(box.lengthInches || ''),
@@ -188,7 +126,7 @@ export default function ScanToVerifyPage() {
         setWeight({ lb: String(lb), oz: String(oz) })
       }
     }
-  }, [selectedBoxId, boxes, productWeight])
+  }, [selectedBoxId, ref.boxes, productWeight])
 
   // Focus management
   useEffect(() => { orderInputRef.current?.focus() }, [])
@@ -212,29 +150,7 @@ export default function ScanToVerifyPage() {
     }
   }, [lastMatchedIndex])
 
-  // Resolve a SKU's weight using cached reference data
-  // Tries exact match first, then regex patterns (all in-memory, zero DB calls)
-  const resolveSkuWeight = useCallback((sku: string): number => {
-    if (!refData || !sku) return 0
-    // Exact match (original or uppercased)
-    const exactWeight = refData.skuWeightMap[sku] ?? refData.skuWeightMap[sku.toUpperCase()]
-    if (exactWeight !== undefined) return exactWeight
-    // Regex pattern fallback
-    for (const p of refData.skuPatterns) {
-      try {
-        if (new RegExp(p.pattern, 'i').test(sku)) return p.weightLbs
-      } catch { continue }
-    }
-    return 0
-  }, [refData])
-
-  // Resolve a SKU's barcode using cached reference data
-  const resolveSkuBarcode = useCallback((sku: string): string | null => {
-    if (!refData || !sku) return null
-    return refData.skuBarcodeMap[sku] || refData.skuBarcodeMap[sku.toUpperCase()] || null
-  }, [refData])
-
-  // Order lookup — single DB query, all resolution happens client-side
+  // Order lookup — single DB query, all resolution happens client-side using shared ref data
   const lookupOrder = useCallback(async (orderNumber: string) => {
     const trimmed = orderNumber.trim()
     if (!trimmed) return
@@ -271,13 +187,13 @@ export default function ScanToVerifyPage() {
         .filter((item: any) => !isShippingInsurance(item.sku || '', item.name || ''))
         .map((item: any) => ({
           sku: item.sku || 'UNKNOWN',
-          barcode: resolveSkuBarcode(item.sku || ''),
+          barcode: resolveBarcode(item.sku || '', ref.skuBarcodeMap),
           name: item.name || 'Unnamed Item',
           color: getColorFromSku(item.sku || '', item.name, item.color),
           size: getSizeFromSku(item.sku || ''),
           quantity: item.quantity || 1,
           scanned: 0,
-          weightLbs: resolveSkuWeight(item.sku || ''),
+          weightLbs: resolveWeight(item.sku || '', ref.skuWeightMap, ref.skuPatterns),
         }))
 
       if (verifyItems.length === 0) throw new Error('Order has no scannable items')
@@ -308,7 +224,7 @@ export default function ScanToVerifyPage() {
     } finally {
       setLoading(false)
     }
-  }, [resolveSkuBarcode, resolveSkuWeight])
+  }, [ref.skuBarcodeMap, ref.skuWeightMap, ref.skuPatterns])
 
   const handleOrderSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -693,7 +609,7 @@ export default function ScanToVerifyPage() {
                     onChange={(e) => setSelectedBoxId(e.target.value)}
                   >
                     <option value="">Select a box...</option>
-                    {boxes.map((box) => (
+                    {ref.boxes.map((box) => (
                       <option key={box.id} value={box.id}>
                         {box.name}
                       </option>
@@ -742,8 +658,8 @@ export default function ScanToVerifyPage() {
                     value={selectedLocationId}
                     onChange={(e) => setSelectedLocationId(e.target.value)}
                   >
-                    {locations.length === 0 && <option value="">Loading...</option>}
-                    {locations.map((loc) => (
+                    {ref.locations.length === 0 && <option value="">Loading...</option>}
+                    {ref.locations.map((loc) => (
                       <option key={loc.id} value={loc.id}>
                         {loc.name}
                       </option>
@@ -760,7 +676,7 @@ export default function ScanToVerifyPage() {
                     onChange={(e) => setSelectedService(e.target.value)}
                   >
                     <option value="">Select service...</option>
-                    {carrierServices.map((svc) => (
+                    {ref.carrierServices.map((svc) => (
                       <option key={`${svc.carrierCode}:${svc.serviceCode}`} value={`${svc.carrierCode}:${svc.serviceCode}`}>
                         {svc.carrierName} - {svc.serviceName}
                       </option>

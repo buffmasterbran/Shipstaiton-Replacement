@@ -7,6 +7,7 @@ import { formatWeight } from '@/lib/weight-utils'
 import BoxConfirmDialog from './BoxConfirmDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { getColorFromSku, getSizeFromSku } from '@/lib/order-utils'
+import { useReferenceData } from '@/lib/use-reference-data'
 
 interface OrderLog {
   id: string
@@ -57,36 +58,20 @@ interface ProcessedOrder {
 
 export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
+  const ref = useReferenceData()
+  const boxes = ref.boxes as Box[]
+  const loadingBoxes = !ref.loaded
+
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBatchDialogOpen, setIsBatchDialogOpen] = useState(false)
   const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [boxes, setBoxes] = useState<Box[]>([])
-  const [loadingBoxes, setLoadingBoxes] = useState(true)
 
   // Box confirm dialog state
   const [isBoxConfirmOpen, setIsBoxConfirmOpen] = useState(false)
   const [boxConfirmOrder, setBoxConfirmOrder] = useState<ProcessedOrder | null>(null)
-
-  // Fetch boxes from API
-  useEffect(() => {
-    async function fetchBoxes() {
-      try {
-        const res = await fetch('/api/box-config')
-        if (res.ok) {
-          const data = await res.json()
-          setBoxes(data.boxes || [])
-        }
-      } catch (e) {
-        console.error('Failed to fetch boxes:', e)
-      } finally {
-        setLoadingBoxes(false)
-      }
-    }
-    fetchBoxes()
-  }, [])
 
   // Process orders to extract items
   const processedOrders = useMemo(() => {

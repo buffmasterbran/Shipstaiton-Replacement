@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Dialog } from '@headlessui/react'
+import { useReferenceData } from '@/lib/use-reference-data'
 
 interface Rate {
   rateId: string
@@ -25,11 +26,11 @@ interface RateTestDialogProps {
 }
 
 export default function RateTestDialog({ isOpen, onClose, order }: RateTestDialogProps) {
+  const ref = useReferenceData()
   const [rates, setRates] = useState<Rate[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
-  const [defaultLocation, setDefaultLocation] = useState<any | null>(null)
   const [selectedServiceCount, setSelectedServiceCount] = useState<number>(0)
   const [filteredByServices, setFilteredByServices] = useState<boolean>(false)
 
@@ -39,34 +40,17 @@ export default function RateTestDialog({ isOpen, onClose, order }: RateTestDialo
       setError(null)
       setFetched(false)
 
-      // Fetch default location if not already loaded
-      if (!defaultLocation) {
-        const locationsResponse = await fetch('/api/locations')
-        const locationsData = await locationsResponse.json()
-        const defaultLoc = locationsData.locations?.find((l: any) => l.isDefault) || locationsData.locations?.[0]
+      // Use cached location from shared reference data
+      const loc = ref.locations.find(l => l.isDefault) || ref.locations[0]
 
-        if (!defaultLoc) {
-          throw new Error('No ship-from location configured. Please add a location in Settings > Locations.')
-        }
-
-        setDefaultLocation(defaultLoc)
+      if (!loc) {
+        throw new Error('No ship-from location configured. Please add a location in Settings > Locations.')
       }
 
       // Extract order data
       const shipTo = order?.shipTo || {}
       const weight = order?.weight || { value: 1, unit: 'pound' }
       const dimensions = order?.dimensions || { length: 12, width: 9, height: 4, unit: 'inch' }
-
-      // Use the default location for ship-from
-      const loc = defaultLocation || await (async () => {
-        const resp = await fetch('/api/locations')
-        const data = await resp.json()
-        return data.locations?.find((l: any) => l.isDefault) || data.locations?.[0]
-      })()
-
-      if (!loc) {
-        throw new Error('No ship-from location configured')
-      }
 
       // Build request
       const requestBody = {

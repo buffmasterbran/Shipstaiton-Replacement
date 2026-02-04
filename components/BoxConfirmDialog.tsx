@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Fragment } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
+import { useReferenceData } from '@/lib/use-reference-data'
 
 interface Product {
   id: string
@@ -52,8 +53,10 @@ export default function BoxConfirmDialog({
   currentConfidence,
   onFeedbackSaved,
 }: BoxConfirmDialogProps) {
+  const ref = useReferenceData()
+  const boxes = ref.boxes as unknown as Box[]
+
   const [products, setProducts] = useState<Product[]>([])
-  const [boxes, setBoxes] = useState<Box[]>([])
   const [loading, setLoading] = useState(true)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -61,10 +64,10 @@ export default function BoxConfirmDialog({
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [mappedItems, setMappedItems] = useState<{ productId: string; productName: string; quantity: number; volume: number }[]>([])
 
-  // Fetch products and boxes when dialog opens
+  // Fetch products when dialog opens (boxes come from shared reference data)
   useEffect(() => {
     if (isOpen) {
-      fetchData()
+      fetchProducts()
     }
   }, [isOpen])
 
@@ -75,21 +78,13 @@ export default function BoxConfirmDialog({
     }
   }, [products, items])
 
-  const fetchData = async () => {
+  const fetchProducts = async () => {
     setLoading(true)
     setError(null)
     try {
-      const [boxRes, prodRes] = await Promise.all([
-        fetch('/api/box-config'),
-        fetch('/api/products'),
-      ])
-      const boxData = await boxRes.json()
+      const prodRes = await fetch('/api/products')
       const prodData = await prodRes.json()
-
-      if (!boxRes.ok) throw new Error(boxData.error || 'Failed to fetch box config')
       if (!prodRes.ok) throw new Error(prodData.error || 'Failed to fetch products')
-
-      setBoxes(boxData.boxes || [])
       setProducts(prodData.sizes || prodData.products || [])
     } catch (e) {
       setError((e as Error).message)

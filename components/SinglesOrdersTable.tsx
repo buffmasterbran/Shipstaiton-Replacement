@@ -7,6 +7,7 @@ import BatchPackageInfoDialog from './BatchPackageInfoDialog'
 import { getColorFromSku, isShippingInsurance } from '@/lib/order-utils'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders } from '@/context/OrdersContext'
+import { useReferenceData, type CarrierService } from '@/lib/use-reference-data'
 
 interface OrderLog {
   id: string
@@ -75,17 +76,11 @@ interface LabelInfo {
   }
 }
 
-interface CarrierService {
-  carrierId: string
-  carrierCode: string
-  carrierName: string
-  serviceCode: string
-  serviceName: string
-}
-
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const { updateOrdersInPlace } = useOrders()
+  const ref = useReferenceData()
+
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -100,35 +95,13 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const [fetchRatesMessage, setFetchRatesMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [fetchProgress, setFetchProgress] = useState<{ current: number; total: number } | null>(null)
   const [abortController, setAbortController] = useState<AbortController | null>(null)
-  const [availableServices, setAvailableServices] = useState<CarrierService[]>([])
   const [selectedService, setSelectedService] = useState<string>('')
   const [defaultServiceKey, setDefaultServiceKey] = useState<string>('')
-  const [boxes, setBoxes] = useState<Array<{
-    id: string
-    name: string
-    lengthInches: number
-    widthInches: number
-    heightInches: number
-    weightLbs: number
-  }>>([])
 
-  // Fetch boxes and available services from API
+  // Set default service from settings (singles_carrier) — fetch only the settings-specific part
   useEffect(() => {
-    const fetchBoxes = async () => {
+    const fetchDefaultService = async () => {
       try {
-        const res = await fetch('/api/box-config')
-        if (res.ok) {
-          const data = await res.json()
-          setBoxes(data.boxes || [])
-        }
-      } catch (error) {
-        console.error('Failed to fetch boxes:', error)
-      }
-    }
-    
-    const fetchServices = async () => {
-      try {
-        // First get the default singles carrier from settings
         const settingsRes = await fetch('/api/settings')
         if (settingsRes.ok) {
           const settingsData = await settingsRes.json()
@@ -139,32 +112,11 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             setSelectedService(key)
           }
         }
-        
-        // Then get all available services
-        const res = await fetch('/api/shipengine/carriers?includeServices=true')
-        if (res.ok) {
-          const data = await res.json()
-          const services: CarrierService[] = []
-          for (const carrier of data.carriers || []) {
-            for (const service of carrier.services || []) {
-              services.push({
-                carrierId: carrier.carrier_id,
-                carrierCode: carrier.carrier_code,
-                carrierName: carrier.friendly_name,
-                serviceCode: service.service_code,
-                serviceName: service.name,
-              })
-            }
-          }
-          setAvailableServices(services)
-        }
       } catch (error) {
-        console.error('Failed to fetch services:', error)
+        console.error('Failed to fetch default service:', error)
       }
     }
-    
-    fetchBoxes()
-    fetchServices()
+    fetchDefaultService()
   }, [])
 
   // Process orders to extract main item, size, and color
@@ -1578,7 +1530,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                       className="px-2 py-1.5 text-sm border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white max-w-[200px]"
                       disabled={selectedSize === 'all' || filteredOrders.length === 0}
                     >
-                      {availableServices.map((service) => {
+                      {ref.carrierServices.map((service) => {
                         const key = `${service.carrierId}:${service.serviceCode}`
                         const isDefault = key === defaultServiceKey
                         return (
@@ -1590,7 +1542,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                     </select>
                     <button
                       onClick={() => {
-                        const service = availableServices.find(
+                        const service = ref.carrierServices.find(
                           s => `${s.carrierId}:${s.serviceCode}` === selectedService
                         )
                         handleFetchMissingRates('set-service', { serviceOverride: service })
