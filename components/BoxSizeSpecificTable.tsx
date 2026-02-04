@@ -8,7 +8,6 @@ import BoxConfirmDialog from './BoxConfirmDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { getColorFromSku, getSizeFromSku } from '@/lib/order-utils'
 import { useReferenceData } from '@/lib/use-reference-data'
-import { useOrders } from '@/context/OrdersContext'
 
 interface OrderLog {
   id: string
@@ -59,7 +58,6 @@ interface ProcessedOrder {
 
 export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
-  const { refreshOrders } = useOrders()
   const ref = useReferenceData()
   const boxes = ref.boxes as Box[]
   const loadingBoxes = !ref.loaded
@@ -70,42 +68,11 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   const [isBatchDialogOpen, setIsBatchDialogOpen] = useState(false)
   const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [holdingIds, setHoldingIds] = useState<Set<string>>(new Set())
   const [confidenceFilter, setConfidenceFilter] = useState<'all' | 'confirmed' | 'calculated'>('all')
 
   // Box confirm dialog state
   const [isBoxConfirmOpen, setIsBoxConfirmOpen] = useState(false)
   const [boxConfirmOrder, setBoxConfirmOrder] = useState<ProcessedOrder | null>(null)
-
-  // Handle putting an order on hold
-  const handleHold = async (orderId: string, e: React.MouseEvent) => {
-    e.stopPropagation() // Prevent row click
-    setHoldingIds(prev => new Set(prev).add(orderId))
-    
-    try {
-      const res = await fetch('/api/orders/hold', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
-      })
-      
-      if (res.ok) {
-        await refreshOrders()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to put order on hold')
-      }
-    } catch (err) {
-      console.error('Error putting order on hold:', err)
-      alert('Failed to put order on hold')
-    } finally {
-      setHoldingIds(prev => {
-        const next = new Set(prev)
-        next.delete(orderId)
-        return next
-      })
-    }
-  }
 
   // Process orders to extract items
   const processedOrders = useMemo(() => {
@@ -600,9 +567,6 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ORDERED DATE
                 </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ACTIONS
-                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -700,16 +664,6 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {orderDate}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right">
-                      <button
-                        onClick={(e) => handleHold(order.log.id, e)}
-                        disabled={holdingIds.has(order.log.id)}
-                        className="px-2 py-1 text-xs font-medium text-yellow-700 bg-yellow-100 rounded hover:bg-yellow-200 transition-colors disabled:opacity-50"
-                        title="Put order on hold"
-                      >
-                        {holdingIds.has(order.log.id) ? 'Holding...' : 'Hold'}
-                      </button>
                     </td>
                   </tr>
                 )

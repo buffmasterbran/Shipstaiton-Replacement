@@ -78,7 +78,7 @@ interface LabelInfo {
 
 export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
-  const { updateOrdersInPlace, refreshOrders } = useOrders()
+  const { updateOrdersInPlace } = useOrders()
   const ref = useReferenceData()
 
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
@@ -97,36 +97,6 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const [abortController, setAbortController] = useState<AbortController | null>(null)
   const [selectedService, setSelectedService] = useState<string>('')
   const [defaultServiceKey, setDefaultServiceKey] = useState<string>('')
-  const [holdingIds, setHoldingIds] = useState<Set<string>>(new Set())
-
-  // Handle putting an order on hold
-  const handleHold = async (orderId: string) => {
-    setHoldingIds(prev => new Set(prev).add(orderId))
-    
-    try {
-      const res = await fetch('/api/orders/hold', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
-      })
-      
-      if (res.ok) {
-        await refreshOrders()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to put order on hold')
-      }
-    } catch (err) {
-      console.error('Error putting order on hold:', err)
-      alert('Failed to put order on hold')
-    } finally {
-      setHoldingIds(prev => {
-        const next = new Set(prev)
-        next.delete(orderId)
-        return next
-      })
-    }
-  }
 
   // Set default service from settings (singles_carrier) — fetch only the settings-specific part
   useEffect(() => {
@@ -1688,15 +1658,12 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   View Order
                 </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={11} className="px-6 py-8 text-center text-gray-500">
                     No orders found matching your filters
                   </td>
                 </tr>
@@ -1808,19 +1775,6 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                             d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
                           />
                         </svg>
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleHold(processedOrder.log.id)
-                        }}
-                        disabled={holdingIds.has(processedOrder.log.id)}
-                        className="px-2 py-1 text-xs font-medium text-yellow-700 bg-yellow-100 rounded hover:bg-yellow-200 transition-colors disabled:opacity-50"
-                        title="Put order on hold"
-                      >
-                        {holdingIds.has(processedOrder.log.id) ? 'Holding...' : 'Hold'}
                       </button>
                     </td>
                   </tr>
