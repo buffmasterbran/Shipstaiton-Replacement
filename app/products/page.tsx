@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { formatWeight, lbsToLbOz, lbOzToLbs } from '@/lib/weight-utils'
 
 interface ProductSize {
   id: string
@@ -76,7 +77,8 @@ export default function ProductsPage() {
     length: '',
     width: '',
     height: '',
-    weight: '',
+    weightLb: '',
+    weightOz: '',
     category: 'tumbler',
     active: true,
     singleBoxId: '',  // dedicated box for single-item orders
@@ -157,7 +159,8 @@ export default function ProductsPage() {
       length: '',
       width: '',
       height: '',
-      weight: '',
+      weightLb: '',
+      weightOz: '',
       category: 'tumbler',
       active: true,
       singleBoxId: '',
@@ -168,13 +171,15 @@ export default function ProductsPage() {
 
   const openEditSizeForm = (size: ProductSize) => {
     const patterns = getPatternsForSize(size.id)
+    const { lb, oz } = size.weightLbs ? lbsToLbOz(size.weightLbs) : { lb: 0, oz: 0 }
     setSizeForm({
       name: size.name,
       patterns: patterns.join(', '),
       length: String(size.lengthInches),
       width: String(size.widthInches),
       height: String(size.heightInches),
-      weight: String(size.weightLbs),
+      weightLb: lb ? String(lb) : '',
+      weightOz: oz ? String(oz) : '',
       category: size.category,
       active: size.active,
       singleBoxId: size.singleBoxId || '',
@@ -210,7 +215,7 @@ export default function ProductsPage() {
         lengthInches: parseFloat(sizeForm.length) || 0,
         widthInches: parseFloat(sizeForm.width) || 0,
         heightInches: parseFloat(sizeForm.height) || 0,
-        weightLbs: parseFloat(sizeForm.weight) || 0,
+        weightLbs: lbOzToLbs(parseFloat(sizeForm.weightLb) || 0, parseFloat(sizeForm.weightOz) || 0),
         category: sizeForm.category,
         active: sizeForm.active,
         singleBoxId: sizeForm.singleBoxId || null,
@@ -567,15 +572,27 @@ export default function ProductsPage() {
               <p className="text-xs text-gray-500 mt-1">Auto-select box for single-item orders</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Weight (lbs)</label>
-              <input
-                type="number"
-                step="0.1"
-                value={sizeForm.weight}
-                onChange={(e) => setSizeForm({ ...sizeForm, weight: e.target.value })}
-                className="w-full border rounded px-3 py-2 text-sm"
-                placeholder="0.9"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Weight</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  step="1"
+                  value={sizeForm.weightLb}
+                  onChange={(e) => setSizeForm({ ...sizeForm, weightLb: e.target.value })}
+                  className="w-16 border rounded px-3 py-2 text-sm"
+                  placeholder="0"
+                />
+                <span className="text-sm text-gray-500">lb</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={sizeForm.weightOz}
+                  onChange={(e) => setSizeForm({ ...sizeForm, weightOz: e.target.value })}
+                  className="w-16 border rounded px-3 py-2 text-sm"
+                  placeholder="0"
+                />
+                <span className="text-sm text-gray-500">oz</span>
+              </div>
             </div>
           </div>
 
@@ -682,7 +699,7 @@ export default function ProductsPage() {
                         <span className="mx-2">|</span>
                         {(size.volume ?? (size.lengthInches * size.widthInches * size.heightInches)).toFixed(1)} in³
                         <span className="mx-2">|</span>
-                        {size.weightLbs} lb
+                        {formatWeight(size.weightLbs)}
                         {getPatternsForSize(size.id).length > 0 && (
                           <>
                             <span className="mx-2">|</span>

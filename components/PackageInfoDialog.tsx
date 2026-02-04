@@ -3,6 +3,7 @@
 import { Fragment, useState, useEffect } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+import { lbsToLbOz, lbOzToLbs } from '@/lib/weight-utils'
 
 interface SuggestedBox {
   boxId?: string
@@ -111,6 +112,10 @@ export default function PackageInfoDialog({
     packaging: '',
   })
 
+  // Internal lb+oz state for weight input
+  const [weightLb, setWeightLb] = useState('')
+  const [weightOz, setWeightOz] = useState('')
+
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
   const [selectedPreset, setSelectedPreset] = useState<string>('')
   const [autoPopulatedBox, setAutoPopulatedBox] = useState<string | null>(null)
@@ -119,9 +124,17 @@ export default function PackageInfoDialog({
   useEffect(() => {
     if (isOpen && suggestedBox) {
       const boxName = suggestedBox.boxName || 'Suggested Box'
+      if (suggestedBox.weightLbs) {
+        const { lb, oz } = lbsToLbOz(suggestedBox.weightLbs)
+        setWeightLb(lb ? String(lb) : '')
+        setWeightOz(oz ? String(oz) : '')
+        setFormData(prev => ({
+          ...prev,
+          weight: String(suggestedBox.weightLbs),
+        }))
+      }
       setFormData(prev => ({
         ...prev,
-        weight: suggestedBox.weightLbs ? String(suggestedBox.weightLbs) : prev.weight,
         dimensions: {
           length: suggestedBox.lengthInches ? String(suggestedBox.lengthInches) : prev.dimensions.length,
           width: suggestedBox.widthInches ? String(suggestedBox.widthInches) : prev.dimensions.width,
@@ -159,6 +172,11 @@ export default function PackageInfoDialog({
       const preset = availablePresets.find((p) => p.name === presetName)
       if (preset) {
         setFormData(preset.packageInfo)
+        // Sync lb+oz from preset weight
+        const lbs = parseFloat(preset.packageInfo.weight) || 0
+        const { lb, oz } = lbsToLbOz(lbs)
+        setWeightLb(lb ? String(lb) : '')
+        setWeightOz(oz ? String(oz) : '')
         setErrors({}) // Clear any errors since preset fills all required fields
       }
     }
@@ -202,7 +220,7 @@ export default function PackageInfoDialog({
   const validateForm = (): boolean => {
     const newErrors: { [key: string]: string } = {}
 
-    if (!formData.weight) newErrors.weight = 'Weight is required'
+    if (!weightLb && !weightOz) newErrors.weight = 'Weight is required'
     if (!formData.dimensions.length) newErrors['dimensions.length'] = 'Length is required'
     if (!formData.dimensions.width) newErrors['dimensions.width'] = 'Width is required'
     if (!formData.dimensions.height) newErrors['dimensions.height'] = 'Height is required'
@@ -217,7 +235,7 @@ export default function PackageInfoDialog({
 
   const isFormValid = (): boolean => {
     return !!(
-      formData.weight &&
+      (weightLb || weightOz) &&
       formData.dimensions.length &&
       formData.dimensions.width &&
       formData.dimensions.height &&
@@ -229,7 +247,8 @@ export default function PackageInfoDialog({
 
   const handleSave = () => {
     if (validateForm()) {
-      onSave(formData)
+      const totalLbs = lbOzToLbs(parseFloat(weightLb) || 0, parseFloat(weightOz) || 0)
+      onSave({ ...formData, weight: String(totalLbs) })
       handleClose()
     }
   }
@@ -246,6 +265,8 @@ export default function PackageInfoDialog({
       service: '',
       packaging: '',
     })
+    setWeightLb('')
+    setWeightOz('')
     setErrors({})
     setAutoPopulatedBox(null)
     setSelectedPreset('')
@@ -328,18 +349,42 @@ export default function PackageInfoDialog({
                     {/* Weight */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Weight (lbs) <span className="text-red-500">*</span>
+                        Weight <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={formData.weight}
-                        onChange={(e) => handleChange('weight', e.target.value)}
-                        className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                          errors.weight ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                        placeholder="0.0"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="1"
+                          value={weightLb}
+                          onChange={(e) => {
+                            setWeightLb(e.target.value)
+                            if (selectedPreset) setSelectedPreset('')
+                            if (autoPopulatedBox) setAutoPopulatedBox(null)
+                            if (errors.weight) setErrors(prev => { const n = { ...prev }; delete n.weight; return n })
+                          }}
+                          className={`w-20 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                            errors.weight ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="0"
+                        />
+                        <span className="text-sm text-gray-500">lb</span>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={weightOz}
+                          onChange={(e) => {
+                            setWeightOz(e.target.value)
+                            if (selectedPreset) setSelectedPreset('')
+                            if (autoPopulatedBox) setAutoPopulatedBox(null)
+                            if (errors.weight) setErrors(prev => { const n = { ...prev }; delete n.weight; return n })
+                          }}
+                          className={`w-20 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                            errors.weight ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="0"
+                        />
+                        <span className="text-sm text-gray-500">oz</span>
+                      </div>
                       {errors.weight && (
                         <p className="mt-1 text-sm text-red-500">{errors.weight}</p>
                       )}

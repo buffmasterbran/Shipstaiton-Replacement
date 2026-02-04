@@ -3,6 +3,7 @@
 import { Fragment, useState } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
+import { formatWeight } from '@/lib/weight-utils'
 import PackageInfoDialog, { PackageInfo } from './PackageInfoDialog'
 
 interface ProcessedOrder {
@@ -239,7 +240,7 @@ export default function BatchPackageInfoDialog({
                                     <span className="font-medium">Service:</span> {packageInfo.service}
                                   </div>
                                   <div>
-                                    <span className="font-medium">Weight:</span> {packageInfo.weight} lbs
+                                    <span className="font-medium">Weight:</span> {formatWeight(parseFloat(packageInfo.weight) || 0)}
                                   </div>
                                   <div>
                                     <span className="font-medium">Dimensions:</span> {packageInfo.dimensions.length}"×{packageInfo.dimensions.width}"×{packageInfo.dimensions.height}"

@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import BoxTestDialog from '@/components/BoxTestDialog'
+import { formatWeight, lbsToLbOz, lbOzToLbs } from '@/lib/weight-utils'
 
 interface Box {
   id: string
@@ -110,7 +111,7 @@ function SortableBoxRow({
       <td className="px-4 py-3 text-gray-600">
         {box.lengthInches}" × {box.widthInches}" × {box.heightInches}"
       </td>
-      <td className="px-4 py-3 text-gray-600">{box.weightLbs ? `${box.weightLbs} lbs` : '-'}</td>
+      <td className="px-4 py-3 text-gray-600">{box.weightLbs ? formatWeight(box.weightLbs) : '-'}</td>
       <td className="px-4 py-3 text-gray-600">{box.volume.toFixed(0)} in³</td>
       <td className="px-4 py-3 text-gray-600">{(box.volume * packingEfficiency).toFixed(0)} in³</td>
       <td className="px-4 py-3 text-gray-500 text-xs">{box.priority}</td>
@@ -156,7 +157,8 @@ export default function BoxConfigPage() {
     length: '',
     width: '',
     height: '',
-    weight: '',
+    weightLb: '',
+    weightOz: '',
     active: true,
     inStock: true,
     singleCupOnly: false,
@@ -214,7 +216,8 @@ export default function BoxConfigPage() {
       length: '',
       width: '',
       height: '',
-      weight: '',
+      weightLb: '',
+      weightOz: '',
       active: true,
       inStock: true,
       singleCupOnly: false,
@@ -224,12 +227,14 @@ export default function BoxConfigPage() {
   }
 
   const openEditBoxForm = (box: Box) => {
+    const { lb, oz } = box.weightLbs ? lbsToLbOz(box.weightLbs) : { lb: 0, oz: 0 }
     setBoxForm({
       name: box.name,
       length: String(box.lengthInches),
       width: String(box.widthInches),
       height: String(box.heightInches),
-      weight: box.weightLbs ? String(box.weightLbs) : '',
+      weightLb: lb ? String(lb) : '',
+      weightOz: oz ? String(oz) : '',
       active: box.active,
       inStock: box.inStock,
       singleCupOnly: box.singleCupOnly ?? false,
@@ -253,7 +258,7 @@ export default function BoxConfigPage() {
           lengthInches: parseFloat(boxForm.length) || 0,
           widthInches: parseFloat(boxForm.width) || 0,
           heightInches: parseFloat(boxForm.height) || 0,
-          weightLbs: parseFloat(boxForm.weight) || 0,
+          weightLbs: lbOzToLbs(parseFloat(boxForm.weightLb) || 0, parseFloat(boxForm.weightOz) || 0),
           // Priority is now managed by drag-and-drop; new boxes get added at the end
           active: boxForm.active,
           inStock: boxForm.inStock,
@@ -493,15 +498,27 @@ export default function BoxConfigPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Weight (lbs)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={boxForm.weight}
-                  onChange={(e) => setBoxForm({ ...boxForm, weight: e.target.value })}
-                  className="w-full border rounded px-3 py-2 text-sm"
-                  placeholder="0.0"
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Weight</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="1"
+                    value={boxForm.weightLb}
+                    onChange={(e) => setBoxForm({ ...boxForm, weightLb: e.target.value })}
+                    className="w-16 border rounded px-3 py-2 text-sm"
+                    placeholder="0"
+                  />
+                  <span className="text-sm text-gray-500">lb</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={boxForm.weightOz}
+                    onChange={(e) => setBoxForm({ ...boxForm, weightOz: e.target.value })}
+                    className="w-16 border rounded px-3 py-2 text-sm"
+                    placeholder="0"
+                  />
+                  <span className="text-sm text-gray-500">oz</span>
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">

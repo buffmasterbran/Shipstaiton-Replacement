@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
+import { formatWeight } from '@/lib/weight-utils'
 import BoxConfirmDialog from './BoxConfirmDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { getColorFromSku, getSizeFromSku } from '@/lib/order-utils'
@@ -374,7 +375,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
     <div class="package-info">
       <strong>Package Information:</strong><br>
-      Weight: ${packageInfo.weight} lbs<br>
+      Weight: ${formatWeight(parseFloat(packageInfo.weight) || 0)}<br>
       Dimensions: ${packageInfo.dimensions.length}" × ${packageInfo.dimensions.width}" × ${packageInfo.dimensions.height}"<br>
       <strong>Shipping Service:</strong> Rate Shopper
     </div>

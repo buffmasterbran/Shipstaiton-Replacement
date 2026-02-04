@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { isShippingInsurance, getSizeFromSku, getColorFromSku } from '@/lib/order-utils'
+import { formatWeight } from '@/lib/weight-utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -15,6 +16,7 @@ interface VerifyItem {
   size: string
   quantity: number
   scanned: number
+  weightLbs: number
 }
 
 type ScanStatus = 'idle' | 'success' | 'error'
@@ -30,12 +32,26 @@ interface OrderData {
 
 interface BoxConfig {
   id: string
-  boxName: string
+  name: string
   lengthInches: number
   widthInches: number
   heightInches: number
   weightLbs: number
-  isActive: boolean
+  active: boolean
+}
+
+interface ShipLocation {
+  id: string
+  name: string
+  isDefault: boolean
+}
+
+interface CarrierService {
+  carrierId: string
+  carrierCode: string
+  carrierName: string
+  serviceCode: string
+  serviceName: string
 }
 
 // ---------------------------------------------------------------------------
@@ -97,27 +113,78 @@ export default function ScanToVerifyPage() {
   const [selectedBoxId, setSelectedBoxId] = useState<string>('')
   const [dimensions, setDimensions] = useState({ length: '', width: '', height: '' })
   const [weight, setWeight] = useState({ lb: '', oz: '' })
+  const [productWeight, setProductWeight] = useState(0) // product-only weight in lbs (no box)
+
+  // Ship From & Service state
+  const [locations, setLocations] = useState<ShipLocation[]>([])
+  const [selectedLocationId, setSelectedLocationId] = useState<string>('')
+  const [carrierServices, setCarrierServices] = useState<CarrierService[]>([])
+  const [selectedService, setSelectedService] = useState<string>('')
 
   const orderInputRef = useRef<HTMLInputElement>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch boxes on mount
+  // Fetch boxes, locations, and carrier services on mount
   useEffect(() => {
     const fetchBoxes = async () => {
       try {
         const res = await fetch('/api/box-config')
         if (res.ok) {
           const data = await res.json()
-          setBoxes(data.boxes?.filter((b: BoxConfig) => b.isActive) || [])
+          setBoxes(data.boxes?.filter((b: BoxConfig) => b.active) || [])
         }
       } catch (error) {
         console.error('Failed to fetch boxes:', error)
       }
     }
+
+    const fetchLocations = async () => {
+      try {
+        const res = await fetch('/api/locations')
+        if (res.ok) {
+          const data = await res.json()
+          const locs: ShipLocation[] = data.locations || []
+          setLocations(locs)
+          // Default to the default location
+          const defaultLoc = locs.find(l => l.isDefault)
+          if (defaultLoc) setSelectedLocationId(defaultLoc.id)
+          else if (locs.length > 0) setSelectedLocationId(locs[0].id)
+        }
+      } catch (error) {
+        console.error('Failed to fetch locations:', error)
+      }
+    }
+
+    const fetchServices = async () => {
+      try {
+        const res = await fetch('/api/shipengine/carriers?includeServices=true')
+        if (res.ok) {
+          const data = await res.json()
+          const services: CarrierService[] = []
+          for (const carrier of data.carriers || []) {
+            for (const service of carrier.services || []) {
+              services.push({
+                carrierId: carrier.carrier_id,
+                carrierCode: carrier.carrier_code,
+                carrierName: carrier.friendly_name,
+                serviceCode: service.service_code,
+                serviceName: service.name,
+              })
+            }
+          }
+          setCarrierServices(services)
+        }
+      } catch (error) {
+        console.error('Failed to fetch carrier services:', error)
+      }
+    }
+
     fetchBoxes()
+    fetchLocations()
+    fetchServices()
   }, [])
 
-  // Update dimensions when selected box changes
+  // Update dimensions and weight when selected box changes
   useEffect(() => {
     if (selectedBoxId) {
       const box = boxes.find(b => b.id === selectedBoxId)
@@ -127,9 +194,15 @@ export default function ScanToVerifyPage() {
           width: String(box.widthInches || ''),
           height: String(box.heightInches || ''),
         })
+        // Recalculate weight: product weight + this box's weight
+        const totalLbs = productWeight + (box.weightLbs || 0)
+        const totalOz = totalLbs * 16
+        const lb = Math.floor(totalOz / 16)
+        const oz = Math.round((totalOz % 16) * 10) / 10
+        setWeight({ lb: String(lb), oz: String(oz) })
       }
     }
-  }, [selectedBoxId, boxes])
+  }, [selectedBoxId, boxes, productWeight])
 
   // Focus management
   useEffect(() => { orderInputRef.current?.focus() }, [])
@@ -169,6 +242,7 @@ export default function ScanToVerifyPage() {
     setSelectedBoxId('')
     setDimensions({ length: '', width: '', height: '' })
     setWeight({ lb: '', oz: '' })
+    setProductWeight(0)
 
     try {
       const res = await fetch(`/api/orders/lookup?orderNumber=${encodeURIComponent(trimmed)}`)
@@ -180,6 +254,7 @@ export default function ScanToVerifyPage() {
       const data = await res.json()
       const orderData = data.order as OrderData
       const skuBarcodeMap: Record<string, string> = data.skuBarcodeMap || {}
+      const skuWeightMap: Record<string, number> = data.skuWeightMap || {}
 
       const payload = orderData.rawPayload
       const orderObj = Array.isArray(payload) ? payload[0] : payload
@@ -195,6 +270,7 @@ export default function ScanToVerifyPage() {
           size: getSizeFromSku(item.sku || ''),
           quantity: item.quantity || 1,
           scanned: 0,
+          weightLbs: skuWeightMap[item.sku] || 0,
         }))
 
       if (verifyItems.length === 0) throw new Error('Order has no scannable items')
@@ -202,19 +278,22 @@ export default function ScanToVerifyPage() {
       setOrder(orderData)
       setItems(verifyItems)
 
-      // Set default box from order's suggested box
-      if (orderData.suggestedBox?.id) {
-        setSelectedBoxId(orderData.suggestedBox.id)
-        // Dimensions will auto-populate via useEffect
-      }
+      // Store product-only weight for recalculation when box changes
+      const prodWeight = data.productWeightLbs || 0
+      setProductWeight(prodWeight)
 
-      // Set weight from calculated weight (convert lbs to lb + oz)
-      const calculatedWeight = data.calculatedWeight || 0
-      if (calculatedWeight > 0) {
-        const totalOz = calculatedWeight * 16
-        const lb = Math.floor(totalOz / 16)
-        const oz = Math.round((totalOz % 16) * 10) / 10 // Round to 1 decimal
-        setWeight({ lb: String(lb), oz: String(oz) })
+      // Set default box from order's suggested box
+      if (orderData.suggestedBox?.boxId) {
+        setSelectedBoxId(orderData.suggestedBox.boxId)
+        // Dimensions and weight will auto-populate via useEffect
+      } else {
+        // No suggested box — just show product weight
+        if (prodWeight > 0) {
+          const totalOz = prodWeight * 16
+          const lb = Math.floor(totalOz / 16)
+          const oz = Math.round((totalOz % 16) * 10) / 10
+          setWeight({ lb: String(lb), oz: String(oz) })
+        }
       }
     } catch (err: any) {
       setLookupError(err.message || 'Failed to look up order')
@@ -488,6 +567,12 @@ export default function ScanToVerifyPage() {
                                     <span className="font-mono">UPC:</span> {item.barcode}
                                   </div>
                                 )}
+                                <div className="text-sm text-gray-400">
+                                  {item.weightLbs > 0 ? formatWeight(item.weightLbs) : 'No weight'}
+                                  {item.quantity > 1 && item.weightLbs > 0 && (
+                                    <span className="ml-1">({formatWeight(item.weightLbs * item.quantity)} total)</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -603,7 +688,7 @@ export default function ScanToVerifyPage() {
                     <option value="">Select a box...</option>
                     {boxes.map((box) => (
                       <option key={box.id} value={box.id}>
-                        {box.boxName}
+                        {box.name}
                       </option>
                     ))}
                   </select>
@@ -645,28 +730,35 @@ export default function ScanToVerifyPage() {
                 {/* Ship From */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">Ship From</label>
-                  <select className="w-full px-2 py-1 text-sm border border-gray-300 rounded">
-                    <option>work</option>
+                  <select
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    value={selectedLocationId}
+                    onChange={(e) => setSelectedLocationId(e.target.value)}
+                  >
+                    {locations.length === 0 && <option value="">Loading...</option>}
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 {/* Service */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">Service</label>
-                  <div className="flex items-center gap-1">
-                    <select className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded">
-                      <option>USPS First Class Mail</option>
-                      <option>USPS Priority Mail</option>
-                      <option>UPS Ground Saver</option>
-                      <option>UPS Ground</option>
-                    </select>
-                    <button className="p-1 text-gray-400 hover:text-gray-600">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                    </button>
-                  </div>
+                  <select
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    value={selectedService}
+                    onChange={(e) => setSelectedService(e.target.value)}
+                  >
+                    <option value="">Select service...</option>
+                    {carrierServices.map((svc) => (
+                      <option key={`${svc.carrierCode}:${svc.serviceCode}`} value={`${svc.carrierCode}:${svc.serviceCode}`}>
+                        {svc.carrierName} - {svc.serviceName}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Confirmation */}

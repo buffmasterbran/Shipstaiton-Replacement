@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { isShippingInsurance } from '@/lib/order-utils'
+import { matchSkuToSize } from '@/lib/products'
 
 /**
  * GET /api/orders/lookup?orderNumber=12345
@@ -33,33 +34,32 @@ export async function GET(request: NextRequest) {
       .map((item: any) => item.sku)
       .filter(Boolean)
 
-    // Fetch SKU records with product size (for weight) and barcode
+    // Fetch SKU records for barcodes
     let skuBarcodeMap: Record<string, string> = {}
-    let skuWeightMap: Record<string, number> = {}
-    
+
     if (skusInOrder.length > 0) {
       const skuRecords = await prisma.productSku.findMany({
-        where: {
-          sku: { in: skusInOrder },
-        },
-        include: {
-          productSize: true,
-        },
+        where: { sku: { in: skusInOrder } },
       })
-
       for (const rec of skuRecords) {
         if (rec.barcode) {
           skuBarcodeMap[rec.sku] = rec.barcode
         }
-        if (rec.productSize?.weightLbs) {
-          skuWeightMap[rec.sku] = rec.productSize.weightLbs
-        }
       }
     }
 
-    // Calculate total weight: box weight + product weights
-    let calculatedWeight = 0
-    
+    // Resolve weights using matchSkuToSize (supports exact SKU + regex patterns)
+    const skuWeightMap: Record<string, number> = {}
+    for (const sku of skusInOrder) {
+      if (skuWeightMap[sku] !== undefined) continue // already resolved
+      const size = await matchSkuToSize(prisma, sku)
+      skuWeightMap[sku] = size?.weightLbs || 0
+    }
+
+    // Calculate weights separately: product weight and box weight
+    let productWeightLbs = 0
+    let boxWeightLbs = 0
+
     // Add box weight if available
     const suggestedBox = order.suggestedBox as any
     if (suggestedBox?.boxId) {
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
         where: { id: suggestedBox.boxId },
       })
       if (box) {
-        calculatedWeight += box.weightLbs
+        boxWeightLbs = box.weightLbs
       }
     }
 
@@ -75,18 +75,22 @@ export async function GET(request: NextRequest) {
     for (const item of rawItems) {
       const sku = item.sku || ''
       const qty = item.quantity || 1
-      
+
       // Skip insurance items
       if (isShippingInsurance(sku, item.name || '')) continue
-      
+
       const weight = skuWeightMap[sku] || 0
-      calculatedWeight += weight * qty
+      productWeightLbs += weight * qty
     }
 
-    return NextResponse.json({ 
-      order, 
+    const calculatedWeight = productWeightLbs + boxWeightLbs
+
+    return NextResponse.json({
+      order,
       skuBarcodeMap,
+      skuWeightMap, // Per-SKU weights for display
       calculatedWeight: Math.max(calculatedWeight, 0.1), // Minimum 0.1 lb
+      productWeightLbs, // Product-only weight (no box) for recalculation on box change
     })
   } catch (err) {
     console.error('Order lookup error:', err)
