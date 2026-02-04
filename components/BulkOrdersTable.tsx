@@ -130,6 +130,9 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
     const groupMap = new Map<string, BulkOrderGroup>()
 
     orders.forEach((log) => {
+      // Hide orders on hold (they appear in the Hold tab)
+      if (log.status === 'ON_HOLD') return
+
       const isPersonalized = isOrderPersonalized(log.rawPayload)
       const customerReachedOut = (log as any).customerReachedOut || false
       const isExpedited = isOrderExpedited(log.rawPayload, customerReachedOut)

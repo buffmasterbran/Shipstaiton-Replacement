@@ -25,9 +25,11 @@ export default function ErrorOrdersPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [retryingOrder, setRetryingOrder] = useState<string | null>(null)
 
-  // Filter to only show orders with rate shop errors
+  // Filter to only show orders with rate shop errors (excluding held orders)
   const errorOrders = useMemo(() => {
-    return orders.filter((order: any) => order.rateShopStatus === 'FAILED')
+    return orders.filter((order: any) => 
+      order.rateShopStatus === 'FAILED' && order.status !== 'ON_HOLD'
+    )
   }, [orders])
 
   const handleRowClick = (log: OrderLog) => {

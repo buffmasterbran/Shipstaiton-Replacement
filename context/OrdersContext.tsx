@@ -47,6 +47,7 @@ interface OrdersContextType {
   lastFetchedAt: Date | null
   refreshOrders: () => Promise<void>
   updateOrdersInPlace: (updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => void
+  updateOrderStatus: (orderId: string, status: string) => void
 }
 
 const OrdersContext = createContext<OrdersContextType | null>(null)
@@ -121,8 +122,20 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Update a single order's status in place (for hold/unhold without full refresh)
+  const updateOrderStatus = useCallback((orderId: string, status: string) => {
+    setOrders(prevOrders => {
+      return prevOrders.map(order => {
+        if (order.id === orderId) {
+          return { ...order, status }
+        }
+        return order
+      })
+    })
+  }, [])
+
   return (
-    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace }}>
+    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus }}>
       {children}
     </OrdersContext.Provider>
   )

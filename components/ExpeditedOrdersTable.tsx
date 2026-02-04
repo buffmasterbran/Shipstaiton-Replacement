@@ -111,6 +111,9 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
   // Filter to only expedited shipping methods OR customer reached out
   const expeditedLogs = useMemo(() => {
     return logs.filter((log) => {
+      // Hide orders on hold (they appear in the Hold tab)
+      if (log.status === 'ON_HOLD') return false
+
       const isPersonalized = isOrderPersonalized(log.rawPayload)
 
       // Personalized filter (3-state)

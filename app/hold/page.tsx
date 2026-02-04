@@ -14,7 +14,7 @@ interface HeldOrder {
 }
 
 export default function HoldOrdersPage() {
-  const { orders, loading, error, refreshOrders } = useOrders()
+  const { orders, loading, error, updateOrderStatus } = useOrders()
   const [unholdingId, setUnholdingId] = useState<string | null>(null)
 
   // Filter to only held orders
@@ -62,7 +62,8 @@ export default function HoldOrdersPage() {
       })
       
       if (res.ok) {
-        await refreshOrders()
+        // Update order status locally instead of full refresh
+        updateOrderStatus(orderId, 'AWAITING_SHIPMENT')
       } else {
         const data = await res.json()
         alert(data.error || 'Failed to remove hold')

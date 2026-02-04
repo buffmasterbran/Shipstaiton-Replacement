@@ -145,7 +145,7 @@ function getOrderType(log: OrderLog): OrderTypeFilter {
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
-  const { refreshOrders } = useOrders()
+  const { refreshOrders, updateOrderStatus } = useOrders()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -185,7 +185,8 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       })
       
       if (res.ok) {
-        await refreshOrders()
+        // Update order status locally instead of full refresh
+        updateOrderStatus(orderId, 'ON_HOLD')
       } else {
         const data = await res.json()
         alert(data.error || 'Failed to put order on hold')
@@ -205,6 +206,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const filteredAndSortedLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     let list = logs
+
+    // Hide orders on hold (they appear in the Hold tab)
+    list = list.filter((log) => log.status !== 'ON_HOLD')
 
     // Filter by personalized (3-state: all, only, hide)
     if (personalizedFilter === 'only') {

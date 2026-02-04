@@ -141,6 +141,9 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   const filteredOrders = useMemo(() => {
     let filtered = processedOrders
 
+    // Hide orders on hold (they appear in the Hold tab)
+    filtered = filtered.filter(order => order.log.status !== 'ON_HOLD')
+
     // Personalized filter (3-state)
     if (personalizedFilter === 'only') {
       filtered = filtered.filter(order => isOrderPersonalized(order.log.rawPayload))

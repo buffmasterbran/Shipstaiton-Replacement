@@ -185,6 +185,9 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   // Filter orders
   const filteredOrders = useMemo(() => {
     return processedOrders.filter((order) => {
+      // Hide orders on hold (they appear in the Hold tab)
+      if (order.log.status === 'ON_HOLD') return false
+
       const isPersonalized = isOrderPersonalized(order.log.rawPayload)
       const customerReachedOut = (order.log as any).customerReachedOut || false
       const isExpedited = isOrderExpedited(order.log.rawPayload, customerReachedOut)
