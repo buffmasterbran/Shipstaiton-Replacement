@@ -18,7 +18,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders } = useOrders()
   const [canProcess, setCanProcess] = useState(true)
 
-  const operatorAllowedPaths = ['/bulk-verification', '/local-pickup', '/analytics', '/returns', '/inventory-count']
+  const operatorAllowedPaths = ['/bulk-verification', '/scan-to-verify', '/local-pickup', '/analytics', '/returns', '/inventory-count']
   useEffect(() => {
     if (role === 'operator' && !operatorAllowedPaths.includes(pathname)) {
       router.replace('/bulk-verification')
@@ -27,6 +27,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
 
   const isSinglesPage = pathname === '/singles'
   const isExpeditedPage = pathname === '/expedited'
+  const isFullScreenPage = pathname === '/scan-to-verify'
 
   useEffect(() => {
     const handleProcessButtonAvailability = (event: CustomEvent) => {
@@ -42,27 +43,29 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar role={role} />
       <div className="flex-1 flex flex-col">
-        <Header
-          role={role}
-          setRole={setRole}
-          expeditedFilter={expeditedFilter}
-          setExpeditedFilter={setExpeditedFilter}
-          hideExpeditedToggle={isExpeditedPage}
-          personalizedFilter={personalizedFilter}
-          setPersonalizedFilter={setPersonalizedFilter}
-          showProcessButton={isSinglesPage}
-          processButtonText="Process"
-          processButtonDisabled={isSinglesPage && !canProcess}
-          onProcessClick={isSinglesPage ? () => {
-            const event = new CustomEvent('openProcessDialog')
-            window.dispatchEvent(event)
-          } : undefined}
-          ordersCount={orders.length}
-          ordersLoading={ordersLoading}
-          lastFetchedAt={lastFetchedAt}
-          onRefreshOrders={refreshOrders}
-        />
-        <main className="flex-1 p-6">{children}</main>
+        {!isFullScreenPage && (
+          <Header
+            role={role}
+            setRole={setRole}
+            expeditedFilter={expeditedFilter}
+            setExpeditedFilter={setExpeditedFilter}
+            hideExpeditedToggle={isExpeditedPage}
+            personalizedFilter={personalizedFilter}
+            setPersonalizedFilter={setPersonalizedFilter}
+            showProcessButton={isSinglesPage}
+            processButtonText="Process"
+            processButtonDisabled={isSinglesPage && !canProcess}
+            onProcessClick={isSinglesPage ? () => {
+              const event = new CustomEvent('openProcessDialog')
+              window.dispatchEvent(event)
+            } : undefined}
+            ordersCount={orders.length}
+            ordersLoading={ordersLoading}
+            lastFetchedAt={lastFetchedAt}
+            onRefreshOrders={refreshOrders}
+          />
+        )}
+        <main className={isFullScreenPage ? 'flex-1 flex flex-col' : 'flex-1 p-6'}>{children}</main>
       </div>
     </div>
   )

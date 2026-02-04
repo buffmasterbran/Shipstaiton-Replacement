@@ -1661,10 +1661,34 @@ export default function BulkOrdersTable({ orders, queueStatusBySignature = {} }:
                         </button>
                       )}
                       {queueStatus === 'in_queue' && (
-                        <span className="text-sm text-blue-600 font-medium">In Bulk Verification</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-blue-600 font-medium">In Queue</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleProcessClick(group)
+                            }}
+                            className="px-3 py-1 text-xs rounded-lg transition-colors bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            title="Re-add to queue for testing"
+                          >
+                            Reprocess
+                          </button>
+                        </div>
                       )}
                       {queueStatus === 'completed' && (
-                        <span className="text-sm text-gray-600">Shipped</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-600">Shipped</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleProcessClick(group)
+                            }}
+                            className="px-3 py-1 text-xs rounded-lg transition-colors bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            title="Re-add to queue for testing"
+                          >
+                            Reprocess
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>

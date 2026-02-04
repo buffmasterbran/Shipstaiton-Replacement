@@ -127,6 +127,23 @@ export default function BulkOrderProcessDialog({
     }
   }
 
+  // Force send for testing - use placeholder package info if needed
+  const handleForceSendClick = () => {
+    // Set default package info for testing
+    const defaultInfo: PackageInfo = {
+      carrier: 'USPS',
+      service: 'Priority Mail',
+      packaging: 'Package',
+      weight: '1',
+      dimensions: { length: '10', width: '8', height: '4' },
+    }
+    onSavePackageInfo(defaultInfo)
+    // Small delay to ensure state updates, then proceed
+    setTimeout(() => {
+      onProceed()
+    }, 100)
+  }
+
   const handlePackageInfoSave = (info: PackageInfo) => {
     onSavePackageInfo(info)
     setIsPackageInfoDialogOpen(false)
@@ -307,25 +324,36 @@ export default function BulkOrderProcessDialog({
                     {sendToQueueError && (
                       <p className="text-red-600 text-sm mb-3">{sendToQueueError}</p>
                     )}
-                    <div className="flex justify-end gap-3">
+                    <div className="flex justify-between">
+                      {/* Test button on the left */}
                       <button
-                        onClick={handleClose}
+                        onClick={handleForceSendClick}
                         disabled={sendToQueueLoading}
-                        className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors disabled:opacity-50"
+                        className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50 text-sm"
+                        title="Send to queue with default package info (for testing)"
                       >
-                        Close
+                        {sendToQueueLoading ? 'Sending…' : 'Force Send (Test)'}
                       </button>
-                      <button
-                        onClick={handleProcessOrdersClick}
-                        disabled={!effectiveShippingRate || !effectiveShippingRate.price || !effectiveShippingRate.service || sendToQueueLoading}
-                        className={`px-4 py-2 rounded-lg transition-colors ${
-                          effectiveShippingRate && effectiveShippingRate.price && effectiveShippingRate.service && !sendToQueueLoading
-                            ? 'bg-green-600 text-white hover:bg-green-700'
-                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        }`}
-                      >
-                        {sendToQueueLoading ? 'Sending…' : 'Send to queue'}
-                      </button>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={handleClose}
+                          disabled={sendToQueueLoading}
+                          className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors disabled:opacity-50"
+                        >
+                          Close
+                        </button>
+                        <button
+                          onClick={handleProcessOrdersClick}
+                          disabled={!effectiveShippingRate || !effectiveShippingRate.price || !effectiveShippingRate.service || sendToQueueLoading}
+                          className={`px-4 py-2 rounded-lg transition-colors ${
+                            effectiveShippingRate && effectiveShippingRate.price && effectiveShippingRate.service && !sendToQueueLoading
+                              ? 'bg-green-600 text-white hover:bg-green-700'
+                              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          }`}
+                        >
+                          {sendToQueueLoading ? 'Sending…' : 'Send to queue'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </Dialog.Panel>

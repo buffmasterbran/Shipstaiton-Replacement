@@ -42,6 +42,7 @@ const navSections: NavSection[] = [
     title: 'Warehouse',
     access: 'operator',
     items: [
+      { name: 'Scan to Verify', href: '/scan-to-verify', access: 'operator' },
       { name: 'Local Pickup Orders', href: '/local-pickup', access: 'operator' },
       { name: 'Receive Returns', href: '/returns', access: 'operator' },
       { name: 'Inventory Count', href: '/inventory-count', access: 'operator', externalHref: 'https://inventory-count.vercel.app/' },
@@ -73,6 +74,54 @@ export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
   const [expeditedCount, setExpeditedCount] = useState(0)
   const [errorCount, setErrorCount] = useState(0)
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
+  const [pinnedItems, setPinnedItems] = useState<string[]>([])
+
+  // Default pinned items
+  const defaultPinnedItems = ['/', '/singles', '/bulk', '/box-size']
+
+  // Load collapsed sections and pinned items from localStorage
+  useEffect(() => {
+    const savedSections = localStorage.getItem('sidebar-collapsed-sections')
+    if (savedSections) {
+      try {
+        setCollapsedSections(JSON.parse(savedSections))
+      } catch {}
+    }
+    
+    const savedPinned = localStorage.getItem('sidebar-pinned-items')
+    if (savedPinned) {
+      try {
+        setPinnedItems(JSON.parse(savedPinned))
+      } catch {
+        setPinnedItems(defaultPinnedItems)
+      }
+    } else {
+      // Set defaults if nothing saved
+      setPinnedItems(defaultPinnedItems)
+    }
+  }, [])
+
+  // Toggle section collapse
+  const toggleSection = (sectionTitle: string) => {
+    const newState = {
+      ...collapsedSections,
+      [sectionTitle]: !collapsedSections[sectionTitle]
+    }
+    setCollapsedSections(newState)
+    localStorage.setItem('sidebar-collapsed-sections', JSON.stringify(newState))
+  }
+
+  // Toggle pin for an item
+  const togglePin = (href: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const newPinned = pinnedItems.includes(href)
+      ? pinnedItems.filter(h => h !== href)
+      : [...pinnedItems, href]
+    setPinnedItems(newPinned)
+    localStorage.setItem('sidebar-pinned-items', JSON.stringify(newPinned))
+  }
 
   // Fetch expedited and error order counts
   useEffect(() => {
@@ -120,30 +169,38 @@ export default function Sidebar({ role }: { role: UserRole }) {
     .filter((section): section is NavSection => section !== null)
 
   return (
-    <div className="w-64 bg-gray-900 text-white min-h-screen flex flex-col">
-      {/* Logo/Title */}
-      <div className="p-6 border-b border-gray-800">
+    <div className="w-64 bg-gray-900 text-white h-screen flex flex-col">
+      {/* Logo/Title - fixed at top */}
+      <div className="p-6 border-b border-gray-800 flex-shrink-0">
         <h1 className="text-xl font-bold">E-Com Batch Tool</h1>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 p-4 overflow-y-auto">
-        {visibleSections.map((section, sectionIndex) => (
-          <div key={section.title} className={sectionIndex > 0 ? 'mt-6' : ''}>
-            {/* Section Header */}
-            <h2 className="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              {section.title}
+      {/* Navigation - scrollable independently */}
+      <nav className="flex-1 p-4 overflow-y-auto min-h-0">
+        {/* Pinned Items Section */}
+        {pinnedItems.length > 0 && (
+          <div className="mb-4 pb-4 border-b border-gray-700">
+            <h2 className="px-4 py-2 text-xs font-semibold text-yellow-500 uppercase tracking-wider flex items-center gap-1">
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+              </svg>
+              Pinned
             </h2>
             <ul className="space-y-1">
-              {section.items.map((item) => {
+              {pinnedItems.map((href) => {
+                // Find the item in all sections
+                const item = visibleSections
+                  .flatMap(s => s.items)
+                  .find(i => i.href === href || i.externalHref === href)
+                if (!item) return null
+
                 const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
                 const isExpedited = item.href === '/expedited'
                 const isErrors = item.href === '/errors'
                 const hasExpeditedOrders = isExpedited && expeditedCount > 0
                 const hasErrorOrders = isErrors && errorCount > 0
 
-                // Bright red background when there are expedited or error orders (unless currently on that page)
-                let className = 'block px-4 py-2.5 rounded-lg transition-colors text-sm '
+                let className = 'flex items-center justify-between px-4 py-2.5 rounded-lg transition-colors text-sm group '
                 if (isActive) {
                   className += 'bg-green-600 text-white'
                 } else if (hasExpeditedOrders) {
@@ -155,42 +212,166 @@ export default function Sidebar({ role }: { role: UserRole }) {
                 }
 
                 return (
-                  <li key={item.externalHref ?? item.href}>
+                  <li key={`pinned-${href}`}>
                     {item.externalHref ? (
-                      <a
-                        href={item.externalHref}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={className}
-                      >
-                        {item.name}
-                        <span className="ml-1 text-gray-500 text-xs">↗</span>
-                      </a>
+                      <div className={className}>
+                        <a
+                          href={item.externalHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1"
+                        >
+                          {item.name}
+                          <span className="ml-1 text-gray-500 text-xs">↗</span>
+                        </a>
+                        <button
+                          onClick={(e) => togglePin(item.externalHref!, e)}
+                          className="p-1 opacity-0 group-hover:opacity-100 hover:text-yellow-400 transition-opacity"
+                          title="Unpin"
+                        >
+                          <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                            <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                          </svg>
+                        </button>
+                      </div>
                     ) : (
-                      <Link href={item.href} className={className}>
-                        {item.name}
-                        {hasExpeditedOrders && (
-                          <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-red-600 rounded-full">
-                            {expeditedCount}
-                          </span>
-                        )}
-                        {hasErrorOrders && (
-                          <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-orange-600 rounded-full">
-                            {errorCount}
-                          </span>
-                        )}
-                      </Link>
+                      <div className={className}>
+                        <Link href={item.href} className="flex-1">
+                          {item.name}
+                          {hasExpeditedOrders && (
+                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-red-600 rounded-full">
+                              {expeditedCount}
+                            </span>
+                          )}
+                          {hasErrorOrders && (
+                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-orange-600 rounded-full">
+                              {errorCount}
+                            </span>
+                          )}
+                        </Link>
+                        <button
+                          onClick={(e) => togglePin(item.href, e)}
+                          className="p-1 opacity-0 group-hover:opacity-100 hover:text-yellow-400 transition-opacity"
+                          title="Unpin"
+                        >
+                          <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                            <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                          </svg>
+                        </button>
+                      </div>
                     )}
                   </li>
                 )
               })}
             </ul>
           </div>
-        ))}
+        )}
+
+        {/* Regular Sections */}
+        {visibleSections.map((section, sectionIndex) => {
+          const isCollapsed = collapsedSections[section.title] || false
+          
+          return (
+            <div key={section.title} className={sectionIndex > 0 || pinnedItems.length > 0 ? 'mt-2' : ''}>
+              {/* Section Header - clickable to collapse */}
+              <button
+                onClick={() => toggleSection(section.title)}
+                className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300 transition-colors"
+              >
+                <span>{section.title}</span>
+                <svg 
+                  className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {/* Collapsible items list */}
+              <div className={`overflow-hidden transition-all duration-200 ${isCollapsed ? 'max-h-0' : 'max-h-[1000px]'}`}>
+                <ul className="space-y-1 mt-1">
+                  {section.items.map((item) => {
+                    const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
+                    const isExpedited = item.href === '/expedited'
+                    const isErrors = item.href === '/errors'
+                    const hasExpeditedOrders = isExpedited && expeditedCount > 0
+                    const hasErrorOrders = isErrors && errorCount > 0
+                    const isPinned = pinnedItems.includes(item.externalHref || item.href)
+
+                    let className = 'flex items-center justify-between px-4 py-2.5 rounded-lg transition-colors text-sm group '
+                    if (isActive) {
+                      className += 'bg-green-600 text-white'
+                    } else if (hasExpeditedOrders) {
+                      className += 'bg-[#ff0000] text-white font-bold hover:bg-red-700'
+                    } else if (hasErrorOrders) {
+                      className += 'bg-orange-600 text-white font-bold hover:bg-orange-700'
+                    } else {
+                      className += 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }
+
+                    return (
+                      <li key={item.externalHref ?? item.href}>
+                        {item.externalHref ? (
+                          <div className={className}>
+                            <a
+                              href={item.externalHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1"
+                            >
+                              {item.name}
+                              <span className="ml-1 text-gray-500 text-xs">↗</span>
+                            </a>
+                            <button
+                              onClick={(e) => togglePin(item.externalHref!, e)}
+                              className={`p-1 transition-opacity ${isPinned ? 'text-yellow-400' : 'opacity-0 group-hover:opacity-100 hover:text-yellow-400'}`}
+                              title={isPinned ? 'Unpin' : 'Pin to top'}
+                            >
+                              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                                <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className={className}>
+                            <Link href={item.href} className="flex-1">
+                              {item.name}
+                              {hasExpeditedOrders && (
+                                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-red-600 rounded-full">
+                                  {expeditedCount}
+                                </span>
+                              )}
+                              {hasErrorOrders && (
+                                <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-white text-orange-600 rounded-full">
+                                  {errorCount}
+                                </span>
+                              )}
+                            </Link>
+                            <button
+                              onClick={(e) => togglePin(item.href, e)}
+                              className={`p-1 transition-opacity ${isPinned ? 'text-yellow-400' : 'opacity-0 group-hover:opacity-100 hover:text-yellow-400'}`}
+                              title={isPinned ? 'Unpin' : 'Pin to top'}
+                            >
+                              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                                <path d="M16 4a1 1 0 01.707.293l3 3a1 1 0 01-.464 1.664l-1.09.272-.679.68 1.818 7.27a1 1 0 01-.293.936l-2 2a1 1 0 01-1.414 0L12 16.53l-3.586 3.586a1 1 0 01-1.414 0l-2-2a1 1 0 01-.293-.936l1.818-7.27-.679-.68-1.09-.272a1 1 0 01-.463-1.664l3-3A1 1 0 018 4h8z" />
+                              </svg>
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            </div>
+          )
+        })}
       </nav>
 
-      {/* Logout Button */}
-      <div className="p-4 border-t border-gray-800">
+      {/* Logout Button - fixed at bottom */}
+      <div className="p-4 border-t border-gray-800 flex-shrink-0">
         <button className="w-full px-4 py-2 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-colors">
           Log out
         </button>
