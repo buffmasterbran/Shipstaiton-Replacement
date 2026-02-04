@@ -1,33 +1,48 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
-import { useOrders } from '@/context/OrdersContext'
+import { useState, useMemo } from 'react'
+import { useOrders, type OrderLog } from '@/context/OrdersContext'
 import OrderDialog from '@/components/OrderDialog'
+import EditOrderDialog from '@/components/EditOrderDialog'
 
-interface OrderLog {
-  id: string
-  orderNumber: string
-  status: string
-  rawPayload: any
-  suggestedBox?: any
-  orderType?: string
-  rateShopStatus?: string
-  rateShopError?: string
-  preShoppedRate?: any
-  createdAt: Date | string
-  updatedAt: Date | string
+function getErrorHint(error: string | null | undefined): string | null {
+  if (!error) return null
+  const lower = error.toLowerCase()
+  if (lower.includes('carrier_id') || lower.includes('carrier')) {
+    return 'Carrier ID may be invalid or stale. Try editing the carrier assignment.'
+  }
+  if (lower.includes('address') || lower.includes('postal') || lower.includes('missing required')) {
+    return 'Address may be incomplete or invalid. Try editing the shipping address.'
+  }
+  if (lower.includes('box') || lower.includes('no box')) {
+    return 'No box suggestion available. Check Products and Box Config.'
+  }
+  if (lower.includes('no rates') || lower.includes('no services')) {
+    return 'No rates returned for selected services. Try editing the carrier or check Rate Shopping config.'
+  }
+  return null
 }
 
 export default function ErrorOrdersPage() {
-  const { orders, loading, error, refreshOrders } = useOrders()
+  const { orders, loading, error, refreshOrders, updateOrderInPlace } = useOrders()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [retryingOrder, setRetryingOrder] = useState<string | null>(null)
+  const [viewedLog, setViewedLog] = useState<OrderLog | null>(null)
+
+  // Edit dialog state
+  const [isEditOpen, setIsEditOpen] = useState(false)
+  const [editLog, setEditLog] = useState<OrderLog | null>(null)
+
+  // Retry state
+  const [retryingId, setRetryingId] = useState<string | null>(null)
+
+  // Delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Filter to only show orders with rate shop errors (excluding held orders)
   const errorOrders = useMemo(() => {
-    return orders.filter((order: any) => 
+    return orders.filter((order: any) =>
       order.rateShopStatus === 'FAILED' && order.status !== 'ON_HOLD'
     )
   }, [orders])
@@ -41,6 +56,7 @@ export default function ErrorOrdersPage() {
       ...order,
     })
     setSelectedRawPayload(log.rawPayload)
+    setViewedLog(log)
     setIsDialogOpen(true)
   }
 
@@ -48,30 +64,63 @@ export default function ErrorOrdersPage() {
     setIsDialogOpen(false)
     setSelectedOrder(null)
     setSelectedRawPayload(null)
+    setViewedLog(null)
   }
 
-  const handleRetryRateShopping = async (orderNumber: string) => {
-    setRetryingOrder(orderNumber)
+  const handleEditClick = (log: OrderLog, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setEditLog(log)
+    setIsEditOpen(true)
+  }
+
+  const handleEditSaved = (updatedOrder: any) => {
+    updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<OrderLog>)
+  }
+
+  const handleRetry = async (log: OrderLog, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRetryingId(log.id)
     try {
-      // Re-ingest the order to trigger rate shopping again
-      const order = orders.find((o: any) => o.orderNumber === orderNumber)
-      if (!order) return
-
-      const response = await fetch('/api/ingest-batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-secret': 'internal-retry', // This will fail auth but we need a different approach
-        },
-        body: JSON.stringify(order.rawPayload),
+      const res = await fetch(`/api/orders/${log.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ retryRateShopping: true }),
       })
-
-      // Refresh orders to see updated status
-      await refreshOrders()
+      const data = await res.json()
+      if (res.ok && data.order) {
+        updateOrderInPlace(data.order.id, data.order as Partial<OrderLog>)
+      } else {
+        alert(data.error || 'Retry failed')
+      }
     } catch (err) {
       console.error('Failed to retry rate shopping:', err)
+      alert('Failed to retry rate shopping')
     } finally {
-      setRetryingOrder(null)
+      setRetryingId(null)
+    }
+  }
+
+  const handleDelete = async (log: OrderLog, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm(`Delete order ${log.orderNumber}? This cannot be undone.`)) return
+    setDeletingId(log.id)
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds: [log.id] }),
+      })
+      if (res.ok) {
+        refreshOrders()
+      } else {
+        const data = await res.json()
+        alert(data.error || 'Failed to delete order')
+      }
+    } catch (err) {
+      console.error('Error deleting order:', err)
+      alert('Failed to delete order')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -115,7 +164,7 @@ export default function ErrorOrdersPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Error Orders</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Orders where rate shopping failed. Usually due to address issues.
+            Orders where rate shopping failed. Edit to fix issues or retry rate shopping.
           </p>
           {errorOrders.length > 0 && (
             <p className="text-sm text-red-600 font-medium mt-1">
@@ -174,6 +223,7 @@ export default function ErrorOrdersPage() {
                     shipTo.state,
                     shipTo.postalCode,
                   ].filter(Boolean).join(', ')
+                  const hint = getErrorHint(log.rateShopError)
 
                   return (
                     <tr
@@ -202,6 +252,11 @@ export default function ErrorOrdersPage() {
                         <div className="text-sm text-red-600 font-medium max-w-xs truncate" title={log.rateShopError || 'Unknown error'}>
                           {log.rateShopError || 'Unknown error'}
                         </div>
+                        {hint && (
+                          <div className="text-xs text-gray-500 mt-1 max-w-xs truncate" title={hint}>
+                            {hint}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
@@ -209,15 +264,47 @@ export default function ErrorOrdersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleRowClick(log)
-                          }}
-                          className="text-blue-600 hover:text-blue-900 mr-3"
-                        >
-                          View
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          {/* Edit & Fix */}
+                          <button
+                            onClick={(e) => handleEditClick(log, e)}
+                            className="p-1.5 rounded text-blue-600 hover:bg-blue-100 transition-colors"
+                            title="Edit & Fix"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          {/* Retry Rate Shopping */}
+                          <button
+                            onClick={(e) => handleRetry(log, e)}
+                            disabled={retryingId === log.id}
+                            className="p-1.5 rounded text-green-600 hover:bg-green-100 transition-colors disabled:opacity-50"
+                            title="Retry Rate Shopping"
+                          >
+                            {retryingId === log.id ? (
+                              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            )}
+                          </button>
+                          {/* Delete */}
+                          <button
+                            onClick={(e) => handleDelete(log, e)}
+                            disabled={deletingId === log.id}
+                            className="p-1.5 rounded text-red-500 hover:bg-red-100 transition-colors disabled:opacity-50"
+                            title="Delete order"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -233,7 +320,26 @@ export default function ErrorOrdersPage() {
         onClose={handleCloseDialog}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
+        onEdit={viewedLog ? () => {
+          handleCloseDialog()
+          handleEditClick(viewedLog)
+        } : undefined}
       />
+
+      {editLog && (
+        <EditOrderDialog
+          isOpen={isEditOpen}
+          onClose={() => { setIsEditOpen(false); setEditLog(null) }}
+          orderId={editLog.id}
+          orderNumber={editLog.orderNumber}
+          rawPayload={editLog.rawPayload}
+          preShoppedRate={editLog.preShoppedRate || null}
+          shippedWeight={editLog.shippedWeight || null}
+          rateShopStatus={editLog.rateShopStatus || null}
+          rateShopError={editLog.rateShopError || null}
+          onSaved={handleEditSaved}
+        />
+      )}
     </div>
   )
 }

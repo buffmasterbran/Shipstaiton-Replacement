@@ -494,12 +494,7 @@ export async function getSinglesCarrier(prisma: PrismaClient): Promise<{
     return setting.value as any
   }
 
-  // Return default USPS First Class Mail
-  return {
-    carrierId: '', // Will be filled in when actually used
-    carrierCode: 'usps',
-    carrier: 'USPS',
-    serviceCode: 'usps_first_class_mail',
-    serviceName: 'USPS First Class Mail',
-  }
+  // No singles carrier configured - return null so callers can handle it
+  // Previously returned empty carrierId which caused "carrier_id not found" errors
+  return null
 }

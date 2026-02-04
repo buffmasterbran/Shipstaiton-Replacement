@@ -349,7 +349,7 @@ export async function POST(request: NextRequest) {
       // Handle based on order type
       if (orderType === 'SINGLE') {
         // Singles use fixed carrier (USPS First Class Mail by default)
-        if (singlesCarrier) {
+        if (singlesCarrier && singlesCarrier.carrierId) {
           preShoppedRate = {
             carrierId: singlesCarrier.carrierId,
             carrierCode: singlesCarrier.carrierCode,
@@ -362,6 +362,12 @@ export async function POST(request: NextRequest) {
           }
           rateShopStatus = 'SUCCESS'
           console.log(`${logPrefix} Singles carrier set: ${singlesCarrier.serviceName}`)
+        } else {
+          rateShopStatus = 'FAILED'
+          rateShopError = singlesCarrier
+            ? 'Singles carrier has no carrier ID configured. Go to Settings > Singles Carrier and re-select the carrier.'
+            : 'Singles carrier not configured. Go to Settings to configure.'
+          console.log(`${logPrefix} Singles carrier ${singlesCarrier ? 'missing carrierId' : 'not configured'} - marking as FAILED`)
         }
       } else if (orderType === 'EXPEDITED') {
         // Expedited orders keep their original carrier - don't rate shop

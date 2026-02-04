@@ -48,6 +48,7 @@ interface OrdersContextType {
   refreshOrders: () => Promise<void>
   updateOrdersInPlace: (updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => void
   updateOrderStatus: (orderId: string, status: string) => void
+  updateOrderInPlace: (orderId: string, updates: Partial<OrderLog>) => void
 }
 
 const OrdersContext = createContext<OrdersContextType | null>(null)
@@ -134,8 +135,20 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Update a single order with arbitrary fields (for edit dialog saves)
+  const updateOrderInPlace = useCallback((orderId: string, updates: Partial<OrderLog>) => {
+    setOrders(prevOrders => {
+      return prevOrders.map(order => {
+        if (order.id === orderId) {
+          return { ...order, ...updates }
+        }
+        return order
+      })
+    })
+  }, [])
+
   return (
-    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus }}>
+    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus, updateOrderInPlace }}>
       {children}
     </OrdersContext.Provider>
   )

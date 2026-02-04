@@ -4,8 +4,9 @@ import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BoxConfirmDialog from './BoxConfirmDialog'
 import RateTestDialog from './RateTestDialog'
+import EditOrderDialog from './EditOrderDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
-import { useOrders } from '@/context/OrdersContext'
+import { useOrders, type OrderLog as ContextOrderLog } from '@/context/OrdersContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
@@ -145,7 +146,7 @@ function getOrderType(log: OrderLog): OrderTypeFilter {
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
-  const { refreshOrders, updateOrderStatus } = useOrders()
+  const { refreshOrders, updateOrderStatus, updateOrderInPlace } = useOrders()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -171,6 +172,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   // Hold state
   const [holdingIds, setHoldingIds] = useState<Set<string>>(new Set())
+
+  // Edit dialog state
+  const [isEditOpen, setIsEditOpen] = useState(false)
+  const [editLog, setEditLog] = useState<OrderLog | null>(null)
 
   // Handle putting an order on hold
   const handleHold = async (orderId: string, e: React.MouseEvent) => {
@@ -335,11 +340,15 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     setPage(1)
   }
 
+  // Track currently viewed log for the edit-from-view flow
+  const [viewedLog, setViewedLog] = useState<OrderLog | null>(null)
+
   const handleRowClick = (log: OrderLog) => {
     const payload = log.rawPayload as any
     const order = Array.isArray(payload) ? payload[0] : payload
     setSelectedOrder(order)
     setSelectedRawPayload(payload)
+    setViewedLog(log)
     setIsDialogOpen(true)
   }
 
@@ -415,6 +424,16 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const handleCancelDelete = () => {
     setDeleteConfirmOpen(false)
     setOrderToDelete(null)
+  }
+
+  const handleEditClick = (log: OrderLog, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditLog(log)
+    setIsEditOpen(true)
+  }
+
+  const handleEditSaved = (updatedOrder: any) => {
+    updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<ContextOrderLog>)
   }
 
   if (logs.length === 0) {
@@ -623,6 +642,19 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-1">
                         <button
+                          onClick={(e) => handleEditClick(log, e)}
+                          className={`p-1.5 rounded hover:bg-blue-100 transition-colors ${
+                            highlightType === 'red' || highlightType === 'orange'
+                              ? 'text-white hover:text-blue-600 hover:bg-white/20'
+                              : 'text-gray-400 hover:text-blue-600'
+                          }`}
+                          title="Edit order"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
                           onClick={(e) => handleHold(log.id, e)}
                           disabled={holdingIds.has(log.id) || log.status === 'ON_HOLD'}
                           className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
@@ -691,6 +723,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         order={selectedOrder}
         rawPayload={selectedRawPayload}
         onGetRates={handleGetRates}
+        onEdit={viewedLog ? () => {
+          setIsDialogOpen(false)
+          setEditLog(viewedLog)
+          setIsEditOpen(true)
+        } : undefined}
       />
       {boxConfirmLog && (() => {
         const payload = boxConfirmLog.rawPayload as any
@@ -717,6 +754,22 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         onClose={handleCloseRateTest}
         order={rateTestOrder}
       />
+
+      {/* Edit Order Dialog */}
+      {editLog && (
+        <EditOrderDialog
+          isOpen={isEditOpen}
+          onClose={() => { setIsEditOpen(false); setEditLog(null) }}
+          orderId={editLog.id}
+          orderNumber={editLog.orderNumber}
+          rawPayload={editLog.rawPayload}
+          preShoppedRate={(editLog as any).preShoppedRate || null}
+          shippedWeight={(editLog as any).shippedWeight || null}
+          rateShopStatus={(editLog as any).rateShopStatus || null}
+          rateShopError={(editLog as any).rateShopError || null}
+          onSaved={handleEditSaved}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirmOpen && orderToDelete && (
