@@ -74,21 +74,13 @@ export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
   const [expeditedCount, setExpeditedCount] = useState(0)
   const [errorCount, setErrorCount] = useState(0)
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
   const [pinnedItems, setPinnedItems] = useState<string[]>([])
 
   // Default pinned items
   const defaultPinnedItems = ['/', '/singles', '/bulk', '/box-size']
 
-  // Load collapsed sections and pinned items from localStorage
+  // Load pinned items from localStorage
   useEffect(() => {
-    const savedSections = localStorage.getItem('sidebar-collapsed-sections')
-    if (savedSections) {
-      try {
-        setCollapsedSections(JSON.parse(savedSections))
-      } catch {}
-    }
-    
     const savedPinned = localStorage.getItem('sidebar-pinned-items')
     if (savedPinned) {
       try {
@@ -101,16 +93,6 @@ export default function Sidebar({ role }: { role: UserRole }) {
       setPinnedItems(defaultPinnedItems)
     }
   }, [])
-
-  // Toggle section collapse
-  const toggleSection = (sectionTitle: string) => {
-    const newState = {
-      ...collapsedSections,
-      [sectionTitle]: !collapsedSections[sectionTitle]
-    }
-    setCollapsedSections(newState)
-    localStorage.setItem('sidebar-collapsed-sections', JSON.stringify(newState))
-  }
 
   // Toggle pin for an item
   const togglePin = (href: string, e: React.MouseEvent) => {
@@ -268,30 +250,15 @@ export default function Sidebar({ role }: { role: UserRole }) {
         )}
 
         {/* Regular Sections */}
-        {visibleSections.map((section, sectionIndex) => {
-          const isCollapsed = collapsedSections[section.title] || false
-          
-          return (
-            <div key={section.title} className={sectionIndex > 0 || pinnedItems.length > 0 ? 'mt-2' : ''}>
-              {/* Section Header - clickable to collapse */}
-              <button
-                onClick={() => toggleSection(section.title)}
-                className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300 transition-colors"
-              >
-                <span>{section.title}</span>
-                <svg 
-                  className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              
-              {/* Collapsible items list */}
-              <div className={`overflow-hidden transition-all duration-200 ${isCollapsed ? 'max-h-0' : 'max-h-[1000px]'}`}>
-                <ul className="space-y-1 mt-1">
+        {visibleSections.map((section, sectionIndex) => (
+          <div key={section.title} className={sectionIndex > 0 || pinnedItems.length > 0 ? 'mt-4' : ''}>
+            {/* Section Header */}
+            <h2 className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              {section.title}
+            </h2>
+            
+            {/* Items list */}
+            <ul className="space-y-1">
                   {section.items.map((item) => {
                     const isActive = !item.externalHref && (pathname === item.href || (item.href === '/' && pathname === '/'))
                     const isExpedited = item.href === '/expedited'
@@ -365,9 +332,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
                   })}
                 </ul>
               </div>
-            </div>
-          )
-        })}
+            ))}
       </nav>
 
       {/* Logout Button - fixed at bottom */}
