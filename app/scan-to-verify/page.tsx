@@ -497,37 +497,37 @@ export default function ScanToVerifyPage() {
             </div>
 
             {/* RIGHT COLUMN — Create Label panel */}
-            <div className="w-80 flex flex-col bg-gray-50 flex-shrink-0">
-              <div className="p-4 border-b bg-white">
-                <h3 className="text-lg font-semibold text-gray-900">Create Label</h3>
+            <div className="w-72 flex flex-col bg-gray-50 flex-shrink-0">
+              <div className="px-3 py-2 border-b bg-white">
+                <h3 className="text-base font-semibold text-gray-900">Create Label</h3>
               </div>
 
-              <div className="flex-1 overflow-auto p-4 space-y-4">
+              <div className="flex-1 overflow-auto px-3 py-2 space-y-2">
                 {/* Weight */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Weight</label>
-                  <div className="flex items-center gap-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Weight</label>
+                  <div className="flex items-center gap-1">
                     <input
                       type="number"
                       placeholder="0"
-                      className="w-20 px-3 py-2 border border-gray-300 rounded text-right"
+                      className="w-14 px-2 py-1 text-sm border border-gray-300 rounded text-right"
                       step="0.1"
                     />
-                    <span className="text-sm text-gray-500">(lb)</span>
+                    <span className="text-xs text-gray-500">lb</span>
                     <input
                       type="number"
                       placeholder="0"
-                      className="w-20 px-3 py-2 border border-gray-300 rounded text-right"
+                      className="w-14 px-2 py-1 text-sm border border-gray-300 rounded text-right"
                       step="0.1"
                     />
-                    <span className="text-sm text-gray-500">(oz)</span>
+                    <span className="text-xs text-gray-500">oz</span>
                   </div>
                 </div>
 
                 {/* Package */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Package</label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Package</label>
+                  <select className="w-full px-2 py-1 text-sm border border-gray-300 rounded">
                     <option>Package</option>
                     <option>Large Envelope</option>
                     <option>Flat Rate Envelope</option>
@@ -537,39 +537,39 @@ export default function ScanToVerifyPage() {
 
                 {/* Dimensions */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Size</label>
                   <div className="flex items-center gap-1">
-                    <input type="number" placeholder="L" className="w-16 px-2 py-2 border border-gray-300 rounded text-center text-sm" />
-                    <span className="text-gray-400">×</span>
-                    <input type="number" placeholder="W" className="w-16 px-2 py-2 border border-gray-300 rounded text-center text-sm" />
-                    <span className="text-gray-400">×</span>
-                    <input type="number" placeholder="H" className="w-16 px-2 py-2 border border-gray-300 rounded text-center text-sm" />
-                    <span className="text-sm text-gray-500">(in)</span>
+                    <input type="number" placeholder="L" className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs" />
+                    <span className="text-gray-400 text-xs">×</span>
+                    <input type="number" placeholder="W" className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs" />
+                    <span className="text-gray-400 text-xs">×</span>
+                    <input type="number" placeholder="H" className="w-12 px-1 py-1 border border-gray-300 rounded text-center text-xs" />
+                    <span className="text-xs text-gray-500">in</span>
                   </div>
                 </div>
 
-                <hr className="border-gray-200" />
+                <hr className="border-gray-200 my-1" />
 
                 {/* Ship From */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Ship From</label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Ship From</label>
+                  <select className="w-full px-2 py-1 text-sm border border-gray-300 rounded">
                     <option>work</option>
                   </select>
                 </div>
 
                 {/* Service */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Service</label>
-                  <div className="flex items-center gap-2">
-                    <select className="flex-1 px-3 py-2 border border-gray-300 rounded">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Service</label>
+                  <div className="flex items-center gap-1">
+                    <select className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded">
                       <option>USPS First Class Mail</option>
                       <option>USPS Priority Mail</option>
                       <option>UPS Ground Saver</option>
                       <option>UPS Ground</option>
                     </select>
-                    <button className="p-2 text-gray-400 hover:text-gray-600">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <button className="p-1 text-gray-400 hover:text-gray-600">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
@@ -579,8 +579,8 @@ export default function ScanToVerifyPage() {
 
                 {/* Confirmation */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Confirmation</label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Confirmation</label>
+                  <select className="w-full px-2 py-1 text-sm border border-gray-300 rounded">
                     <option>Online</option>
                     <option>Delivery Confirmation</option>
                     <option>Signature Required</option>
@@ -590,39 +590,39 @@ export default function ScanToVerifyPage() {
 
                 {/* Insurance */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Insurance</label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">Insurance</label>
+                  <select className="w-full px-2 py-1 text-sm border border-gray-300 rounded">
                     <option>None</option>
                     <option>Carrier Insurance</option>
                     <option>Shipsurance</option>
                   </select>
                 </div>
 
-                <hr className="border-gray-200" />
+                <hr className="border-gray-200 my-1" />
 
                 {/* Rate */}
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-700">Rate</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-semibold text-gray-900">$0.00</span>
-                    <button className="text-blue-600 text-sm hover:underline">Cost Review</button>
+                  <span className="text-xs text-gray-700">Rate</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-sm font-semibold text-gray-900">$0.00</span>
+                    <button className="text-blue-600 text-xs hover:underline">Cost Review</button>
                   </div>
                 </div>
 
                 {/* Ship Date */}
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-700">Ship Date</span>
-                  <span className="text-blue-600 font-medium">Today</span>
+                  <span className="text-xs text-gray-700">Ship Date</span>
+                  <span className="text-blue-600 text-sm font-medium">Today</span>
                 </div>
 
                 {/* Suggested box info */}
                 {order.suggestedBox?.boxName && (
-                  <div className="bg-green-50 border border-green-200 rounded p-3">
-                    <div className="text-sm text-green-800">
-                      <span className="font-medium">Suggested Box:</span> {order.suggestedBox.boxName}
+                  <div className="bg-green-50 border border-green-200 rounded p-2">
+                    <div className="text-xs text-green-800">
+                      <span className="font-medium">Box:</span> {order.suggestedBox.boxName}
                     </div>
                     {order.suggestedBox.lengthInches && (
-                      <div className="text-xs text-green-600 mt-1">
+                      <div className="text-xs text-green-600">
                         {order.suggestedBox.lengthInches}" × {order.suggestedBox.widthInches}" × {order.suggestedBox.heightInches}"
                       </div>
                     )}
@@ -631,13 +631,13 @@ export default function ScanToVerifyPage() {
 
                 {/* Ship To info */}
                 {shipTo && (
-                  <div className="bg-gray-100 rounded p-3">
-                    <div className="text-sm font-medium text-gray-900">{shipTo.name}</div>
-                    <div className="text-sm text-gray-600">
+                  <div className="bg-gray-100 rounded p-2">
+                    <div className="text-xs font-medium text-gray-900">{shipTo.name}</div>
+                    <div className="text-xs text-gray-600">
                       {shipTo.street1}
                       {shipTo.street2 && <>, {shipTo.street2}</>}
                     </div>
-                    <div className="text-sm text-gray-600">
+                    <div className="text-xs text-gray-600">
                       {shipTo.city}, {shipTo.state} {shipTo.postalCode}
                     </div>
                   </div>
@@ -645,10 +645,10 @@ export default function ScanToVerifyPage() {
               </div>
 
               {/* Print Label button */}
-              <div className="p-4 border-t bg-white">
+              <div className="px-3 py-2 border-t bg-white">
                 <button
                   disabled={!allVerified}
-                  className={`w-full py-3 rounded-lg font-semibold transition-colors ${
+                  className={`w-full py-2 rounded-lg font-semibold text-sm transition-colors ${
                     allVerified
                       ? 'bg-blue-600 text-white hover:bg-blue-700'
                       : 'bg-gray-300 text-gray-500 cursor-not-allowed'
