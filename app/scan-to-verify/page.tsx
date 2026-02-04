@@ -96,6 +96,7 @@ export default function ScanToVerifyPage() {
   const [boxes, setBoxes] = useState<BoxConfig[]>([])
   const [selectedBoxId, setSelectedBoxId] = useState<string>('')
   const [dimensions, setDimensions] = useState({ length: '', width: '', height: '' })
+  const [weight, setWeight] = useState({ lb: '', oz: '' })
 
   const orderInputRef = useRef<HTMLInputElement>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
@@ -167,6 +168,7 @@ export default function ScanToVerifyPage() {
     setLastMatchedIndex(null)
     setSelectedBoxId('')
     setDimensions({ length: '', width: '', height: '' })
+    setWeight({ lb: '', oz: '' })
 
     try {
       const res = await fetch(`/api/orders/lookup?orderNumber=${encodeURIComponent(trimmed)}`)
@@ -204,6 +206,15 @@ export default function ScanToVerifyPage() {
       if (orderData.suggestedBox?.id) {
         setSelectedBoxId(orderData.suggestedBox.id)
         // Dimensions will auto-populate via useEffect
+      }
+
+      // Set weight from calculated weight (convert lbs to lb + oz)
+      const calculatedWeight = data.calculatedWeight || 0
+      if (calculatedWeight > 0) {
+        const totalOz = calculatedWeight * 16
+        const lb = Math.floor(totalOz / 16)
+        const oz = Math.round((totalOz % 16) * 10) / 10 // Round to 1 decimal
+        setWeight({ lb: String(lb), oz: String(oz) })
       }
     } catch (err: any) {
       setLookupError(err.message || 'Failed to look up order')
@@ -564,7 +575,9 @@ export default function ScanToVerifyPage() {
                       type="number"
                       placeholder="0"
                       className="w-14 px-2 py-1 text-sm border border-gray-300 rounded text-right"
-                      step="0.1"
+                      step="1"
+                      value={weight.lb}
+                      onChange={(e) => setWeight(w => ({ ...w, lb: e.target.value }))}
                     />
                     <span className="text-xs text-gray-500">lb</span>
                     <input
@@ -572,6 +585,8 @@ export default function ScanToVerifyPage() {
                       placeholder="0"
                       className="w-14 px-2 py-1 text-sm border border-gray-300 rounded text-right"
                       step="0.1"
+                      value={weight.oz}
+                      onChange={(e) => setWeight(w => ({ ...w, oz: e.target.value }))}
                     />
                     <span className="text-xs text-gray-500">oz</span>
                   </div>
