@@ -83,7 +83,7 @@ function MenuIcon({ className }: { className?: string }) {
   )
 }
 
-// Cart visualization component - iPad optimized
+// Cart visualization component - iPad optimized, full size
 function CartVisualization({ 
   totalBins, 
   highlightedBins,
@@ -103,7 +103,7 @@ function CartVisualization({
   
   return (
     <div 
-      className="grid gap-3 w-full max-w-md mx-auto"
+      className="grid gap-4 w-full h-full"
       style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
     >
       {bins.map((bin) => {
@@ -133,20 +133,20 @@ function CartVisualization({
         return (
           <div
             key={bin}
-            className={`aspect-square flex flex-col items-center justify-center rounded-xl border-3 ${bgColor} ${borderColor} ${textColor}`}
-            style={{ minHeight: '80px', borderWidth: '3px' }}
+            className={`flex flex-col items-center justify-center rounded-2xl ${bgColor} ${borderColor} ${textColor}`}
+            style={{ borderWidth: '4px' }}
           >
             {isEmpty ? (
-              <span className="text-3xl font-bold">—</span>
+              <span className="text-5xl font-bold">—</span>
             ) : isCompleted ? (
-              <span className="text-3xl font-bold">✓</span>
+              <span className="text-5xl font-bold">✓</span>
             ) : isHighlighted && quantity ? (
               <>
-                <span className="text-lg font-medium text-gray-500">{bin}</span>
-                <span className="text-3xl font-bold">×{quantity}</span>
+                <span className="text-2xl font-medium text-gray-500">{bin}</span>
+                <span className="text-5xl font-bold">×{quantity}</span>
               </>
             ) : (
-              <span className="text-3xl font-bold">{bin}</span>
+              <span className="text-5xl font-bold">{bin}</span>
             )}
           </div>
         )
@@ -825,74 +825,76 @@ export default function PickerPage() {
           </div>
         )}
 
-        {/* Top header bar */}
-        <div className="bg-white shadow-lg px-6 py-4 flex items-center justify-between">
+        {/* Top header bar - compact */}
+        <div className="bg-white shadow-lg px-4 py-2 flex items-center justify-between">
           <button
             onClick={() => setMenuOpen(true)}
-            className="p-3 hover:bg-gray-100 rounded-xl transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
           >
             <MenuIcon className="w-8 h-8 text-gray-700" />
           </button>
           <div className="text-center">
-            <div className="text-lg text-gray-500">{chunk.batch.name} • {chunk.cart.name}</div>
+            <div className="text-xl font-medium text-gray-700">{chunk.batch.name} • {chunk.cart.name}</div>
           </div>
           <div className="text-right">
-            <div className="text-lg text-gray-500">Item {currentItemIndex + 1} of {pickItems.length}</div>
+            <div className="text-xl font-medium text-gray-700">Item {currentItemIndex + 1} of {pickItems.length}</div>
           </div>
         </div>
 
-        {/* Main content - two columns on landscape */}
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          {/* Left column: Cart visualization */}
-          <div className="lg:w-1/2 p-6 flex flex-col items-center justify-center bg-gray-50">
-            <div className="text-lg font-medium text-gray-500 mb-4">CART</div>
-            <CartVisualization
-              totalBins={totalBins}
-              highlightedBins={highlightedBins}
-              completedBins={completedBins}
-              emptyBins={emptyBins}
-              binQuantities={binQuantities}
-            />
+        {/* Main content - two columns on landscape, maximized space */}
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+          {/* Left column: Cart visualization - takes maximum space */}
+          <div className="lg:w-1/2 p-4 flex flex-col bg-gray-50">
+            <div className="text-lg font-bold text-gray-500 mb-2 text-center">CART</div>
+            <div className="flex-1 min-h-0">
+              <CartVisualization
+                totalBins={totalBins}
+                highlightedBins={highlightedBins}
+                completedBins={completedBins}
+                emptyBins={emptyBins}
+                binQuantities={binQuantities}
+              />
+            </div>
           </div>
 
-          {/* Right column: Pick instructions */}
-          <div className="lg:w-1/2 p-6 flex flex-col justify-center">
-            <div className="bg-white rounded-3xl shadow-xl p-8 text-center">
+          {/* Right column: Pick instructions - maximized */}
+          <div className="lg:w-1/2 p-4 flex flex-col">
+            <div className="bg-white rounded-3xl shadow-xl p-6 flex-1 flex flex-col justify-center text-center">
               {/* Location */}
-              <div className="text-lg font-medium text-blue-600 mb-2">GO TO LOCATION</div>
-              <div className="text-7xl font-bold text-blue-700 mb-6">
+              <div className="text-xl font-medium text-blue-600 mb-1">GO TO LOCATION</div>
+              <div className="text-8xl lg:text-9xl font-bold text-blue-700 mb-4">
                 {currentItem.binLocation !== 'ZZZ' ? currentItem.binLocation : '—'}
               </div>
 
               {/* Divider */}
-              <div className="border-t border-gray-200 my-6" />
+              <div className="border-t border-gray-200 my-4" />
 
               {/* SKU */}
-              <div className="text-lg text-gray-500 mb-1">Pick item:</div>
-              <div className="text-3xl font-bold text-gray-900 font-mono mb-2">
+              <div className="text-xl text-gray-500 mb-1">Pick item:</div>
+              <div className="text-4xl font-bold text-gray-900 font-mono mb-1">
                 {currentItem.sku}
               </div>
-              <div className="text-lg text-gray-500 mb-6 truncate">
+              <div className="text-xl text-gray-500 mb-4 truncate">
                 {currentItem.name}
               </div>
 
               {/* Quantity */}
-              <div className="bg-blue-50 rounded-2xl p-6 mb-4">
-                <div className="text-lg text-blue-600 mb-1">GRAB</div>
-                <div className="text-6xl font-bold text-blue-700">{activeTotal}</div>
-                <div className="text-lg text-blue-600">{activeTotal === 1 ? 'item' : 'items'}</div>
+              <div className="bg-blue-50 rounded-2xl p-6">
+                <div className="text-xl text-blue-600 mb-1">GRAB</div>
+                <div className="text-7xl font-bold text-blue-700">{activeTotal}</div>
+                <div className="text-xl text-blue-600">{activeTotal === 1 ? 'item' : 'items'}</div>
               </div>
 
               {/* Bin distribution */}
               {activeBins.length > 1 && (
-                <div className="flex flex-wrap justify-center gap-3 mt-4">
+                <div className="flex flex-wrap justify-center gap-4 mt-4">
                   {activeBins.map((bin) => (
                     <div
                       key={bin.binNumber}
-                      className="bg-gray-100 rounded-xl px-4 py-2 text-center"
+                      className="bg-gray-100 rounded-xl px-5 py-3 text-center"
                     >
-                      <div className="text-sm text-gray-500">Bin {bin.binNumber}</div>
-                      <div className="text-xl font-bold text-gray-700">×{bin.quantity}</div>
+                      <div className="text-lg text-gray-500">Bin {bin.binNumber}</div>
+                      <div className="text-2xl font-bold text-gray-700">×{bin.quantity}</div>
                     </div>
                   ))}
                 </div>
@@ -901,12 +903,12 @@ export default function PickerPage() {
           </div>
         </div>
 
-        {/* Bottom action bar */}
-        <div className="bg-white shadow-lg px-6 py-4 flex gap-4">
+        {/* Bottom action bar - compact but large touch targets */}
+        <div className="bg-white shadow-lg px-4 py-3 flex gap-4">
           <button
             onClick={handleOutOfStock}
             disabled={loading}
-            className="flex-1 py-5 text-red-600 border-3 border-red-200 text-xl font-bold rounded-2xl hover:bg-red-50 transition-colors disabled:opacity-50"
+            className="flex-1 py-4 text-red-600 border-3 border-red-200 text-xl font-bold rounded-2xl hover:bg-red-50 transition-colors disabled:opacity-50"
             style={{ borderWidth: '3px' }}
           >
             Out of Stock
@@ -914,7 +916,7 @@ export default function PickerPage() {
           <button
             onClick={handleCompleteItem}
             disabled={loading}
-            className="flex-[2] py-5 bg-green-600 text-white text-2xl font-bold rounded-2xl hover:bg-green-700 transition-colors disabled:opacity-50"
+            className="flex-[2] py-4 bg-green-600 text-white text-2xl font-bold rounded-2xl hover:bg-green-700 transition-colors disabled:opacity-50"
           >
             {loading ? 'Processing...' : currentItemIndex >= pickItems.length - 1 ? 'Complete Cart ✓' : 'Continue →'}
           </button>
