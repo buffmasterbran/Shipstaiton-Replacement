@@ -441,7 +441,7 @@ export default function CartScanPage() {
         }),
       })
 
-      setShippedOrders(prev => new Set([...prev, currentOrder.orderNumber]))
+      setShippedOrders(prev => new Set([...Array.from(prev), currentOrder.orderNumber]))
     } catch (err) {
       console.error('Failed to complete order:', err)
     }

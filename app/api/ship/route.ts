@@ -226,11 +226,18 @@ export async function POST(request: NextRequest) {
           }, { status: 400 })
         }
 
-        // Update the order
+        // Find the order first, then update by id
+        const order = await prisma.orderLog.findFirst({
+          where: { orderNumber },
+          select: { id: true },
+        })
+
+        if (!order) {
+          return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+        }
+
         await prisma.orderLog.update({
-          where: { 
-            orderNumber,
-          },
+          where: { id: order.id },
           data: {
             status: 'SHIPPED',
             trackingNumber,

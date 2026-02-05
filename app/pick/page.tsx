@@ -392,10 +392,10 @@ export default function PickerPage() {
 
     // Convert to PickItem array and sort by location
     const items: PickItem[] = []
-    for (const [sku, data] of skuMap.entries()) {
+    for (const [sku, data] of Array.from(skuMap.entries())) {
       const bins: Array<{ binNumber: number; quantity: number }> = []
       let total = 0
-      for (const [binNum, qty] of data.bins.entries()) {
+      for (const [binNum, qty] of Array.from(data.bins.entries())) {
         bins.push({ binNumber: binNum, quantity: qty })
         total += qty
       }
@@ -500,7 +500,7 @@ export default function PickerPage() {
     if (!chunk || !currentItem) return
 
     // Mark this SKU as picked
-    setPickedSkus(prev => new Set([...prev, currentItem.sku]))
+    setPickedSkus(prev => new Set([...Array.from(prev), currentItem.sku]))
 
     // Check if this was the last item
     if (currentItemIndex >= pickItems.length - 1) {
@@ -558,10 +558,10 @@ export default function PickerPage() {
       }
 
       // Mark affected bins as empty
-      setEmptyBins(prev => new Set([...prev, ...affectedBinNumbers]))
+      setEmptyBins(prev => new Set([...Array.from(prev), ...affectedBinNumbers]))
       
       // Mark this SKU as "picked" (actually skipped)
-      setPickedSkus(prev => new Set([...prev, currentItem.sku]))
+      setPickedSkus(prev => new Set([...Array.from(prev), currentItem.sku]))
 
       // Move to next item or complete
       if (currentItemIndex >= pickItems.length - 1) {
