@@ -12,9 +12,9 @@ import {
   DragStartEvent,
   DragEndEvent,
   DragOverEvent,
+  useDroppable,
 } from '@dnd-kit/core'
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
@@ -181,7 +181,7 @@ function BatchCardOverlay({ batch }: { batch: PickBatch }) {
   )
 }
 
-// Cell column component
+// Cell column component - now a droppable target
 function CellColumn({ 
   cell, 
   batches, 
@@ -195,10 +195,21 @@ function CellColumn({
   onDelete: (id: string) => void
   isOver: boolean
 }) {
+  // Make the cell itself a droppable target
+  const { setNodeRef, isOver: isOverCell } = useDroppable({
+    id: `cell-${cell.id}`,
+    data: { type: 'cell', cellId: cell.id },
+  })
+
+  const highlighted = isOver || isOverCell
+
   return (
-    <div className={`flex-1 min-w-[280px] max-w-[350px] bg-gray-50 rounded-lg p-4 ${
-      isOver ? 'ring-2 ring-blue-400 bg-blue-50' : ''
-    }`}>
+    <div 
+      ref={setNodeRef}
+      className={`flex-1 min-w-[280px] max-w-[350px] bg-gray-50 rounded-lg p-4 transition-colors ${
+        highlighted ? 'ring-2 ring-blue-400 bg-blue-50' : ''
+      }`}
+    >
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-900">{cell.name}</h3>
         <span className="text-sm text-gray-500">{batches.length} batches</span>
@@ -207,7 +218,9 @@ function CellColumn({
       <SortableContext items={batches.map(b => b.id)} strategy={verticalListSortingStrategy}>
         <div className="space-y-2 min-h-[200px]">
           {batches.length === 0 ? (
-            <div className="text-center text-gray-400 py-8 border-2 border-dashed border-gray-300 rounded-lg">
+            <div className={`text-center text-gray-400 py-8 border-2 border-dashed rounded-lg transition-colors ${
+              highlighted ? 'border-blue-400 bg-blue-100' : 'border-gray-300'
+            }`}>
               <p>No batches</p>
               <p className="text-xs mt-1">Drag batches here</p>
             </div>
@@ -295,10 +308,17 @@ export default function BatchQueuePage() {
   const handleDragOver = (event: DragOverEvent) => {
     const { over } = event
     if (over) {
-      // Check if we're over a cell
-      const overBatch = batches.find(b => b.id === over.id)
-      if (overBatch) {
-        setOverCellId(overBatch.cellId)
+      // Check if we're over a cell directly
+      const overId = String(over.id)
+      if (overId.startsWith('cell-')) {
+        const cellId = overId.replace('cell-', '')
+        setOverCellId(cellId)
+      } else {
+        // Check if we're over a batch
+        const overBatch = batches.find(b => b.id === over.id)
+        if (overBatch) {
+          setOverCellId(overBatch.cellId)
+        }
       }
     } else {
       setOverCellId(null)
@@ -314,31 +334,48 @@ export default function BatchQueuePage() {
     if (!over) return
 
     const activeBatchData = batches.find(b => b.id === active.id)
-    const overBatchData = batches.find(b => b.id === over.id)
-
     if (!activeBatchData) return
 
     // Determine target cell and position
     let targetCellId = activeBatchData.cellId
     let newPriority = activeBatchData.priority
 
-    if (overBatchData) {
-      targetCellId = overBatchData.cellId
-      const cellBatches = getBatchesForCell(targetCellId)
-      const overIndex = cellBatches.findIndex(b => b.id === over.id)
-      
-      if (activeBatchData.cellId === targetCellId) {
-        // Same cell - reorder
-        const activeIndex = cellBatches.findIndex(b => b.id === active.id)
-        if (activeIndex !== overIndex) {
-          newPriority = overBatchData.priority
+    const overId = String(over.id)
+    
+    // Check if dropped on a cell directly (empty cell)
+    if (overId.startsWith('cell-')) {
+      targetCellId = overId.replace('cell-', '')
+      // When dropping on an empty cell, set priority to 0 (first position)
+      const existingBatches = getBatchesForCell(targetCellId)
+      newPriority = existingBatches.length > 0 
+        ? Math.max(...existingBatches.map(b => b.priority)) + 1 
+        : 0
+    } else {
+      // Dropped on a batch
+      const overBatchData = batches.find(b => b.id === over.id)
+      if (overBatchData) {
+        targetCellId = overBatchData.cellId
+        const cellBatches = getBatchesForCell(targetCellId)
+        const overIndex = cellBatches.findIndex(b => b.id === over.id)
+        
+        if (activeBatchData.cellId === targetCellId) {
+          // Same cell - reorder
+          const activeIndex = cellBatches.findIndex(b => b.id === active.id)
+          if (activeIndex !== overIndex) {
+            newPriority = overBatchData.priority
+          } else {
+            return // No change needed
+          }
         } else {
-          return // No change needed
+          // Different cell - move
+          newPriority = overIndex
         }
-      } else {
-        // Different cell - move
-        newPriority = overIndex
       }
+    }
+
+    // Check if anything changed
+    if (targetCellId === activeBatchData.cellId && newPriority === activeBatchData.priority) {
+      return // No change needed
     }
 
     // Optimistically update UI
