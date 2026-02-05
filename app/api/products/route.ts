@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
           productSizeId: body.sizeId || body.productSizeId,
           name: body.name || undefined,
           barcode: body.barcode || undefined,
+          binLocation: body.binLocation || undefined,
           active: body.active !== false,
         })
 
@@ -147,6 +148,7 @@ export async function POST(request: NextRequest) {
         if (body.productSizeId !== undefined) skuUpdateData.productSizeId = body.productSizeId
         if (body.name !== undefined) skuUpdateData.name = body.name || null
         if (body.barcode !== undefined) skuUpdateData.barcode = body.barcode || null
+        if (body.binLocation !== undefined) skuUpdateData.binLocation = body.binLocation || null
         if (body.active !== undefined) skuUpdateData.active = body.active
 
         const sku = await updateProductSku(prisma, body.sku, skuUpdateData)

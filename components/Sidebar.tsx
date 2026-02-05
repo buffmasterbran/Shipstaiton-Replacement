@@ -35,13 +35,15 @@ const navSections: NavSection[] = [
       { name: 'Orders by Size', href: '/box-size', access: 'admin' },
       { name: 'Personalization', href: '/personalization', access: 'admin', externalHref: 'https://pers-packing-slips.vercel.app/' },
       { name: 'International Orders', href: '/international', access: 'admin' },
-      { name: 'Batches', href: '/batches', access: 'admin' },
+      { name: 'Batch Queue', href: '/batch-queue', access: 'admin' },
     ],
   },
   {
     title: 'Warehouse',
     access: 'operator',
     items: [
+      { name: 'Picker', href: '/pick', access: 'operator' },
+      { name: 'Cart Scan', href: '/cart-scan', access: 'operator' },
       { name: 'Scan to Verify', href: '/scan-to-verify', access: 'operator' },
       { name: 'Local Pickup Orders', href: '/local-pickup', access: 'operator' },
       { name: 'Receive Returns', href: '/returns', access: 'operator' },

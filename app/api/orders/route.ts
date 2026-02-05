@@ -23,6 +23,8 @@ export async function GET() {
         rateFetchedAt: true,
         rateShopStatus: true,
         rateShopError: true,
+        // Picking workflow fields
+        batchId: true,
         createdAt: true,
         updatedAt: true,
       },

@@ -36,6 +36,8 @@ export interface OrderLog {
   rateFetchedAt?: string | null
   rateShopStatus?: 'SUCCESS' | 'FAILED' | 'SKIPPED' | null
   rateShopError?: string | null
+  // Picking workflow fields
+  batchId?: string | null
   createdAt: string
   updatedAt: string
 }

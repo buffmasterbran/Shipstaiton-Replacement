@@ -9,49 +9,57 @@ datasource db {
 }
 
 model OrderLog {
-  id                  String      @id @default(cuid())
-  orderNumber         String      @map("order_number")
-  status              OrderStatus @default(AWAITING_SHIPMENT)
-  rawPayload          Json        @map("raw_payload")
-  customerReachedOut  Boolean     @default(false) @map("customer_reached_out")
-  suggestedBox        Json?       @map("suggested_box")  // { boxId, boxName, confidence, reason? }
+  id                 String      @id @default(cuid())
+  orderNumber        String      @map("order_number")
+  status             OrderStatus @default(AWAITING_SHIPMENT)
+  rawPayload         Json        @map("raw_payload")
+  customerReachedOut Boolean     @default(false) @map("customer_reached_out")
+  suggestedBox       Json?       @map("suggested_box") // { boxId, boxName, confidence, reason? }
 
   // Order classification & rate shopping fields
-  orderType           String?     @map("order_type")      // "SINGLE" | "BULK" | "EXPEDITED" | "ERROR"
-  shippedWeight       Float?      @map("shipped_weight")  // Total weight in lbs (box + products)
-  preShoppedRate      Json?       @map("pre_shopped_rate") // { carrierId, carrierCode, serviceCode, serviceName, price, deliveryDays, rateId }
-  rateFetchedAt       DateTime?   @map("rate_fetched_at")
-  rateShopStatus      String?     @map("rate_shop_status") // "SUCCESS" | "FAILED" | "SKIPPED"
-  rateShopError       String?     @map("rate_shop_error")  // Error message if rate shopping failed
+  orderType      String?   @map("order_type") // "SINGLE" | "BULK" | "EXPEDITED" | "ERROR"
+  shippedWeight  Float?    @map("shipped_weight") // Total weight in lbs (box + products)
+  preShoppedRate Json?     @map("pre_shopped_rate") // { carrierId, carrierCode, serviceCode, serviceName, price, deliveryDays, rateId }
+  rateFetchedAt  DateTime? @map("rate_fetched_at")
+  rateShopStatus String?   @map("rate_shop_status") // "SUCCESS" | "FAILED" | "SKIPPED"
+  rateShopError  String?   @map("rate_shop_error") // Error message if rate shopping failed
 
   // Shipping & tracking fields
-  trackingNumber      String?     @map("tracking_number")
-  carrier             String?
-  labelUrl            String?     @map("label_url")
-  labelCost           Float?      @map("label_cost")
-  shippedAt           DateTime?   @map("shipped_at")
+  trackingNumber String?   @map("tracking_number")
+  carrier        String?
+  labelUrl       String?   @map("label_url")
+  labelCost      Float?    @map("label_cost")
+  shippedAt      DateTime? @map("shipped_at")
 
   // Hold order fields
-  onHoldReason        String?     @map("on_hold_reason")
-  onHoldUntil         DateTime?   @map("on_hold_until")
+  onHoldReason String?   @map("on_hold_reason")
+  onHoldUntil  DateTime? @map("on_hold_until")
 
   // Customer notification fields
-  customerEmail       String?     @map("customer_email")
-  notificationSent    Boolean     @default(false) @map("notification_sent")
-  notificationSentAt  DateTime?   @map("notification_sent_at")
+  customerEmail      String?   @map("customer_email")
+  notificationSent   Boolean   @default(false) @map("notification_sent")
+  notificationSentAt DateTime? @map("notification_sent_at")
 
   // Address validation fields
-  addressValidated    Boolean     @default(false) @map("address_validated")
-  addressOverridden   Boolean     @default(false) @map("address_overridden")
+  addressValidated  Boolean @default(false) @map("address_validated")
+  addressOverridden Boolean @default(false) @map("address_overridden")
 
   // Archive fields
-  archived            Boolean     @default(false)
-  archivedAt          DateTime?   @map("archived_at")
+  archived   Boolean   @default(false)
+  archivedAt DateTime? @map("archived_at")
 
-  createdAt           DateTime    @default(now()) @map("created_at")
-  updatedAt           DateTime    @updatedAt @map("updated_at")
+  // Picking/Packing workflow fields
+  batchId   String? @map("batch_id")
+  chunkId   String? @map("chunk_id")
+  binNumber Int?    @map("bin_number") // 1-12 position on cart
 
-  @@map("order_logs")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  batch PickBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  chunk PickChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
   @@index([createdAt])
   @@index([orderNumber])
   @@index([customerReachedOut])
@@ -60,6 +68,9 @@ model OrderLog {
   @@index([archived])
   @@index([orderType])
   @@index([rateShopStatus])
+  @@index([batchId])
+  @@index([chunkId])
+  @@map("order_logs")
 }
 
 enum OrderStatus {
@@ -81,12 +92,12 @@ model BulkQueueItem {
   totalChunks        Int      @map("total_chunks")
   orderNumbers       Json     @map("order_numbers") // string[] - order numbers in this chunk (max 24)
   packageInfo        Json     @map("package_info") // { carrier, service, packaging, weight, dimensions }
-  status             String   @default("PENDING")   // PENDING | COMPLETED
+  status             String   @default("PENDING") // PENDING | COMPLETED
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  @@map("bulk_queue_items")
   @@index([status])
+  @@map("bulk_queue_items")
 }
 
 // Key-value app settings (order highlight rules, future settings).
@@ -121,9 +132,9 @@ model Box {
   correctRules   BoxFeedbackRule[] @relation("CorrectBox")
   singleProducts ProductSize[]     @relation("SingleProductBox")
 
-  @@map("boxes")
   @@index([active])
   @@index([priority])
+  @@map("boxes")
 }
 
 model ProductSize {
@@ -143,34 +154,37 @@ model ProductSize {
   skus        ProductSku[]
   singleBox   Box?                @relation("SingleProductBox", fields: [singleBoxId], references: [id], onDelete: SetNull)
 
-  @@map("product_sizes")
   @@index([active])
   @@index([category])
+  @@map("product_sizes")
 }
 
 model ProductSkuPattern {
-  id            Int         @id @default(autoincrement())
-  productSizeId String      @map("product_size_id")
+  id            Int      @id @default(autoincrement())
+  productSizeId String   @map("product_size_id")
   pattern       String
-  createdAt     DateTime    @default(now()) @map("created_at")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   productSize ProductSize @relation(fields: [productSizeId], references: [id], onDelete: Cascade)
 
-  @@map("product_sku_patterns")
   @@index([productSizeId])
-}model ProductSku {
-  sku           String      @id
-  productSizeId String      @map("product_size_id")
+  @@map("product_sku_patterns")
+}
+model ProductSku {
+  sku           String   @id
+  productSizeId String   @map("product_size_id")
   name          String?
   barcode       String?
-  active        Boolean     @default(true)
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  binLocation   String?  @map("bin_location") // Warehouse location e.g., "A11", "B23"
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   productSize ProductSize @relation(fields: [productSizeId], references: [id], onDelete: Cascade)
 
-  @@map("product_skus")
   @@index([productSizeId])
+  @@index([binLocation])
+  @@map("product_skus")
 }
 
 model BoxFeedbackRule {
@@ -186,9 +200,9 @@ model BoxFeedbackRule {
   correctBox Box? @relation("CorrectBox", fields: [correctBoxId], references: [id], onDelete: SetNull)
 
   @@unique([comboSignature, boxId])
-  @@map("box_feedback_rules")
   @@index([comboSignature])
   @@index([boxId])
+  @@map("box_feedback_rules")
 }
 
 // ============================================================================
@@ -196,17 +210,17 @@ model BoxFeedbackRule {
 // ============================================================================
 
 model UnmatchedSku {
-  sku          String    @id
-  firstSeen    DateTime  @default(now()) @map("first_seen")
-  lastSeen     DateTime  @updatedAt @map("last_seen")
-  occurrences  Int       @default(1)
-  exampleOrder String?   @map("example_order")
-  itemName     String?   @map("item_name")
-  dismissed    Boolean   @default(false)
+  sku          String   @id
+  firstSeen    DateTime @default(now()) @map("first_seen")
+  lastSeen     DateTime @updatedAt @map("last_seen")
+  occurrences  Int      @default(1)
+  exampleOrder String?  @map("example_order")
+  itemName     String?  @map("item_name")
+  dismissed    Boolean  @default(false)
 
-  @@map("unmatched_skus")
   @@index([dismissed])
   @@index([lastSeen])
+  @@map("unmatched_skus")
 }
 
 // ============================================================================
@@ -214,22 +228,22 @@ model UnmatchedSku {
 // ============================================================================
 
 model RateShopper {
-  id                      String   @id @default(cuid())
-  name                    String
-  services                Json     // Array of { carrierId, carrierName, serviceCode, serviceName }
-  transitTimeRestriction  String?  @map("transit_time_restriction") // "no_restriction", "1_day", "2_days", "3_days", "5_days", "7_days"
-  preferenceEnabled       Boolean  @default(false) @map("preference_enabled")
-  preferredServiceCode    String?  @map("preferred_service_code")
-  preferenceType          String?  @map("preference_type") // "dollar" or "percentage"
-  preferenceValue         Float?   @map("preference_value") // Dollar amount or percentage
-  isDefault               Boolean  @default(false) @map("is_default")
-  active                  Boolean  @default(true)
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
+  id                     String   @id @default(cuid())
+  name                   String
+  services               Json // Array of { carrierId, carrierName, serviceCode, serviceName }
+  transitTimeRestriction String?  @map("transit_time_restriction") // "no_restriction", "1_day", "2_days", "3_days", "5_days", "7_days"
+  preferenceEnabled      Boolean  @default(false) @map("preference_enabled")
+  preferredServiceCode   String?  @map("preferred_service_code")
+  preferenceType         String?  @map("preference_type") // "dollar" or "percentage"
+  preferenceValue        Float?   @map("preference_value") // Dollar amount or percentage
+  isDefault              Boolean  @default(false) @map("is_default")
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
 
-  @@map("rate_shoppers")
   @@index([active])
   @@index([isDefault])
+  @@map("rate_shoppers")
 }
 
 // ============================================================================
@@ -237,23 +251,138 @@ model RateShopper {
 // ============================================================================
 
 model Location {
-  id          String   @id @default(cuid())
-  name        String   // e.g., "Main Warehouse", "Kansas City Fulfillment"
-  company     String?
-  addressLine1 String  @map("address_line1")
-  addressLine2 String? @map("address_line2")
-  city        String
-  state       String
-  postalCode  String   @map("postal_code")
-  country     String   @default("US")
-  phone       String
-  email       String?
-  isDefault   Boolean  @default(false) @map("is_default")
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  name         String // e.g., "Main Warehouse", "Kansas City Fulfillment"
+  company      String?
+  addressLine1 String   @map("address_line1")
+  addressLine2 String?  @map("address_line2")
+  city         String
+  state        String
+  postalCode   String   @map("postal_code")
+  country      String   @default("US")
+  phone        String
+  email        String?
+  isDefault    Boolean  @default(false) @map("is_default")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  @@map("locations")
   @@index([active])
   @@index([isDefault])
+  @@map("locations")
+}
+
+// ============================================================================
+// PICKING/PACKING WORKFLOW TABLES
+// ============================================================================
+
+// Cell - Physical picking cell in warehouse (each handles specific box sizes)
+model PickCell {
+  id        String   @id @default(cuid())
+  name      String // e.g., "Cell A", "Cell B"
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  batches PickBatch[]
+
+  @@index([active])
+  @@map("pick_cells")
+}
+
+// Batch - Group of orders assigned to a cell for picking
+model PickBatch {
+  id            String          @id @default(cuid())
+  name          String // Auto-generated: "16oz-Feb05-001"
+  cellId        String          @map("cell_id")
+  status        PickBatchStatus @default(DRAFT)
+  priority      Int             @default(0) // Lower = higher priority within cell
+  totalOrders   Int             @default(0) @map("total_orders")
+  pickedOrders  Int             @default(0) @map("picked_orders")
+  shippedOrders Int             @default(0) @map("shipped_orders")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  releasedAt    DateTime?       @map("released_at")
+  completedAt   DateTime?       @map("completed_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  cell   PickCell    @relation(fields: [cellId], references: [id], onDelete: Cascade)
+  chunks PickChunk[]
+  orders OrderLog[]
+
+  @@index([cellId])
+  @@index([status])
+  @@index([priority])
+  @@map("pick_batches")
+}
+
+enum PickBatchStatus {
+  DRAFT
+  RELEASED
+  IN_PROGRESS
+  COMPLETED
+}
+
+// Chunk - Internal unit of 12 orders assigned to a picker/cart (admin doesn't see these)
+model PickChunk {
+  id                  String          @id @default(cuid())
+  batchId             String          @map("batch_id")
+  chunkNumber         Int             @map("chunk_number") // Sequential within batch
+  status              PickChunkStatus @default(AVAILABLE)
+  cartId              String?         @map("cart_id")
+  pickerName          String?         @map("picker_name")
+  shipperName         String?         @map("shipper_name")
+  ordersInChunk       Int             @default(0) @map("orders_in_chunk")
+  ordersShipped       Int             @default(0) @map("orders_shipped")
+  ordersSkipped       Int             @default(0) @map("orders_skipped")
+  claimedAt           DateTime?       @map("claimed_at")
+  pickingStartedAt    DateTime?       @map("picking_started_at")
+  pickingCompletedAt  DateTime?       @map("picking_completed_at")
+  shippingStartedAt   DateTime?       @map("shipping_started_at")
+  shippingCompletedAt DateTime?       @map("shipping_completed_at")
+  pickDurationSeconds Int?            @map("pick_duration_seconds")
+  shipDurationSeconds Int?            @map("ship_duration_seconds")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  batch  PickBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  cart   PickCart?  @relation(fields: [cartId], references: [id], onDelete: SetNull)
+  orders OrderLog[]
+
+  @@index([batchId])
+  @@index([status])
+  @@index([cartId])
+  @@map("pick_chunks")
+}
+
+enum PickChunkStatus {
+  AVAILABLE // Ready to be claimed
+  PICKING // Picker is working on it
+  PICKED // All items picked, ready for shipping
+  SHIPPING // Shipper is working on it
+  COMPLETED // All orders shipped
+  CANCELLED // Chunk was cancelled, orders returned to queue
+}
+
+// Cart - Physical picking cart with 12 bins
+model PickCart {
+  id        String         @id @default(cuid())
+  name      String // e.g., "Cart 1", "Cart 2"
+  color     String? // Optional color for identification
+  status    PickCartStatus @default(AVAILABLE)
+  active    Boolean        @default(true)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  chunks PickChunk[]
+
+  @@index([status])
+  @@index([active])
+  @@map("pick_carts")
+}
+
+enum PickCartStatus {
+  AVAILABLE // Cart is free to use
+  PICKING // Cart is being used for picking
+  PICKED_READY // Cart is picked and ready for shipping
+  SHIPPING // Cart is being shipped
 }

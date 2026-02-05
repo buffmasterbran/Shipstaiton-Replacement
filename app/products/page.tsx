@@ -30,6 +30,7 @@ interface ProductSku {
   productSizeId: string
   name: string | null
   barcode: string | null
+  binLocation: string | null
   active: boolean
 }
 
@@ -91,6 +92,7 @@ export default function ProductsPage() {
     sku: '',
     name: '',
     barcode: '',
+    binLocation: '',
     active: true,
   })
 
@@ -268,6 +270,7 @@ export default function ProductsPage() {
       sku: '',
       name: '',
       barcode: '',
+      binLocation: '',
       active: true,
     })
     setEditingSku(null)
@@ -288,6 +291,7 @@ export default function ProductsPage() {
       sku: sku.sku,
       name: sku.name ?? '',
       barcode: sku.barcode ?? '',
+      binLocation: sku.binLocation ?? '',
       active: sku.active,
     })
     setEditingSku(sku)
@@ -309,6 +313,7 @@ export default function ProductsPage() {
             sizeId,
             name: skuForm.name || undefined,
             barcode: skuForm.barcode || undefined,
+            binLocation: skuForm.binLocation || undefined,
             active: skuForm.active,
           }
         : {
@@ -317,6 +322,7 @@ export default function ProductsPage() {
             sizeId,
             name: skuForm.name || undefined,
             barcode: skuForm.barcode || undefined,
+            binLocation: skuForm.binLocation || undefined,
             active: skuForm.active,
           }
 
@@ -383,6 +389,7 @@ export default function ProductsPage() {
       sku: unmatchedSku.sku,
       name: unmatchedSku.itemName || '',
       barcode: '',
+      binLocation: '',
       active: true,
     })
     setAddingSkuForSizeId(sizeId)
@@ -760,7 +767,7 @@ export default function ProductsPage() {
                     {/* Add/Edit SKU Form */}
                     {(isAddingSku || isEditingSkuForThisSize) && (
                       <div className="mb-4 p-3 bg-white border rounded">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                           <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">SKU Code *</label>
                             <input
@@ -789,6 +796,16 @@ export default function ProductsPage() {
                               onChange={(e) => setSkuForm({ ...skuForm, barcode: e.target.value })}
                               className="w-full border rounded px-2 py-1.5 text-sm"
                               placeholder="123456789"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Bin Location</label>
+                            <input
+                              type="text"
+                              value={skuForm.binLocation}
+                              onChange={(e) => setSkuForm({ ...skuForm, binLocation: e.target.value })}
+                              className="w-full border rounded px-2 py-1.5 text-sm"
+                              placeholder="A11"
                             />
                           </div>
                           <div className="flex items-end gap-2">
@@ -831,6 +848,7 @@ export default function ProductsPage() {
                             <th className="text-left py-1">SKU</th>
                             <th className="text-left py-1">Variant</th>
                             <th className="text-left py-1">Barcode</th>
+                            <th className="text-left py-1">Bin Location</th>
                             <th className="text-left py-1">Status</th>
                             <th className="text-right py-1">Actions</th>
                           </tr>
@@ -841,6 +859,7 @@ export default function ProductsPage() {
                               <td className="py-2 font-mono text-gray-900">{sku.sku}</td>
                               <td className="py-2 text-gray-600">{sku.name || '—'}</td>
                               <td className="py-2 text-gray-600 font-mono">{sku.barcode || '—'}</td>
+                              <td className="py-2 text-gray-600 font-mono">{sku.binLocation || '—'}</td>
                               <td className="py-2">
                                 {sku.active ? (
                                   <span className="text-green-600 text-xs">Active</span>

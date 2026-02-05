@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import OrderDialog from './OrderDialog'
 import BatchDialog from './BatchDialog'
+import AddToBatchDialog from './AddToBatchDialog'
 import { formatWeight } from '@/lib/weight-utils'
 import BoxConfirmDialog from './BoxConfirmDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
@@ -14,6 +15,7 @@ interface OrderLog {
   orderNumber: string
   status: string
   rawPayload: any
+  batchId?: string | null
   suggestedBox?: {
     boxId: string | null
     boxName: string | null
@@ -73,6 +75,10 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   // Box confirm dialog state
   const [isBoxConfirmOpen, setIsBoxConfirmOpen] = useState(false)
   const [boxConfirmOrder, setBoxConfirmOrder] = useState<ProcessedOrder | null>(null)
+
+  // Selection state for Add to Batch
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
+  const [isAddToBatchDialogOpen, setIsAddToBatchDialogOpen] = useState(false)
 
   // Process orders to extract items
   const processedOrders = useMemo(() => {
@@ -199,6 +205,50 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
     return filtered
   }, [processedOrders, selectedBoxFilter, searchQuery, expeditedFilter, personalizedFilter, confidenceFilter])
+
+  // Get orders that are eligible for batch selection (not already in a batch)
+  const selectableOrders = useMemo(() => {
+    return filteredOrders.filter(order => !order.log.batchId)
+  }, [filteredOrders])
+
+  // Check if all selectable orders are selected
+  const allSelectableSelected = useMemo(() => {
+    if (selectableOrders.length === 0) return false
+    return selectableOrders.every(order => selectedOrderIds.has(order.log.orderNumber))
+  }, [selectableOrders, selectedOrderIds])
+
+  // Toggle selection for a single order
+  const toggleOrderSelection = (orderNumber: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedOrderIds(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(orderNumber)) {
+        newSet.delete(orderNumber)
+      } else {
+        newSet.add(orderNumber)
+      }
+      return newSet
+    })
+  }
+
+  // Toggle all selectable orders
+  const toggleAllSelection = () => {
+    if (allSelectableSelected) {
+      // Deselect all
+      setSelectedOrderIds(new Set())
+    } else {
+      // Select all selectable
+      setSelectedOrderIds(new Set(selectableOrders.map(o => o.log.orderNumber)))
+    }
+  }
+
+  // Handle batch creation success
+  const handleBatchCreated = () => {
+    setSelectedOrderIds(new Set())
+    setIsAddToBatchDialogOpen(false)
+    // Refresh the page to get updated orders
+    window.location.reload()
+  }
 
   // Count orders per box
   const orderCountsByBox = useMemo(() => {
@@ -510,7 +560,25 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
             <p className="text-sm text-gray-500 mt-1">Orders organized by suggested box assignment</p>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-600">Found {filteredOrders.length} orders</span>
+            <span className="text-sm text-gray-600">
+              Found {filteredOrders.length} orders
+              {selectedOrderIds.size > 0 && (
+                <span className="ml-2 text-green-600 font-medium">
+                  ({selectedOrderIds.size} selected)
+                </span>
+              )}
+            </span>
+            {selectedOrderIds.size > 0 && (
+              <button
+                onClick={() => setIsAddToBatchDialogOpen(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+                Add to Batch ({selectedOrderIds.size})
+              </button>
+            )}
             {filteredOrders.length > 0 && (
               <button
                 onClick={() => setIsBatchDialogOpen(true)}
@@ -519,7 +587,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                 </svg>
-                Batch
+                Print Slips
               </button>
             )}
             <div className="relative">
@@ -546,6 +614,16 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                  <input
+                    type="checkbox"
+                    checked={allSelectableSelected && selectableOrders.length > 0}
+                    onChange={toggleAllSelection}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    title={selectableOrders.length > 0 ? "Select all" : "No orders available to select"}
+                    disabled={selectableOrders.length === 0}
+                  />
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ORDER ID
                 </th>
@@ -586,14 +664,39 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                 const remainingCount = order.items.length - 2
                 const suggestion = order.log.suggestedBox
 
+                const isInBatch = !!order.log.batchId
+                const isSelected = selectedOrderIds.has(order.log.orderNumber)
+
                 return (
                   <tr
                     key={order.log.id}
-                    className="hover:bg-gray-50 cursor-pointer"
+                    className={`hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-blue-50' : ''} ${isInBatch ? 'opacity-60' : ''}`}
                     onClick={() => handleRowClick(order)}
                   >
+                    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      {isInBatch ? (
+                        <span className="text-xs text-gray-400" title="Already in a batch">
+                          <svg className="w-4 h-4 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
+                        </span>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => toggleOrderSelection(order.log.orderNumber, e as any)}
+                          onClick={(e) => toggleOrderSelection(order.log.orderNumber, e)}
+                          className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                      )}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                       #{order.log.orderNumber}
+                      {isInBatch && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">
+                          In Batch
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                       {order.customerName}
@@ -700,6 +803,12 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           onFeedbackSaved={handleBoxFeedbackSaved}
         />
       )}
+      <AddToBatchDialog
+        isOpen={isAddToBatchDialogOpen}
+        onClose={() => setIsAddToBatchDialogOpen(false)}
+        selectedOrderNumbers={Array.from(selectedOrderIds)}
+        onBatchCreated={handleBatchCreated}
+      />
     </>
   )
 }

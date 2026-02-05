@@ -22,6 +22,7 @@ export interface ProductSku {
   productSizeId: string
   name: string | null
   barcode: string | null
+  binLocation: string | null
   active: boolean
 }
 
@@ -295,6 +296,7 @@ export async function addProductSku(
     productSizeId: string
     name?: string
     barcode?: string
+    binLocation?: string
     active?: boolean
   }
 ): Promise<ProductSku> {
@@ -304,6 +306,7 @@ export async function addProductSku(
       productSizeId: data.productSizeId,
       name: data.name ?? null,
       barcode: data.barcode ?? null,
+      binLocation: data.binLocation ?? null,
       active: data.active ?? true,
     },
   })
@@ -317,6 +320,7 @@ export async function updateProductSku(
     productSizeId: string
     name: string | null
     barcode: string | null
+    binLocation: string | null
     active: boolean
   }>
 ): Promise<ProductSku> {
@@ -332,6 +336,7 @@ export async function updateProductSku(
         productSizeId: data.productSizeId ?? existing.productSizeId,
         name: data.name !== undefined ? data.name : existing.name,
         barcode: data.barcode !== undefined ? data.barcode : existing.barcode,
+        binLocation: data.binLocation !== undefined ? data.binLocation : existing.binLocation,
         active: data.active !== undefined ? data.active : existing.active,
       },
     })
