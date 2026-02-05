@@ -646,9 +646,9 @@ export default function SettingsPage() {
                         {canRelease && (
                           <button
                             onClick={() => handleReleaseCart(cart)}
-                            className="text-xs px-2 py-1 rounded text-orange-600 hover:bg-orange-50 font-medium"
+                            className="text-xs px-3 py-1.5 rounded bg-orange-100 text-orange-700 hover:bg-orange-200 font-semibold border border-orange-300"
                           >
-                            Release
+                            Release Cart
                           </button>
                         )}
                         <button
@@ -661,12 +661,19 @@ export default function SettingsPage() {
                         >
                           {cart.active ? 'Deactivate' : 'Activate'}
                         </button>
-                        <button
-                          onClick={() => handleDeleteCart(cart)}
-                          className="text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded"
-                        >
-                          Delete
-                        </button>
+                        {!canRelease && (
+                          <button
+                            onClick={() => handleDeleteCart(cart)}
+                            className="text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded"
+                          >
+                            Delete
+                          </button>
+                        )}
+                        {canRelease && (
+                          <span className="text-xs text-gray-400" title="Release the cart first before deleting">
+                            (Release to delete)
+                          </span>
+                        )}
                       </div>
                     </div>
                   )
