@@ -1,10 +1,21 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import Barcode from 'react-barcode'
 
 // ============================================================================
 // Types
 // ============================================================================
+
+// Convert shipstationId to barcode string: ^#^ + hex + ^
+function getShipstationBarcode(order: ChunkOrder | null): string | null {
+  if (!order) return null
+  const ssId = order.rawPayload?.shipstationOrderId || order.rawPayload?.shipstationId
+  if (!ssId) return null
+  const numId = typeof ssId === 'number' ? ssId : parseInt(ssId, 10)
+  if (isNaN(numId) || numId <= 0) return null
+  return '^#^' + numId.toString(16) + '^'
+}
 
 interface PickCart {
   id: string
@@ -177,6 +188,8 @@ function StandardVerification({
   }
   if (!order) return null
 
+  const ssBarcode = getShipstationBarcode(order)
+
   return (
     <div className="flex-1 flex flex-col">
       <div className="bg-white shadow p-4 mb-4">
@@ -190,6 +203,11 @@ function StandardVerification({
             <div className="text-4xl font-bold text-blue-600">{binNumber}</div>
           </div>
         </div>
+        {ssBarcode && (
+          <div className="mt-3 flex justify-center">
+            <Barcode value={ssBarcode} width={1.5} height={40} fontSize={12} margin={4} />
+          </div>
+        )}
       </div>
 
       <div className="px-4 mb-4">
@@ -620,6 +638,14 @@ function BulkVerification({
             </div>
           </div>
         </div>
+        {(() => {
+          const bulkBarcode = getShipstationBarcode(order)
+          return bulkBarcode ? (
+            <div className="mt-3 flex justify-center">
+              <Barcode value={bulkBarcode} width={1.5} height={40} fontSize={12} margin={4} />
+            </div>
+          ) : null
+        })()}
       </div>
 
       {/* Scan input */}
