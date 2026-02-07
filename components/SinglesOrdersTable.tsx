@@ -85,13 +85,13 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         const payload = log.rawPayload as any
         const order = Array.isArray(payload) ? payload[0] : payload
         const items = order?.items || []
-
+        
         const mainItem = items.find(
           (item: any) => !isShippingInsurance(item.sku || '', item.name || '')
         )
-
+        
         if (!mainItem) return null
-
+        
         // Already in a batch? Skip.
         if (log.batchId) return null
 
@@ -102,7 +102,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         const size = log.suggestedBox?.boxName || getSizeFromSku(sku)
         const color = getColorFromSku(sku, mainItem.name, mainItem.color)
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
-
+        
         return {
           log,
           order,
@@ -169,7 +169,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           return false
         }
       }
-
+      
       return true
     })
   }, [processedOrders, selectedSize, selectedVariation, searchQuery, expeditedFilter])
@@ -184,7 +184,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       if (existing) {
         existing.count++
         existing.orders.push(order)
-      } else {
+        } else {
         groups.set(key, {
           sku: order.sku,
           name: order.mainItem.name || getDisplayName(order.sku),
@@ -205,8 +205,8 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
     const orderNumbers = filteredOrders.map(o => o.log.orderNumber)
 
     const res = await fetch('/api/batches', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         orderNumbers,
         cellIds,
@@ -214,16 +214,16 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         isPersonalized: false,
         customName,
       }),
-    })
-
-    if (!res.ok) {
-      const data = await res.json()
+        })
+        
+        if (!res.ok) {
+          const data = await res.json()
       throw new Error(data.error || 'Failed to create batch')
-    }
-
-    const data = await res.json()
+        }
+        
+        const data = await res.json()
     setPushMessage({
-      type: 'success',
+          type: 'success',
       text: `Created batch "${data.batch.name}" with ${data.summary.totalOrders} orders → assigned to ${data.summary.cellsAssigned} cell(s)`,
     })
 
@@ -241,7 +241,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const sortedSizes = Object.entries(sizeCounts).sort((a, b) => b[1] - a[1])
   const sortedVariations = Object.entries(variationCounts).sort((a, b) => b[1] - a[1])
 
-  return (
+    return (
     <div className="space-y-4">
       {/* Success/Error message */}
       {pushMessage && (
@@ -250,11 +250,11 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
         }`}>
           {pushMessage.text}
           <button onClick={() => setPushMessage(null)} className="ml-2 underline">Dismiss</button>
-        </div>
+      </div>
       )}
 
       {/* Size filter buttons with counts */}
-      <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
         <button
           onClick={() => { setSelectedSize('all'); setSelectedVariation('all') }}
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -266,8 +266,8 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           All Sizes ({processedOrders.length})
         </button>
         {sortedSizes.map(([size, count]) => (
-          <button
-            key={size}
+            <button
+              key={size}
             onClick={() => { setSelectedSize(size); setSelectedVariation('all') }}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               selectedSize === size
@@ -276,13 +276,13 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             }`}
           >
             {size} ({count})
-          </button>
-        ))}
+            </button>
+          ))}
       </div>
 
       {/* Variation filter buttons with counts */}
-      <div className="flex flex-wrap gap-2">
-        <button
+        <div className="flex flex-wrap gap-2">
+            <button
           onClick={() => setSelectedVariation('all')}
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
             selectedVariation === 'all'
@@ -303,13 +303,13 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             }`}
           >
             {variation} ({count})
-          </button>
-        ))}
+            </button>
+          ))}
       </div>
 
       {/* Search + Action bar */}
       <div className="flex items-center justify-between gap-4">
-        <input
+            <input
           type="text"
           placeholder="Search by order #, customer, or SKU..."
           value={searchQuery}
@@ -317,10 +317,10 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         />
 
-        <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">
             {filteredOrders.length} orders &middot; {skuGroups.length} SKU groups
-          </span>
+                    </span>
           <PackingSlipButton
             getOrders={() => filteredOrders.map(o => ({
               orderNumber: o.log.orderNumber,
@@ -330,22 +330,22 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             }))}
             disabled={filteredOrders.length === 0}
           />
-          <button
+                  <button
             onClick={() => setIsPushDialogOpen(true)}
             disabled={filteredOrders.length === 0}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
           >
             Push to Queue ({filteredOrders.length})
-          </button>
+                    </button>
         </div>
-      </div>
-
+                  </div>
+                  
       {/* SKU Grouping Summary */}
       {skuGroups.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
             <h3 className="text-sm font-semibold text-gray-700">SKU Groupings ({skuGroups.length} groups, {filteredOrders.length} orders)</h3>
-          </div>
+                  </div>
           <div className="divide-y divide-gray-100 max-h-[300px] overflow-y-auto">
             {skuGroups.map((group) => (
               <div key={group.sku} className="px-4 py-2 flex items-center justify-between hover:bg-gray-50">
@@ -355,8 +355,8 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                   <span className="text-xs text-gray-500">{group.size}</span>
                   {group.color && group.color !== 'Unknown' && (
                     <span className="text-xs text-gray-500">{group.color}</span>
-                  )}
-                </div>
+              )}
+            </div>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                     {group.count} order{group.count !== 1 ? 's' : ''}
@@ -364,10 +364,10 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                   {group.count > 24 && (
                     <span className="text-xs text-amber-600">
                       ({Math.ceil(group.count / 24)} bins)
-                    </span>
-                  )}
-                </div>
-              </div>
+              </span>
+            )}
+          </div>
+            </div>
             ))}
           </div>
         </div>
@@ -375,9 +375,9 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
 
       {/* Orders Table */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
@@ -385,52 +385,52 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Variation</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-            </tr>
-          </thead>
+              </tr>
+            </thead>
           <tbody className="divide-y divide-gray-200">
-            {filteredOrders.length === 0 ? (
-              <tr>
+              {filteredOrders.length === 0 ? (
+                <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                   No orders match the current filters
-                </td>
-              </tr>
-            ) : (
+                  </td>
+                </tr>
+              ) : (
               filteredOrders.slice(0, 200).map((processedOrder) => (
-                <tr
-                  key={processedOrder.log.id}
+                  <tr
+                    key={processedOrder.log.id}
                   onClick={() => handleRowClick(processedOrder)}
                   className="hover:bg-gray-50 cursor-pointer"
                 >
                   <td className="px-4 py-2 text-sm font-mono text-gray-900">
                     {processedOrder.log.orderNumber}
-                  </td>
+                    </td>
                   <td className="px-4 py-2 text-sm font-mono text-gray-600">
                     {processedOrder.sku}
-                  </td>
+                    </td>
                   <td className="px-4 py-2 text-sm text-gray-800">
                     {processedOrder.mainItem.name || getDisplayName(processedOrder.sku)}
-                  </td>
+                    </td>
                   <td className="px-4 py-2 text-sm text-gray-600">
                     {processedOrder.size}
-                  </td>
+                    </td>
                   <td className="px-4 py-2 text-sm text-gray-600">
                     {processedOrder.color || '—'}
-                  </td>
+                    </td>
                   <td className="px-4 py-2 text-sm text-gray-800">
                     {processedOrder.customerName}
-                  </td>
+                    </td>
                   <td className="px-4 py-2 text-sm text-gray-500">
-                    {new Date(processedOrder.orderDate).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                      {new Date(processedOrder.orderDate).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         {filteredOrders.length > 200 && (
           <div className="px-4 py-2 text-xs text-gray-500 bg-gray-50 border-t">
             Showing first 200 of {filteredOrders.length} orders
-          </div>
+        </div>
         )}
       </div>
 
@@ -451,12 +451,12 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
 
       {/* Order Detail Dialog */}
       {isDialogOpen && selectedOrder && (
-        <OrderDialog
-          isOpen={isDialogOpen}
+      <OrderDialog
+        isOpen={isDialogOpen}
           onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
-          order={selectedOrder}
-          rawPayload={selectedRawPayload}
-        />
+        order={selectedOrder}
+        rawPayload={selectedRawPayload}
+      />
       )}
     </div>
   )

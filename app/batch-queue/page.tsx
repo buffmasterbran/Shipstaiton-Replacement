@@ -487,6 +487,7 @@ export default function BatchQueuePage() {
   const [error, setError] = useState<string | null>(null)
   const [activeBatch, setActiveBatch] = useState<PickBatch | null>(null)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [resetting, setResetting] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -633,6 +634,24 @@ export default function BatchQueuePage() {
     }
   }
 
+  const handleResetBatches = async () => {
+    if (!confirm('⚠️ This will DELETE all batches, chunks, and bulk batches, unlink all orders, and reset all carts. Are you sure?')) return
+    if (!confirm('This cannot be undone. Type OK to confirm you want to clear ALL batch data.')) return
+
+    setResetting(true)
+    try {
+      const res = await fetch('/api/batches/reset', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Reset failed')
+      alert(`Reset complete!\n\n• ${data.ordersUnlinked} orders unlinked\n• ${data.batchesDeleted} batches deleted\n• ${data.chunksDeleted} chunks deleted\n• ${data.bulkBatchesDeleted} bulk batches deleted\n• ${data.cartsReset} carts reset`)
+      fetchData()
+    } catch (err: any) {
+      alert('Reset failed: ' + (err.message || 'Unknown error'))
+    } finally {
+      setResetting(false)
+    }
+  }
+
   // Loading / Error states
   if (loading) {
     return (
@@ -673,6 +692,13 @@ export default function BatchQueuePage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-900">Batch Queue</h1>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleResetBatches}
+            disabled={resetting}
+            className="px-3 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {resetting ? 'Resetting...' : 'Reset All Batches'}
+          </button>
           <label className="flex items-center gap-2 text-sm text-gray-600">
             <input
               type="checkbox"

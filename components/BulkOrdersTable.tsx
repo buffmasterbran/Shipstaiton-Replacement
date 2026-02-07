@@ -206,15 +206,15 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
     const allOrderNumbers = groups.flatMap(g => g.orders.map(o => o.log.orderNumber))
 
     const res = await fetch('/api/batches', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
         orderNumbers: allOrderNumbers,
         cellIds,
         type: 'BULK',
         customName,
-      }),
-    })
+        }),
+      })
 
     if (!res.ok) {
       const data = await res.json()
@@ -266,8 +266,8 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
             className="w-40"
           />
           <span className="text-sm font-mono font-medium text-gray-900 w-8">{bulkThreshold}</span>
-        </div>
-
+  </div>
+  
         {/* Box size filter */}
         {boxSizes.length > 0 && (
           <div className="flex items-center gap-2">
@@ -282,11 +282,11 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                 <option key={size} value={size}>{size}</option>
               ))}
             </select>
-          </div>
+      </div>
         )}
 
         {/* Search */}
-        <input
+            <input
           type="text"
           placeholder="Search SKU, order #, customer..."
           value={searchQuery}
@@ -299,20 +299,20 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-            <input
-              type="checkbox"
+              <input
+                type="checkbox"
               checked={allGroupsSelected}
               onChange={toggleSelectAll}
               className="rounded border-gray-300"
             />
             Select all
-          </label>
+            </label>
           <span className="text-sm text-gray-500">
             {filteredGroups.length} group{filteredGroups.length !== 1 ? 's' : ''} &middot; {totalVisibleOrders} orders
             {selectedGroupSigs.size > 0 && ` (${selectedGroupSigs.size} selected, ${selectedOrderCount} orders)`}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
           <PackingSlipButton
             getOrders={() => {
               const allOrders: Array<{ orderNumber: string; customerName: string; shipTo: any; items: Array<{ sku: string; name: string; quantity: number }> }> = []
@@ -356,41 +356,41 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
               ? `No groups with ${bulkThreshold}+ identical orders. Try lowering the threshold.`
               : 'No bulk-eligible orders found (need 2-4 items per order with identical duplicates).'
             }
-          </div>
+        </div>
         ) : (
           filteredGroups.map((group) => (
             <div key={group.signature} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               {/* Group header */}
               <div className="bg-gray-50 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <input
+          <input
                     type="checkbox"
                     checked={selectedGroupSigs.has(group.signature)}
                     onChange={() => toggleGroupSelection(group.signature)}
                     className="rounded border-gray-300"
                   />
                   <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold bg-orange-100 text-orange-700">
-                    {group.totalOrders} orders
-                  </span>
+                          {group.totalOrders} orders
+                        </span>
                   <span className="text-sm text-gray-600">
                     {group.itemsPerOrder} item{group.itemsPerOrder !== 1 ? 's' : ''}/order
-                  </span>
+                      </span>
                   {group.boxName && (
                     <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{group.boxName}</span>
                   )}
                   {group.splits.length > 1 && (
                     <span className="text-xs text-amber-600">
                       → {group.splits.length} splits ({group.splits.join(', ')})
-                    </span>
+                          </span>
                   )}
-                </div>
-                <button
+                              </div>
+                        <button
                   onClick={() => { setSelectedGroup(group); setPushAllMode(false); setIsPushDialogOpen(true) }}
                   className="px-3 py-1.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium transition-colors"
                 >
                   Push Group
-                </button>
-              </div>
+                          </button>
+                        </div>
 
               {/* Items in the order */}
               <div className="px-4 py-2 border-b border-gray-100">
@@ -422,9 +422,9 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                       <span className="font-mono text-gray-600">{o.log.orderNumber}</span>
                       <span className="text-gray-500">{o.customerName}</span>
                       <span className="text-gray-400 text-xs">{new Date(o.orderDate).toLocaleDateString()}</span>
-                    </div>
+                        </div>
                   ))}
-                </div>
+        </div>
               </details>
             </div>
           ))
@@ -451,12 +451,12 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
 
       {/* Order Detail Dialog */}
       {isDialogOpen && selectedOrder && (
-        <OrderDialog
-          isOpen={isDialogOpen}
+      <OrderDialog
+        isOpen={isDialogOpen}
           onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
-          order={selectedOrder}
-          rawPayload={selectedRawPayload}
-        />
+        order={selectedOrder}
+        rawPayload={selectedRawPayload}
+      />
       )}
     </div>
   )
