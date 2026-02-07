@@ -978,9 +978,9 @@ export default function CartScanPage() {
     const isBulkMode = pickingMode === 'BULK'
 
     return (
-      <div className="min-h-screen bg-gray-100 flex flex-col">
+      <div className="h-screen bg-gray-100 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-white shadow p-4">
+        <div className="bg-white shadow px-4 py-2 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="font-bold text-lg">{cart.name}</div>
@@ -995,31 +995,7 @@ export default function CartScanPage() {
           </div>
         </div>
 
-        {/* Bin grid (for Singles/OBS -- Bulk has its own grid inside BulkVerification) */}
-        {!isBulkMode && (
-          <div className="p-4">
-            <div className="grid gap-2 bg-gray-100 rounded-lg p-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((bin) => {
-                const binShipped = (ordersByBin.get(bin) || []).every(o => shippedOrders.has(o.orderNumber))
-                const isCurrent = bin === currentBin
-                const isEmpty = emptyBins.has(bin) || !ordersByBin.has(bin)
-
-                let bg = 'bg-white', border = 'border-gray-300', text = 'text-gray-600'
-                if (isEmpty) { bg = 'bg-gray-200'; border = 'border-gray-400'; text = 'text-gray-400' }
-                else if (binShipped) { bg = 'bg-green-100'; border = 'border-green-500'; text = 'text-green-700' }
-                else if (isCurrent) { bg = 'bg-blue-100'; border = 'border-blue-500'; text = 'text-blue-700' }
-
-                return (
-                  <div key={bin} className={`aspect-square flex items-center justify-center rounded-lg border-2 font-bold text-xl ${bg} ${border} ${text}`}>
-                    {isEmpty ? '—' : binShipped ? '✓' : bin}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Mode-specific verification */}
+        {/* Main content: Grid left, Verification right (for non-Bulk) */}
         {isBulkMode ? (
           <BulkVerification
             shelfAssignments={bulkShelfAssignments}
@@ -1047,21 +1023,50 @@ export default function CartScanPage() {
               setStep('complete')
             }}
           />
-        ) : pickingMode === 'SINGLES' ? (
-          <SinglesVerification
-            binOrders={isEmptyBin ? [] : binOrders}
-            binNumber={currentBin}
-            onComplete={handleBinComplete}
-            onNext={handleNextBin}
-          />
         ) : (
-          <StandardVerification
-            order={isEmptyBin ? null : binOrders[0] || null}
-            binNumber={currentBin}
-            isEmpty={isEmptyBin}
-            onComplete={handleOrderComplete}
-            onNext={handleNextBin}
-          />
+          <div className="flex-1 flex flex-col lg:flex-row">
+            {/* Left: Bin grid */}
+            <div className="flex-1 p-3">
+              <div className="grid gap-2 bg-white rounded-lg p-3 shadow h-full" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((bin) => {
+                  const binShipped = (ordersByBin.get(bin) || []).every(o => shippedOrders.has(o.orderNumber))
+                  const isCurrent = bin === currentBin
+                  const isEmpty = emptyBins.has(bin) || !ordersByBin.has(bin)
+
+                  let bg = 'bg-gray-50', border = 'border-gray-300', text = 'text-gray-600'
+                  if (isEmpty) { bg = 'bg-gray-200'; border = 'border-gray-400'; text = 'text-gray-400' }
+                  else if (binShipped) { bg = 'bg-green-100'; border = 'border-green-500'; text = 'text-green-700' }
+                  else if (isCurrent) { bg = 'bg-blue-100'; border = 'border-blue-500'; text = 'text-blue-700' }
+
+                  return (
+                    <div key={bin} className={`flex items-center justify-center rounded-xl border-2 font-bold text-2xl ${bg} ${border} ${text}`}>
+                      {isEmpty ? '—' : binShipped ? '✓' : bin}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Right: Verification content */}
+            <div className="lg:w-96 xl:w-[420px] shrink-0 flex flex-col min-w-0 overflow-y-auto">
+              {pickingMode === 'SINGLES' ? (
+                <SinglesVerification
+                  binOrders={isEmptyBin ? [] : binOrders}
+                  binNumber={currentBin}
+                  onComplete={handleBinComplete}
+                  onNext={handleNextBin}
+                />
+              ) : (
+                <StandardVerification
+                  order={isEmptyBin ? null : binOrders[0] || null}
+                  binNumber={currentBin}
+                  isEmpty={isEmptyBin}
+                  onComplete={handleOrderComplete}
+                  onNext={handleNextBin}
+                />
+              )}
+            </div>
+          </div>
         )}
       </div>
     )
