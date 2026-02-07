@@ -337,16 +337,16 @@ export default function SettingsPage() {
               <span className="text-sm text-gray-600">No highlight (newest)</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-32 h-8 bg-[#ff9900] rounded flex items-center justify-center text-xs text-white font-medium">
+              <div className="w-32 h-8 bg-white border-l-4 border-l-yellow-400 border rounded flex items-center justify-center text-xs text-gray-700 font-medium">
                 {oh.orangeMinDays + 1}–{oh.orangeMaxDays} days
               </div>
-              <span className="text-sm text-gray-600">Orange row</span>
+              <span className="text-sm text-gray-600">Yellow accent</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-32 h-8 bg-[#ff0000] rounded flex items-center justify-center text-xs text-white font-medium">
+              <div className="w-32 h-8 bg-white border-l-4 border-l-red-500 border rounded flex items-center justify-center text-xs text-gray-700 font-medium">
                 {oh.redMinDays}+ days
               </div>
-              <span className="text-sm text-gray-600">Red row (oldest)</span>
+              <span className="text-sm text-gray-600">Red accent (oldest)</span>
             </div>
           </div>
         </div>
@@ -356,8 +356,8 @@ export default function SettingsPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                <span className="inline-block w-3 h-3 bg-[#ff9900] rounded mr-2"></span>
-                Orange: start at
+                <span className="inline-block w-3 h-3 bg-yellow-400 rounded mr-2"></span>
+                Yellow: start at
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -377,8 +377,8 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                <span className="inline-block w-3 h-3 bg-[#ff9900] rounded mr-2"></span>
-                Orange: end at
+                <span className="inline-block w-3 h-3 bg-yellow-400 rounded mr-2"></span>
+                Yellow: end at
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -400,7 +400,7 @@ export default function SettingsPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              <span className="inline-block w-3 h-3 bg-[#ff0000] rounded mr-2"></span>
+              <span className="inline-block w-3 h-3 bg-red-500 rounded mr-2"></span>
               Red: start at
             </label>
             <div className="flex items-center gap-2">

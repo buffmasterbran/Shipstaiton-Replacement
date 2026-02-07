@@ -541,21 +541,16 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                 const itemCount = order?.items?.length || 0
                 const customerName = order?.shipTo?.name || order?.billTo?.name || 'N/A'
                 const highlightType = getOrderHighlightType(log, orderHighlightSettings)
-                // Whole row = solid red or orange; force white text on cells and all descendants (overrides text-gray-*).
-                const rowStyle =
-                  highlightType === 'red'
-                    ? 'bg-[#ff0000] hover:opacity-90 [&_td]:!text-white [&_td_*]:!text-white'
-                    : highlightType === 'orange'
-                      ? 'bg-[#ff9900] hover:opacity-90 [&_td]:!text-white [&_td_*]:!text-white'
-                      : 'hover:bg-blue-50'
 
                 return (
                   <tr
                     key={log.id}
                     onClick={() => handleRowClick(log)}
-                    className={`cursor-pointer transition-colors ${rowStyle}`}
+                    className="cursor-pointer transition-colors hover:bg-gray-50"
                   >
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className={`px-4 py-3 whitespace-nowrap border-l-4 ${
+                      highlightType === 'red' ? 'border-l-red-500' : highlightType === 'orange' ? 'border-l-yellow-400' : 'border-l-transparent'
+                    }`}>
                       <span className="text-sm font-semibold text-gray-900">
                         {order?.orderNumber || log.orderNumber}
                       </span>
@@ -631,9 +626,13 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span
                         className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                          highlightType === 'red' || highlightType === 'orange'
-                            ? 'bg-black/50 text-white'
-                            : 'bg-green-100 text-green-800'
+                          highlightType === 'red'
+                            ? 'bg-red-100 text-red-700'
+                            : highlightType === 'orange'
+                              ? 'bg-yellow-100 text-yellow-700'
+                              : log.status === 'SHIPPED'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-blue-100 text-blue-800'
                         }`}
                       >
                         {log.status}
@@ -643,11 +642,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                       <div className="flex items-center gap-1">
                         <button
                           onClick={(e) => handleEditClick(log, e)}
-                          className={`p-1.5 rounded hover:bg-blue-100 transition-colors ${
-                            highlightType === 'red' || highlightType === 'orange'
-                              ? 'text-white hover:text-blue-600 hover:bg-white/20'
-                              : 'text-gray-400 hover:text-blue-600'
-                          }`}
+                          className="p-1.5 rounded hover:bg-blue-100 transition-colors text-gray-400 hover:text-blue-600"
                           title="Edit order"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -660,9 +655,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
                             log.status === 'ON_HOLD'
                               ? 'bg-yellow-200 text-yellow-800 cursor-default'
-                              : highlightType === 'red' || highlightType === 'orange'
-                                ? 'bg-white/20 text-white hover:bg-yellow-100 hover:text-yellow-700'
-                                : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+                              : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
                           } disabled:opacity-50`}
                           title={log.status === 'ON_HOLD' ? 'Already on hold' : 'Put order on hold'}
                         >
@@ -670,11 +663,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                         </button>
                         <button
                           onClick={(e) => handleDeleteClick(log, e)}
-                          className={`p-1.5 rounded hover:bg-red-100 transition-colors ${
-                            highlightType === 'red' || highlightType === 'orange'
-                              ? 'text-white hover:text-red-600 hover:bg-white/20'
-                              : 'text-gray-400 hover:text-red-600'
-                          }`}
+                          className="p-1.5 rounded hover:bg-red-100 transition-colors text-gray-400 hover:text-red-600"
                           title="Delete order"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
