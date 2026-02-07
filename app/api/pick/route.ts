@@ -325,34 +325,51 @@ export async function POST(request: NextRequest) {
             binCount++
           }
         } else if (isBulk) {
-          // BULK: Pick one BulkBatch at a time (1 shelf per chunk)
-          const nextBulkBatch = await prisma.bulkBatch.findFirst({
+          // BULK: Grab up to 3 BulkBatches (one per shelf) from the same parent batch
+          console.log('[BULK claim-chunk] Looking for PENDING BulkBatches under parentBatchId:', batch.id)
+
+          const pendingBulkBatches = await prisma.bulkBatch.findMany({
             where: {
               parentBatchId: batch.id,
               status: 'PENDING',
             },
             orderBy: { splitIndex: 'asc' },
+            take: 3,
           })
 
-          if (!nextBulkBatch) {
+          console.log('[BULK claim-chunk] Found', pendingBulkBatches.length, 'pending BulkBatches:', pendingBulkBatches.map(bb => ({
+            id: bb.id,
+            splitIndex: bb.splitIndex,
+            orderCount: bb.orderCount,
+            status: bb.status,
+            skuLayout: bb.skuLayout,
+          })))
+
+          if (pendingBulkBatches.length === 0) {
             return NextResponse.json({ error: 'No bulk batches available to pick' }, { status: 404 })
           }
 
-          // Get orders for this BulkBatch
+          // Get orders for ALL claimed BulkBatches
+          const bulkBatchIds = pendingBulkBatches.map(bb => bb.id)
           const bulkOrders = await prisma.orderLog.findMany({
             where: {
-              bulkBatchId: nextBulkBatch.id,
+              bulkBatchId: { in: bulkBatchIds },
               status: 'AWAITING_SHIPMENT',
               chunkId: null,
             },
           })
 
+          console.log('[BULK claim-chunk] Found', bulkOrders.length, 'orders across BulkBatches. Breakdown:', bulkBatchIds.map(id => ({
+            bulkBatchId: id,
+            orderCount: bulkOrders.filter(o => o.bulkBatchId === id).length,
+          })))
+
           if (bulkOrders.length === 0) {
-            return NextResponse.json({ error: 'No orders available in bulk batch' }, { status: 404 })
+            return NextResponse.json({ error: 'No orders available in bulk batches' }, { status: 404 })
           }
 
           ordersForChunk = bulkOrders
-          bulkBatchForChunk = nextBulkBatch
+          bulkBatchForChunk = pendingBulkBatches // Now an array of up to 3
         } else {
           // Standard: 1 order per bin (OBS / Personalized)
           ordersForChunk = batch.orders.slice(0, maxBins)
@@ -430,31 +447,49 @@ export async function POST(request: NextRequest) {
             binNumber++
           }
         } else if (isBulk) {
-          // BULK: Sequential bin numbers for shipping order
-          for (let i = 0; i < ordersForChunk.length; i++) {
-            await prisma.orderLog.update({
-              where: { id: ordersForChunk[i].id },
+          // BULK: Assign orders shelf-by-shelf with sequential binNumbers
+          // Shelf 1 orders first, then shelf 2, then shelf 3
+          const bulkBatches = bulkBatchForChunk as any[] // Array of up to 3
+          let globalBinNumber = 1
+
+          console.log('[BULK assign] Assigning', bulkBatches.length, 'shelves to chunk', chunk.id)
+
+          for (let shelfIdx = 0; shelfIdx < bulkBatches.length; shelfIdx++) {
+            const bb = bulkBatches[shelfIdx]
+            const shelfOrders = ordersForChunk.filter((o: any) => o.bulkBatchId === bb.id)
+
+            console.log(`[BULK assign] Shelf ${shelfIdx + 1}: BulkBatch ${bb.id}, ${shelfOrders.length} orders, skuLayout:`, bb.skuLayout)
+
+            // Assign sequential binNumbers for this shelf's orders
+            const startBin = globalBinNumber
+            for (const order of shelfOrders) {
+              await prisma.orderLog.update({
+                where: { id: order.id },
+                data: {
+                  chunkId: chunk.id,
+                  binNumber: globalBinNumber++,
+                },
+              })
+            }
+            console.log(`[BULK assign] Shelf ${shelfIdx + 1}: assigned binNumbers ${startBin} to ${globalBinNumber - 1}`)
+
+            // Link chunk to this BulkBatch with shelf number
+            await prisma.chunkBulkBatchAssignment.create({
               data: {
                 chunkId: chunk.id,
-                binNumber: i + 1,
+                bulkBatchId: bb.id,
+                shelfNumber: shelfIdx + 1,
               },
             })
+
+            // Mark BulkBatch as ASSIGNED
+            await prisma.bulkBatch.update({
+              where: { id: bb.id },
+              data: { status: 'ASSIGNED' },
+            })
+
+            console.log(`[BULK assign] Shelf ${shelfIdx + 1}: ChunkBulkBatchAssignment created, BulkBatch marked ASSIGNED`)
           }
-
-          // Link chunk to BulkBatch
-          await prisma.chunkBulkBatchAssignment.create({
-            data: {
-              chunkId: chunk.id,
-              bulkBatchId: bulkBatchForChunk.id,
-              shelfNumber: 1,
-            },
-          })
-
-          // Mark BulkBatch as ASSIGNED
-          await prisma.bulkBatch.update({
-            where: { id: bulkBatchForChunk.id },
-            data: { status: 'ASSIGNED' },
-          })
         } else {
           // STANDARD (OBS/Personalized): 1 order per bin, sorted by bin location
           const ordersWithBinLocation = await Promise.all(
@@ -527,6 +562,22 @@ export async function POST(request: NextRequest) {
             },
           },
         })
+
+        if (isBulk && completeChunk) {
+          console.log('[BULK claim-chunk] Final chunk response:', JSON.stringify({
+            chunkId: completeChunk.id,
+            pickingMode: completeChunk.pickingMode,
+            ordersInChunk: completeChunk.ordersInChunk,
+            orderCount: completeChunk.orders.length,
+            orders: completeChunk.orders.map(o => ({ id: o.id, orderNumber: o.orderNumber, binNumber: o.binNumber, bulkBatchId: o.bulkBatchId })),
+            bulkBatchAssignments: completeChunk.bulkBatchAssignments.map(a => ({
+              shelfNumber: a.shelfNumber,
+              bulkBatchId: a.bulkBatchId,
+              skuLayout: (a as any).bulkBatch?.skuLayout,
+              orderCount: (a as any).bulkBatch?.orderCount,
+            })),
+          }, null, 2))
+        }
 
         return NextResponse.json({ chunk: completeChunk })
       }

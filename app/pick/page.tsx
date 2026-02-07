@@ -416,25 +416,46 @@ export default function PickerPage() {
       chunkData.bulkBatchAssignments.length > 0
 
     if (isBulkMode) {
-      // BULK MODE: Use the BulkBatch skuLayout to determine pick items
-      // Each skuLayout entry = one physical bin (master unit)
-      // Group by SKU for efficient picking (go to one location, fill multiple bins)
-      const bulkBatch = chunkData.bulkBatchAssignments![0].bulkBatch
-      const layout = (bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+      // BULK MODE: Consolidate skuLayouts across ALL shelves (up to 3)
+      // Shelf 1 = bins 1-4, Shelf 2 = bins 5-8, Shelf 3 = bins 9-12
+      // Group by SKU across all shelves so picker makes ONE trip per SKU
+      const assignments = [...chunkData.bulkBatchAssignments!].sort((a, b) => a.shelfNumber - b.shelfNumber)
 
-      // Group layout entries by SKU
+      console.log('[BULK picker] Processing chunk for picking. Assignments:', assignments.length)
+      console.log('[BULK picker] Raw assignments:', JSON.stringify(assignments.map(a => ({
+        shelfNumber: a.shelfNumber,
+        bulkBatchId: a.bulkBatch?.id,
+        skuLayout: a.bulkBatch?.skuLayout,
+        orderCount: a.bulkBatch?.orderCount,
+      })), null, 2))
+      console.log('[BULK picker] Chunk orders:', chunkData.orders.length, chunkData.orders.map(o => ({
+        orderNumber: o.orderNumber,
+        binNumber: o.binNumber,
+        bulkBatchId: (o as any).bulkBatchId,
+      })))
+
       const skuGroups = new Map<string, { bins: Array<{ binNumber: number; quantity: number }>; totalQty: number }>()
-      for (const entry of layout) {
-        const skuKey = entry.sku.toUpperCase()
-        if (!skuGroups.has(skuKey)) {
-          skuGroups.set(skuKey, { bins: [], totalQty: 0 })
+
+      for (const assignment of assignments) {
+        const layout = (assignment.bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+        const binOffset = (assignment.shelfNumber - 1) * 4 // shelf 1=0, shelf 2=4, shelf 3=8
+
+        console.log(`[BULK picker] Shelf ${assignment.shelfNumber}: layout has ${layout.length} entries, binOffset=${binOffset}`)
+
+        for (const entry of layout) {
+          const skuKey = entry.sku.toUpperCase()
+          if (!skuGroups.has(skuKey)) {
+            skuGroups.set(skuKey, { bins: [], totalQty: 0 })
+          }
+          const group = skuGroups.get(skuKey)!
+          const physicalBin = entry.masterUnitIndex + 1 + binOffset
+          console.log(`[BULK picker]   SKU ${skuKey}: masterUnitIndex=${entry.masterUnitIndex}, physicalBin=${physicalBin}, qty=${entry.binQty}`)
+          group.bins.push({ binNumber: physicalBin, quantity: entry.binQty })
+          group.totalQty += entry.binQty
         }
-        const group = skuGroups.get(skuKey)!
-        group.bins.push({ binNumber: entry.masterUnitIndex + 1, quantity: entry.binQty })
-        group.totalQty += entry.binQty
       }
 
-      // Build pick items from the layout
+      // Build pick items from the consolidated layout
       const items: PickItem[] = []
       for (const [sku, data] of Array.from(skuGroups.entries())) {
         data.bins.sort((a, b) => a.binNumber - b.binNumber)
@@ -458,6 +479,12 @@ export default function PickerPage() {
       }
 
       items.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
+      console.log('[BULK picker] Final pick items:', JSON.stringify(items.map(i => ({
+        sku: i.sku,
+        totalQuantity: i.totalQuantity,
+        bins: i.bins,
+        binLocation: i.binLocation,
+      })), null, 2))
       setPickItems(items)
       setCurrentItemIndex(0)
       setPickedSkus(new Set())
@@ -584,16 +611,34 @@ export default function PickerPage() {
   const currentItem = pickItems[currentItemIndex] || null
   const batchType = chunk?.batch.type || chunk?.pickingMode
   const isPersonalized = chunk?.batch.isPersonalized || chunk?.isPersonalized || false
-  // Bulk uses 4 bins per shelf (master units), others use 12 bins per cart
-  const totalBins = batchType === 'BULK' ? 4 : 12
+  // All modes use 12 bins (Bulk = 3 shelves x 4 bins, others = 4x3 grid)
+  const totalBins = 12
 
   // Calculate completed and highlighted bins
   const completedBins = new Set<number>()
   if (chunk) {
-    for (const order of chunk.orders) {
-      const orderItems = getOrderItems(order.rawPayload)
-      if (orderItems.every(item => pickedSkus.has(item.sku.toUpperCase()))) {
-        completedBins.add(order.binNumber)
+    const isBulkPicking = batchType === 'BULK' && chunk.bulkBatchAssignments && chunk.bulkBatchAssignments.length > 0
+    if (isBulkPicking) {
+      // BULK: Physical bins are determined by skuLayout, not order binNumbers
+      // A physical bin is "complete" when its SKU has been picked
+      const assignments = [...chunk.bulkBatchAssignments!].sort((a, b) => a.shelfNumber - b.shelfNumber)
+      for (const assignment of assignments) {
+        const layout = (assignment.bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+        const binOffset = (assignment.shelfNumber - 1) * 4
+        for (const entry of layout) {
+          const physicalBin = entry.masterUnitIndex + 1 + binOffset
+          if (pickedSkus.has(entry.sku.toUpperCase())) {
+            completedBins.add(physicalBin)
+          }
+        }
+      }
+    } else {
+      // Singles/OBS: Use order binNumbers directly
+      for (const order of chunk.orders) {
+        const orderItems = getOrderItems(order.rawPayload)
+        if (orderItems.every(item => pickedSkus.has(item.sku.toUpperCase()))) {
+          completedBins.add(order.binNumber)
+        }
       }
     }
   }

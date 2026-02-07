@@ -403,22 +403,33 @@ function SinglesVerification({
 }
 
 // ============================================================================
-// Bulk Verification: per-order scan with shelf layout reference
+// Bulk Verification: shelf-by-shelf, per-order scan with 4x3 grid
 // ============================================================================
 
+interface BulkShelfAssignment {
+  shelfNumber: number
+  bulkBatch: {
+    id: string
+    skuLayout: BulkSkuLayoutEntry[]
+    orderCount: number
+  }
+}
+
 function BulkVerification({
-  orders,
-  skuLayout,
-  currentOrderIndex,
-  onComplete,
-  onNext,
+  shelfAssignments,
+  ordersByShelf,
+  shippedOrders,
+  onCompleteOrder,
+  onCompleteCart,
 }: {
-  orders: ChunkOrder[]
-  skuLayout: BulkSkuLayoutEntry[]
-  currentOrderIndex: number
-  onComplete: () => void
-  onNext: () => void
+  shelfAssignments: BulkShelfAssignment[]
+  ordersByShelf: Map<number, ChunkOrder[]>
+  shippedOrders: Set<string>
+  onCompleteOrder: (orderNumber: string) => void
+  onCompleteCart: () => void
 }) {
+  const [currentShelfIdx, setCurrentShelfIdx] = useState(0)
+  const [currentOrderInShelf, setCurrentOrderInShelf] = useState(0)
   const [items, setItems] = useState<OrderItem[]>([])
   const [scannedCounts, setScannedCounts] = useState<Map<string, number>>(new Map())
   const [scanInput, setScanInput] = useState('')
@@ -427,18 +438,30 @@ function BulkVerification({
   const [labelPrinted, setLabelPrinted] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const order = orders[currentOrderIndex] || null
+  const currentShelf = shelfAssignments[currentShelfIdx]
+  const shelfOrders = currentShelf ? (ordersByShelf.get(currentShelf.shelfNumber) || []) : []
+  const order = shelfOrders[currentOrderInShelf] || null
+  const totalOrdersAllShelves = shelfAssignments.reduce((sum, a) => sum + (ordersByShelf.get(a.shelfNumber)?.length || 0), 0)
 
-  // Build a lookup: which physical bin has which SKU
-  const binLayoutMap = useMemo(() => {
-    const map = new Map<string, number[]>() // SKU -> bin numbers
-    for (const entry of skuLayout) {
+  // Count shipped orders per shelf
+  const shelfShippedCount = (shelfNum: number) => {
+    const orders = ordersByShelf.get(shelfNum) || []
+    return orders.filter(o => shippedOrders.has(o.orderNumber)).length
+  }
+
+  // Build bin layout for the ACTIVE shelf: SKU -> physical bin numbers
+  const activeShelfBinMap = useMemo(() => {
+    if (!currentShelf) return new Map<string, number[]>()
+    const layout = (currentShelf.bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+    const binOffset = (currentShelf.shelfNumber - 1) * 4
+    const map = new Map<string, number[]>()
+    for (const entry of layout) {
       const key = entry.sku.toUpperCase()
       if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(entry.masterUnitIndex + 1)
+      map.get(key)!.push(entry.masterUnitIndex + 1 + binOffset)
     }
     return map
-  }, [skuLayout])
+  }, [currentShelf])
 
   useEffect(() => {
     if (order) {
@@ -481,42 +504,117 @@ function BulkVerification({
 
   const handlePrintLabel = async () => {
     setLabelPrinted(true)
-    onComplete()
-    // TODO: Call ShipEngine to generate actual label
+    if (order) onCompleteOrder(order.orderNumber)
   }
 
-  if (!order) return null
+  const handleNext = () => {
+    if (currentOrderInShelf < shelfOrders.length - 1) {
+      // More orders in current shelf
+      setCurrentOrderInShelf(prev => prev + 1)
+    } else if (currentShelfIdx < shelfAssignments.length - 1) {
+      // Move to next shelf
+      setCurrentShelfIdx(prev => prev + 1)
+      setCurrentOrderInShelf(0)
+    } else {
+      // All shelves done
+      onCompleteCart()
+    }
+  }
+
+  // Determine button label
+  const isLastOrderInShelf = currentOrderInShelf >= shelfOrders.length - 1
+  const isLastShelf = currentShelfIdx >= shelfAssignments.length - 1
+  let nextLabel = 'Next Order →'
+  if (isLastOrderInShelf && isLastShelf) nextLabel = 'Complete Cart'
+  else if (isLastOrderInShelf) nextLabel = `Next Shelf (Shelf ${currentShelfIdx + 2}) →`
+
+  if (!order || !currentShelf) return null
 
   return (
     <div className="flex-1 flex flex-col">
-      {/* Shelf layout reference */}
-      <div className="bg-orange-50 border-b border-orange-200 px-4 py-3">
-        <div className="text-sm font-bold text-orange-700 mb-2">SHELF LAYOUT</div>
-        <div className="flex gap-2">
-          {skuLayout.map((entry, idx) => (
-            <div key={idx} className="flex-1 bg-white rounded-lg border border-orange-300 p-2 text-center">
-              <div className="text-xs text-gray-500">Bin {entry.masterUnitIndex + 1}</div>
-              <div className="text-sm font-mono font-bold text-gray-800 truncate">{entry.sku}</div>
-              <div className="text-xs text-orange-600">{entry.binQty} units</div>
-            </div>
-          ))}
-          {/* Show empty bins up to 4 */}
-          {Array.from({ length: Math.max(0, 4 - skuLayout.length) }).map((_, idx) => (
-            <div key={`empty-${idx}`} className="flex-1 bg-gray-100 rounded-lg border border-gray-300 p-2 text-center">
-              <div className="text-xs text-gray-400">Bin {skuLayout.length + idx + 1}</div>
-              <div className="text-lg text-gray-300">&mdash;</div>
-            </div>
-          ))}
+      {/* 4x3 Bin Grid with shelf labels */}
+      <div className="p-4">
+        <div className="space-y-1">
+          {shelfAssignments.map((assignment, shelfIdx) => {
+            const layout = (assignment.bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+            const binOffset = (assignment.shelfNumber - 1) * 4
+            const isActiveShelf = shelfIdx === currentShelfIdx
+            const shelfDone = shelfShippedCount(assignment.shelfNumber) >= (ordersByShelf.get(assignment.shelfNumber)?.length || 0)
+            const shipped = shelfShippedCount(assignment.shelfNumber)
+            const total = ordersByShelf.get(assignment.shelfNumber)?.length || 0
+
+            return (
+              <div key={assignment.shelfNumber} className="flex items-center gap-2">
+                <div className={`w-16 text-xs font-bold text-center py-1 rounded ${
+                  shelfDone ? 'bg-green-100 text-green-700' : isActiveShelf ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  Shelf {assignment.shelfNumber}
+                  <div className="text-[10px] font-normal">{shipped}/{total}</div>
+                </div>
+                <div className="flex-1 grid grid-cols-4 gap-1">
+                  {Array.from({ length: 4 }, (_, binIdx) => {
+                    const physicalBin = binIdx + 1 + binOffset
+                    const layoutEntry = layout[binIdx]
+                    const isEmpty = !layoutEntry
+
+                    let bg = 'bg-white', border = 'border-gray-300', textColor = 'text-gray-600'
+                    if (isEmpty) { bg = 'bg-gray-100'; border = 'border-gray-200'; textColor = 'text-gray-300' }
+                    else if (shelfDone) { bg = 'bg-green-50'; border = 'border-green-400'; textColor = 'text-green-700' }
+                    else if (isActiveShelf) { bg = 'bg-orange-50'; border = 'border-orange-400'; textColor = 'text-orange-700' }
+
+                    return (
+                      <div key={physicalBin} className={`p-1.5 rounded border text-center ${bg} ${border} ${textColor}`}>
+                        <div className="text-[10px] text-gray-400">Bin {physicalBin}</div>
+                        {layoutEntry ? (
+                          <>
+                            <div className="text-xs font-mono font-bold truncate">{layoutEntry.sku}</div>
+                            <div className="text-[10px]">{layoutEntry.binQty}x</div>
+                          </>
+                        ) : (
+                          <div className="text-sm">&mdash;</div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+          {/* Empty shelf rows (up to 3 total) */}
+          {Array.from({ length: Math.max(0, 3 - shelfAssignments.length) }).map((_, idx) => {
+            const shelfNum = shelfAssignments.length + idx + 1
+            const binOffset = (shelfNum - 1) * 4
+            return (
+              <div key={`empty-shelf-${shelfNum}`} className="flex items-center gap-2">
+                <div className="w-16 text-xs font-bold text-center py-1 rounded bg-gray-100 text-gray-400">
+                  Shelf {shelfNum}
+                  <div className="text-[10px] font-normal">empty</div>
+                </div>
+                <div className="flex-1 grid grid-cols-4 gap-1">
+                  {Array.from({ length: 4 }, (_, binIdx) => (
+                    <div key={binIdx + 1 + binOffset} className="p-1.5 rounded border border-gray-200 bg-gray-100 text-center text-gray-300">
+                      <div className="text-[10px] text-gray-300">Bin {binIdx + 1 + binOffset}</div>
+                      <div className="text-sm">&mdash;</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
 
+      {/* Order info */}
       <div className="bg-white shadow p-4 mb-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm text-gray-500">Order {currentOrderIndex + 1} of {orders.length}</div>
+            <div className="text-sm text-orange-600 font-medium">
+              Shelf {currentShelf.shelfNumber} &mdash; Order {currentOrderInShelf + 1} of {shelfOrders.length}
+            </div>
             <div className="text-2xl font-bold">#{order.orderNumber}</div>
           </div>
           <div className="text-right">
+            <div className="text-sm text-gray-500">{shippedOrders.size} / {totalOrdersAllShelves} total</div>
             <div className={`text-lg font-bold ${allVerified ? 'text-green-600' : 'text-amber-600'}`}>
               {allVerified ? 'Verified' : 'Scan items'}
             </div>
@@ -524,6 +622,7 @@ function BulkVerification({
         </div>
       </div>
 
+      {/* Scan input */}
       <div className="px-4 mb-4">
         <input
           ref={inputRef}
@@ -540,11 +639,12 @@ function BulkVerification({
         )}
       </div>
 
+      {/* Items to verify */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
         {items.map((item, idx) => {
           const scanned = scannedCounts.get(item.sku.toUpperCase()) || 0
           const isComplete = scanned >= item.quantity
-          const bins = binLayoutMap.get(item.sku.toUpperCase()) || []
+          const bins = activeShelfBinMap.get(item.sku.toUpperCase()) || []
           return (
             <div key={idx} className={`p-4 rounded-xl border-2 ${isComplete ? 'border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}>
               <div className="flex items-center justify-between">
@@ -566,6 +666,7 @@ function BulkVerification({
         })}
       </div>
 
+      {/* Bottom actions */}
       <div className="p-4 bg-white shadow-lg space-y-3">
         {allVerified && !labelPrinted && (
           <button onClick={handlePrintLabel} className="w-full py-4 bg-green-600 text-white text-xl font-bold rounded-xl hover:bg-green-700">
@@ -574,11 +675,11 @@ function BulkVerification({
         )}
         {labelPrinted && <div className="text-center text-green-600 font-medium">Label printed</div>}
         <button
-          onClick={onNext}
+          onClick={handleNext}
           disabled={!allVerified}
           className={`w-full py-4 text-xl font-bold rounded-xl ${allVerified ? 'bg-orange-600 text-white hover:bg-orange-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
         >
-          {labelPrinted ? (currentOrderIndex >= orders.length - 1 ? 'Complete Cart' : 'Next Order →') : 'Verify Items First'}
+          {labelPrinted ? nextLabel : 'Verify Items First'}
         </button>
       </div>
     </div>
@@ -598,7 +699,6 @@ export default function CartScanPage() {
   const [currentBinIndex, setCurrentBinIndex] = useState(0)
   const [shippedOrders, setShippedOrders] = useState<Set<string>>(new Set())
   const [emptyBins, setEmptyBins] = useState<Set<number>>(new Set())
-  const [currentBulkOrderIndex, setCurrentBulkOrderIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -632,12 +732,22 @@ export default function CartScanPage() {
 
   const isPersonalized = cart?.chunks[0]?.batch?.isPersonalized || cart?.chunks[0]?.isPersonalized || false
 
-  // For Bulk: extract the shelf layout from the chunk's bulkBatchAssignments
-  const bulkSkuLayout = useMemo<BulkSkuLayoutEntry[]>(() => {
+  // For Bulk: extract shelf assignments sorted by shelfNumber
+  const bulkShelfAssignments = useMemo(() => {
     if (!cart || pickingMode !== 'BULK') return []
     const chunk = cart.chunks[0]
-    if (!chunk?.bulkBatchAssignments?.length) return []
-    return (chunk.bulkBatchAssignments[0].bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+    if (!chunk?.bulkBatchAssignments?.length) {
+      console.log('[BULK ship] No bulkBatchAssignments found on chunk:', chunk?.id)
+      return []
+    }
+    const sorted = [...chunk.bulkBatchAssignments].sort((a, b) => a.shelfNumber - b.shelfNumber)
+    console.log('[BULK ship] Shelf assignments:', JSON.stringify(sorted.map(a => ({
+      shelfNumber: a.shelfNumber,
+      bulkBatchId: a.bulkBatch.id,
+      orderCount: a.bulkBatch.orderCount,
+      skuLayout: a.bulkBatch.skuLayout,
+    })), null, 2))
+    return sorted
   }, [cart, pickingMode])
 
   // Get all orders sorted by bin
@@ -646,6 +756,24 @@ export default function CartScanPage() {
       chunk.orders.filter(o => o.status === 'AWAITING_SHIPMENT')
     ).sort((a, b) => (a.binNumber || 0) - (b.binNumber || 0)) || []
   }, [cart])
+
+  // For Bulk: group orders by shelf using sequential binNumber ordering
+  const bulkOrdersByShelf = useMemo(() => {
+    if (bulkShelfAssignments.length === 0) return new Map<number, ChunkOrder[]>()
+    const map = new Map<number, ChunkOrder[]>()
+    console.log('[BULK ship] Grouping', allOrders.length, 'orders into shelves')
+    console.log('[BULK ship] All orders binNumbers:', allOrders.map(o => ({ orderNumber: o.orderNumber, binNumber: o.binNumber })))
+    // Orders have sequential binNumbers per shelf (shelf 1 first, then 2, then 3)
+    // Use the assignment order counts to split
+    let offset = 0
+    for (const a of bulkShelfAssignments) {
+      const shelfOrders = allOrders.slice(offset, offset + a.bulkBatch.orderCount)
+      map.set(a.shelfNumber, shelfOrders)
+      console.log(`[BULK ship] Shelf ${a.shelfNumber}: expected ${a.bulkBatch.orderCount} orders, got ${shelfOrders.length} (offset ${offset} to ${offset + a.bulkBatch.orderCount})`)
+      offset += a.bulkBatch.orderCount
+    }
+    return map
+  }, [bulkShelfAssignments, allOrders])
 
   // For singles: group orders by bin
   const ordersByBin = useMemo(() => {
@@ -688,16 +816,12 @@ export default function CartScanPage() {
 
       setCart(cartData.cart)
       setCurrentBinIndex(0)
-      setCurrentBulkOrderIndex(0)
       setShippedOrders(new Set())
 
-      // Identify empty bins (Bulk uses 4 bins per shelf, others use 12)
-      const cartChunk = cartData.cart.chunks[0]
-      const cartType = cartChunk?.batch?.type || cartChunk?.pickingMode
-      const totalBinCount = cartType === 'BULK' ? 4 : 12
+      // Identify empty bins (always 12 bins for all modes)
       const usedBins = new Set(cartData.cart.chunks.flatMap((c: PickChunk) => c.orders.map(o => o.binNumber)))
       const empty = new Set<number>()
-      for (let i = 1; i <= totalBinCount; i++) { if (!usedBins.has(i)) empty.add(i) }
+      for (let i = 1; i <= 12; i++) { if (!usedBins.has(i)) empty.add(i) }
       setEmptyBins(empty)
 
       setStep('shipping')
@@ -741,37 +865,6 @@ export default function CartScanPage() {
     } catch {}
   }, [currentBin, currentChunk, ordersByBin])
 
-  // Bulk: mark one order as shipped
-  const handleBulkOrderComplete = useCallback(async () => {
-    if (!currentChunk || !allOrders[currentBulkOrderIndex]) return
-    const order = allOrders[currentBulkOrderIndex]
-    try {
-      await fetch('/api/ship', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'complete-order', chunkId: currentChunk.id, orderNumber: order.orderNumber }),
-      })
-      setShippedOrders(prev => new Set([...Array.from(prev), order.orderNumber]))
-    } catch {}
-  }, [currentBulkOrderIndex, currentChunk, allOrders])
-
-  // Bulk: advance to next order or complete
-  const handleBulkNextOrder = useCallback(async () => {
-    if (currentBulkOrderIndex >= allOrders.length - 1) {
-      // All orders done
-      if (cart && currentChunk) {
-        await fetch('/api/ship', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'complete-cart', cartId: cart.id, chunkId: currentChunk.id }),
-        })
-      }
-      setStep('complete')
-    } else {
-      setCurrentBulkOrderIndex(prev => prev + 1)
-    }
-  }, [currentBulkOrderIndex, allOrders.length, cart, currentChunk])
-
   const handleNextBin = useCallback(async () => {
     if (currentBinIndex >= binNumbers.length - 1) {
       // Cart complete
@@ -792,7 +885,6 @@ export default function CartScanPage() {
     setCart(null)
     setCartInput('')
     setCurrentBinIndex(0)
-    setCurrentBulkOrderIndex(0)
     setShippedOrders(new Set())
     setEmptyBins(new Set())
     setStep('cart-select')
@@ -884,7 +976,6 @@ export default function CartScanPage() {
     const binOrders = ordersByBin.get(currentBin) || []
     const isEmptyBin = emptyBins.has(currentBin)
     const isBulkMode = pickingMode === 'BULK'
-    const totalBinCount = isBulkMode ? 4 : 12
 
     return (
       <div className="min-h-screen bg-gray-100 flex flex-col">
@@ -896,9 +987,7 @@ export default function CartScanPage() {
               <span className={`px-2 py-1 rounded text-xs font-bold ${badge.bg}`}>{badge.label}</span>
             </div>
             <div className="text-right">
-              {isBulkMode ? (
-                <div className="text-sm text-gray-600">Order {currentBulkOrderIndex + 1} / {allOrders.length}</div>
-              ) : (
+              {!isBulkMode && (
                 <div className="text-sm text-gray-600">Bin {currentBinIndex + 1} / {binNumbers.length}</div>
               )}
               <div className="text-sm text-gray-500">{shipperName}</div>
@@ -906,11 +995,11 @@ export default function CartScanPage() {
           </div>
         </div>
 
-        {/* Bin/shelf grid (only for non-Bulk modes; Bulk shows layout inside BulkVerification) */}
+        {/* Bin grid (for Singles/OBS -- Bulk has its own grid inside BulkVerification) */}
         {!isBulkMode && (
           <div className="p-4">
             <div className="grid gap-2 bg-gray-100 rounded-lg p-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-              {Array.from({ length: totalBinCount }, (_, i) => i + 1).map((bin) => {
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((bin) => {
                 const binShipped = (ordersByBin.get(bin) || []).every(o => shippedOrders.has(o.orderNumber))
                 const isCurrent = bin === currentBin
                 const isEmpty = emptyBins.has(bin) || !ordersByBin.has(bin)
@@ -933,11 +1022,30 @@ export default function CartScanPage() {
         {/* Mode-specific verification */}
         {isBulkMode ? (
           <BulkVerification
-            orders={allOrders}
-            skuLayout={bulkSkuLayout}
-            currentOrderIndex={currentBulkOrderIndex}
-            onComplete={handleBulkOrderComplete}
-            onNext={handleBulkNextOrder}
+            shelfAssignments={bulkShelfAssignments}
+            ordersByShelf={bulkOrdersByShelf}
+            shippedOrders={shippedOrders}
+            onCompleteOrder={(orderNumber) => {
+              const chunk = currentChunk
+              if (!chunk) return
+              fetch('/api/ship', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'complete-order', chunkId: chunk.id, orderNumber }),
+              }).then(() => {
+                setShippedOrders(prev => new Set([...Array.from(prev), orderNumber]))
+              }).catch(() => {})
+            }}
+            onCompleteCart={async () => {
+              if (cart && currentChunk) {
+                await fetch('/api/ship', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'complete-cart', cartId: cart.id, chunkId: currentChunk.id }),
+                })
+              }
+              setStep('complete')
+            }}
           />
         ) : pickingMode === 'SINGLES' ? (
           <SinglesVerification
