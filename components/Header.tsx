@@ -150,31 +150,6 @@ export default function Header({
           </button>
         )}
 
-        {/* Personalized Filter Toggle (3-state) */}
-        {setPersonalizedFilter && (
-          <button
-            type="button"
-            onClick={() => setPersonalizedFilter(cycleFilterMode(personalizedFilter))}
-            className={getFilterButtonClass(personalizedFilter, 'personalized')}
-            title="Click to cycle: All → PERS Only → Non-PERS"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-              />
-            </svg>
-            {getFilterLabel(personalizedFilter, 'personalized')}
-          </button>
-        )}
-
         {/* Refresh Orders Button */}
         {onRefreshOrders && (
           <div className="flex items-center gap-2">

@@ -44,39 +44,98 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ cells })
     }
 
+    // Personalized order count (for picker UI)
+    if (action === 'personalized-count') {
+      const count = await prisma.orderLog.count({
+        where: {
+          status: 'AWAITING_SHIPMENT',
+          chunkId: null,
+          batch: {
+            isPersonalized: true,
+            cellAssignments: { none: {} },
+            status: { in: ['ACTIVE', 'IN_PROGRESS', 'RELEASED'] },
+          },
+        },
+      })
+      return NextResponse.json({ availableOrderCount: count })
+    }
+
+    // Engraving queue: chunks with READY_FOR_ENGRAVING status
+    if (action === 'engraving-queue') {
+      const chunks = await prisma.pickChunk.findMany({
+        where: {
+          status: 'READY_FOR_ENGRAVING',
+        },
+        include: {
+          batch: {
+            select: { id: true, name: true, type: true },
+          },
+          cart: {
+            select: { id: true, name: true, color: true },
+          },
+          orders: {
+            where: { status: 'AWAITING_SHIPMENT' },
+            select: {
+              id: true,
+              orderNumber: true,
+              rawPayload: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      })
+
+      // Add bin numbers from chunk order assignment
+      const chunksWithBins = chunks.map(chunk => ({
+        ...chunk,
+        orders: chunk.orders.map((order, idx) => ({
+          ...order,
+          binNumber: idx + 1,
+        })),
+      }))
+
+      return NextResponse.json({ chunks: chunksWithBins })
+    }
+
     if (!cellId) {
       return NextResponse.json({ error: 'Cell ID is required' }, { status: 400 })
     }
 
-    // Get released batches for this cell with orders that need chunks
-    const releasedBatches = await prisma.pickBatch.findMany({
-      where: {
-        cellId,
-        status: { in: ['RELEASED', 'IN_PROGRESS'] },
-      },
-      include: {
-        orders: {
-          where: {
-            chunkId: null, // Orders not yet assigned to a chunk
-            status: 'AWAITING_SHIPMENT',
-          },
-          select: {
-            id: true,
-            orderNumber: true,
-            rawPayload: true,
-          },
-        },
-        chunks: {
-          where: {
-            status: { in: ['AVAILABLE', 'PICKING'] },
-          },
-          include: {
-            cart: true,
-          },
-        },
-      },
+    // Get batches assigned to this cell via BatchCellAssignment, ordered by assignment priority
+    const cellAssignments = await prisma.batchCellAssignment.findMany({
+      where: { cellId },
       orderBy: { priority: 'asc' },
+      include: {
+        batch: {
+          include: {
+            orders: {
+              where: {
+                chunkId: null, // Orders not yet assigned to a chunk
+                status: 'AWAITING_SHIPMENT',
+              },
+              select: {
+                id: true,
+                orderNumber: true,
+                rawPayload: true,
+              },
+            },
+            chunks: {
+              where: {
+                status: { in: ['AVAILABLE', 'PICKING'] },
+              },
+              include: {
+                cart: true,
+              },
+            },
+          },
+        },
+      },
     })
+
+    // Filter to only active/in-progress batches
+    const releasedBatches = cellAssignments
+      .map(a => a.batch)
+      .filter(b => ['ACTIVE', 'IN_PROGRESS', 'RELEASED'].includes(b.status))
 
     // Calculate available orders to pick
     let availableOrderCount = 0
@@ -84,13 +143,16 @@ export async function GET(request: NextRequest) {
       availableOrderCount += batch.orders.length
     })
 
+    // Get batch IDs assigned to this cell
+    const cellBatchIds = cellAssignments.map(a => a.batchId)
+
     // Get chunks that are ready for picking
     const availableChunks = await prisma.pickChunk.findMany({
       where: {
         status: 'AVAILABLE',
+        batchId: { in: cellBatchIds },
         batch: {
-          cellId,
-          status: { in: ['RELEASED', 'IN_PROGRESS'] },
+          status: { in: ['ACTIVE', 'IN_PROGRESS', 'RELEASED'] },
         },
       },
       include: {
@@ -132,11 +194,17 @@ export async function POST(request: NextRequest) {
     switch (action) {
       case 'claim-chunk': {
         // Claim a chunk for picking (create if needed)
-        const { cellId, cartId, pickerName } = body
+        const { cellId, cartId, pickerName, personalized } = body
 
-        if (!cellId || !cartId || !pickerName) {
+        if (!cartId || !pickerName) {
           return NextResponse.json({ 
-            error: 'Cell ID, Cart ID, and Picker Name are required' 
+            error: 'Cart ID and Picker Name are required' 
+          }, { status: 400 })
+        }
+
+        if (!personalized && !cellId) {
+          return NextResponse.json({ 
+            error: 'Cell ID is required for non-personalized picks' 
           }, { status: 400 })
         }
 
@@ -153,31 +221,64 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'Cart is not available' }, { status: 400 })
         }
 
-        // Find the next batch with unassigned orders
-        const batch = await prisma.pickBatch.findFirst({
-          where: {
-            cellId,
-            status: { in: ['RELEASED', 'IN_PROGRESS'] },
-            orders: {
-              some: {
-                chunkId: null,
-                status: 'AWAITING_SHIPMENT',
+        let batch: any = null
+
+        if (personalized) {
+          // Find next personalized batch from the pool (no cell assignment)
+          batch = await prisma.pickBatch.findFirst({
+            where: {
+              isPersonalized: true,
+              cellAssignments: { none: {} },
+              status: { in: ['ACTIVE', 'IN_PROGRESS', 'RELEASED'] },
+              orders: {
+                some: {
+                  chunkId: null,
+                  status: 'AWAITING_SHIPMENT',
+                },
               },
             },
-          },
-          include: {
-            orders: {
-              where: {
-                chunkId: null,
-                status: 'AWAITING_SHIPMENT',
-              },
-              include: {
-                // We need rawPayload to get SKU info
+            include: {
+              orders: {
+                where: {
+                  chunkId: null,
+                  status: 'AWAITING_SHIPMENT',
+                },
               },
             },
-          },
-          orderBy: { priority: 'asc' },
-        })
+            orderBy: { priority: 'asc' },
+          })
+        } else {
+          // Find the next batch via cell assignment priority
+          const nextAssignment = await prisma.batchCellAssignment.findFirst({
+            where: {
+              cellId,
+              batch: {
+                status: { in: ['ACTIVE', 'IN_PROGRESS', 'RELEASED'] },
+                orders: {
+                  some: {
+                    chunkId: null,
+                    status: 'AWAITING_SHIPMENT',
+                  },
+                },
+              },
+            },
+            orderBy: { priority: 'asc' },
+            include: {
+              batch: {
+                include: {
+                  orders: {
+                    where: {
+                      chunkId: null,
+                      status: 'AWAITING_SHIPMENT',
+                    },
+                  },
+                },
+              },
+            },
+          })
+
+          batch = nextAssignment?.batch ?? null
+        }
 
         if (!batch || batch.orders.length === 0) {
           return NextResponse.json({ 
@@ -185,12 +286,77 @@ export async function POST(request: NextRequest) {
           }, { status: 404 })
         }
 
-        // Determine chunk size based on batch type (Standard=12, Oversized=6)
+        // ============================================================
+        // SINGLES: Group orders by SKU, 1 SKU per bin, max 24 per bin
+        // OTHER: 1 order per bin, max 12 per chunk
+        // ============================================================
+        const isSingles = batch.type === 'SINGLES'
+        const isBulk = batch.type === 'BULK'
         const isOversized = batch.name.startsWith('O-')
-        const chunkSize = isOversized ? 6 : 12
+        const maxBins = isOversized ? 6 : 12
+        const maxPerBin = 24
 
-        // Get orders for this chunk (up to chunk size)
-        const ordersForChunk = batch.orders.slice(0, chunkSize)
+        let ordersForChunk: typeof batch.orders
+        let bulkBatchForChunk: any = null
+
+        if (isSingles) {
+          // Group available orders by SKU
+          const skuGroups = new Map<string, typeof batch.orders>()
+          for (const order of batch.orders) {
+            const payload = order.rawPayload as any
+            const orderData = Array.isArray(payload) ? payload[0] : payload
+            const items = (orderData?.items || []).filter((item: any) => {
+              const sku = (item.sku || '').toUpperCase()
+              const name = (item.name || '').toUpperCase()
+              return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
+            })
+            const sku = (items[0]?.sku || 'UNKNOWN').toUpperCase()
+            if (!skuGroups.has(sku)) skuGroups.set(sku, [])
+            skuGroups.get(sku)!.push(order)
+          }
+
+          // Take up to maxBins SKU groups, each capped at maxPerBin orders
+          ordersForChunk = []
+          let binCount = 0
+          for (const [, group] of Array.from(skuGroups.entries())) {
+            if (binCount >= maxBins) break
+            const take = group.slice(0, maxPerBin)
+            ordersForChunk.push(...take)
+            binCount++
+          }
+        } else if (isBulk) {
+          // BULK: Pick one BulkBatch at a time (1 shelf per chunk)
+          const nextBulkBatch = await prisma.bulkBatch.findFirst({
+            where: {
+              parentBatchId: batch.id,
+              status: 'PENDING',
+            },
+            orderBy: { splitIndex: 'asc' },
+          })
+
+          if (!nextBulkBatch) {
+            return NextResponse.json({ error: 'No bulk batches available to pick' }, { status: 404 })
+          }
+
+          // Get orders for this BulkBatch
+          const bulkOrders = await prisma.orderLog.findMany({
+            where: {
+              bulkBatchId: nextBulkBatch.id,
+              status: 'AWAITING_SHIPMENT',
+              chunkId: null,
+            },
+          })
+
+          if (bulkOrders.length === 0) {
+            return NextResponse.json({ error: 'No orders available in bulk batch' }, { status: 404 })
+          }
+
+          ordersForChunk = bulkOrders
+          bulkBatchForChunk = nextBulkBatch
+        } else {
+          // Standard: 1 order per bin (OBS / Personalized)
+          ordersForChunk = batch.orders.slice(0, maxBins)
+        }
 
         // Get the next chunk number for this batch
         const maxChunk = await prisma.pickChunk.aggregate({
@@ -200,11 +366,14 @@ export async function POST(request: NextRequest) {
         const chunkNumber = (maxChunk._max.chunkNumber ?? 0) + 1
 
         // Create the chunk
+        const pickingModeValue = isSingles ? 'SINGLES' : isBulk ? 'BULK' : 'ORDER_BY_SIZE'
         const chunk = await prisma.pickChunk.create({
           data: {
             batchId: batch.id,
             chunkNumber,
             status: 'PICKING',
+            pickingMode: pickingModeValue as any,
+            isPersonalized: personalized || false,
             cartId,
             pickerName,
             ordersInChunk: ordersForChunk.length,
@@ -214,50 +383,118 @@ export async function POST(request: NextRequest) {
         })
 
         // Assign orders to the chunk with bin numbers
-        // Sort orders by bin location for efficient picking
-        const ordersWithBinLocation = await Promise.all(
-          ordersForChunk.map(async (order) => {
+        if (isSingles) {
+          // SINGLES: group by SKU, all orders with same SKU get the same bin number
+          // Look up bin locations for sorting
+          const skuBinGroups = new Map<string, { orders: typeof ordersForChunk; binLocation: string }>()
+          for (const order of ordersForChunk) {
             const payload = order.rawPayload as any
             const orderData = Array.isArray(payload) ? payload[0] : payload
-            const items = orderData?.items || []
-            
-            // Get the first item's SKU to look up bin location
-            const firstItem = items.find((item: any) => {
+            const items = (orderData?.items || []).filter((item: any) => {
               const sku = (item.sku || '').toUpperCase()
               const name = (item.name || '').toUpperCase()
               return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
             })
-
-            let binLocation = 'ZZZ' // Default for unknown
-            if (firstItem?.sku) {
-              const skuRecord = await prisma.productSku.findUnique({
-                where: { sku: firstItem.sku.toUpperCase() },
-                select: { binLocation: true },
-              })
-              if (skuRecord?.binLocation) {
-                binLocation = skuRecord.binLocation
+            const sku = (items[0]?.sku || 'UNKNOWN').toUpperCase()
+            if (!skuBinGroups.has(sku)) {
+              // Look up bin location
+              let binLocation = 'ZZZ'
+              if (items[0]?.sku) {
+                const skuRecord = await prisma.productSku.findUnique({
+                  where: { sku: items[0].sku.toUpperCase() },
+                  select: { binLocation: true },
+                })
+                if (skuRecord?.binLocation) binLocation = skuRecord.binLocation
               }
+              skuBinGroups.set(sku, { orders: [], binLocation })
             }
+            skuBinGroups.get(sku)!.orders.push(order)
+          }
 
-            return {
-              ...order,
-              binLocation,
+          // Sort SKU groups by bin location for efficient picking
+          const sortedGroups = Array.from(skuBinGroups.entries())
+            .sort((a, b) => a[1].binLocation.localeCompare(b[1].binLocation))
+
+          // Assign bin numbers: each SKU group gets one bin number
+          let binNumber = 1
+          for (const [, group] of sortedGroups) {
+            for (const order of group.orders) {
+              await prisma.orderLog.update({
+                where: { id: order.id },
+                data: {
+                  chunkId: chunk.id,
+                  binNumber, // All orders with same SKU share the same bin
+                },
+              })
             }
-          })
-        )
+            binNumber++
+          }
+        } else if (isBulk) {
+          // BULK: Sequential bin numbers for shipping order
+          for (let i = 0; i < ordersForChunk.length; i++) {
+            await prisma.orderLog.update({
+              where: { id: ordersForChunk[i].id },
+              data: {
+                chunkId: chunk.id,
+                binNumber: i + 1,
+              },
+            })
+          }
 
-        // Sort by bin location
-        ordersWithBinLocation.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
-
-        // Update orders with chunk ID and bin numbers
-        for (let i = 0; i < ordersWithBinLocation.length; i++) {
-          await prisma.orderLog.update({
-            where: { id: ordersWithBinLocation[i].id },
+          // Link chunk to BulkBatch
+          await prisma.chunkBulkBatchAssignment.create({
             data: {
               chunkId: chunk.id,
-              binNumber: i + 1,
+              bulkBatchId: bulkBatchForChunk.id,
+              shelfNumber: 1,
             },
           })
+
+          // Mark BulkBatch as ASSIGNED
+          await prisma.bulkBatch.update({
+            where: { id: bulkBatchForChunk.id },
+            data: { status: 'ASSIGNED' },
+          })
+        } else {
+          // STANDARD (OBS/Personalized): 1 order per bin, sorted by bin location
+          const ordersWithBinLocation = await Promise.all(
+            ordersForChunk.map(async (order: any) => {
+              const payload = order.rawPayload as any
+              const orderData = Array.isArray(payload) ? payload[0] : payload
+              const items = orderData?.items || []
+              
+              const firstItem = items.find((item: any) => {
+                const sku = (item.sku || '').toUpperCase()
+                const name = (item.name || '').toUpperCase()
+                return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
+              })
+
+              let binLocation = 'ZZZ'
+              if (firstItem?.sku) {
+                const skuRecord = await prisma.productSku.findUnique({
+                  where: { sku: firstItem.sku.toUpperCase() },
+                  select: { binLocation: true },
+                })
+                if (skuRecord?.binLocation) {
+                  binLocation = skuRecord.binLocation
+                }
+              }
+
+              return { ...order, binLocation }
+            })
+          )
+
+          ordersWithBinLocation.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
+
+          for (let i = 0; i < ordersWithBinLocation.length; i++) {
+            await prisma.orderLog.update({
+              where: { id: ordersWithBinLocation[i].id },
+              data: {
+                chunkId: chunk.id,
+                binNumber: i + 1,
+              },
+            })
+          }
         }
 
         // Update cart status
@@ -267,7 +504,7 @@ export async function POST(request: NextRequest) {
         })
 
         // Update batch status if this is the first chunk
-        if (batch.status === 'RELEASED') {
+        if (batch.status === 'RELEASED' || batch.status === 'ACTIVE') {
           await prisma.pickBatch.update({
             where: { id: batch.id },
             data: { status: 'IN_PROGRESS' },
@@ -282,6 +519,11 @@ export async function POST(request: NextRequest) {
             cart: true,
             orders: {
               orderBy: { binNumber: 'asc' },
+            },
+            bulkBatchAssignments: {
+              include: {
+                bulkBatch: true,
+              },
             },
           },
         })
@@ -325,11 +567,15 @@ export async function POST(request: NextRequest) {
           ? Math.round((Date.now() - new Date(chunk.pickingStartedAt).getTime()) / 1000)
           : null
 
+        // Determine post-pick status based on personalization
+        const isPersonalized = chunk.isPersonalized || false
+        const postPickStatus = isPersonalized ? 'READY_FOR_ENGRAVING' : 'PICKED'
+
         // Update chunk status
         await prisma.pickChunk.update({
           where: { id: chunkId },
           data: {
-            status: 'PICKED',
+            status: postPickStatus,
             pickingCompletedAt: new Date(),
             pickDurationSeconds: pickDuration,
           },
@@ -339,11 +585,16 @@ export async function POST(request: NextRequest) {
         if (chunk.cartId) {
           await prisma.pickCart.update({
             where: { id: chunk.cartId },
-            data: { status: 'PICKED_READY' },
+            data: { status: isPersonalized ? 'ENGRAVING' : 'PICKED_READY' },
           })
         }
 
-        return NextResponse.json({ success: true, pickDurationSeconds: pickDuration })
+        return NextResponse.json({
+          success: true,
+          pickDurationSeconds: pickDuration,
+          isPersonalized,
+          nextStep: isPersonalized ? 'engraving' : 'shipping',
+        })
       }
 
       case 'out-of-stock': {
@@ -458,6 +709,62 @@ export async function POST(request: NextRequest) {
           ordersReturned: ordersToReturn,
           reason: reason || 'picker_cancelled',
         })
+      }
+
+      // Mark a single order as engraved
+      case 'mark-engraved': {
+        const { chunkId, orderNumber } = body
+        if (!chunkId || !orderNumber) {
+          return NextResponse.json({ error: 'chunkId and orderNumber required' }, { status: 400 })
+        }
+
+        // Update the order
+        await prisma.orderLog.updateMany({
+          where: { chunkId, orderNumber },
+          data: { status: 'ENGRAVED' as any },
+        })
+
+        // Increment batch engravedOrders count
+        const chunk = await prisma.pickChunk.findUnique({
+          where: { id: chunkId },
+          select: { batchId: true },
+        })
+        if (chunk?.batchId) {
+          await prisma.pickBatch.update({
+            where: { id: chunk.batchId },
+            data: { engravedOrders: { increment: 1 } },
+          })
+        }
+
+        return NextResponse.json({ success: true })
+      }
+
+      // Complete engraving for a chunk - move to READY_FOR_SHIPPING
+      case 'complete-engraving': {
+        const { chunkId } = body
+        if (!chunkId) {
+          return NextResponse.json({ error: 'chunkId required' }, { status: 400 })
+        }
+
+        const engravingChunk = await prisma.pickChunk.findUnique({
+          where: { id: chunkId },
+          select: { cartId: true },
+        })
+
+        await prisma.pickChunk.update({
+          where: { id: chunkId },
+          data: { status: 'READY_FOR_SHIPPING' },
+        })
+
+        // Update cart status so it appears in shipping queue
+        if (engravingChunk?.cartId) {
+          await prisma.pickCart.update({
+            where: { id: engravingChunk.cartId },
+            data: { status: 'PICKED_READY' },
+          })
+        }
+
+        return NextResponse.json({ success: true })
       }
 
       default:

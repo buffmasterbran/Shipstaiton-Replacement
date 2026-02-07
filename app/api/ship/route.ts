@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
 
     if (action === 'ready-carts') {
       // Get carts that are picked and ready for shipping
+      // Include PICKED (normal) and READY_FOR_SHIPPING (post-engraving personalized)
       const carts = await prisma.pickCart.findMany({
         where: {
           status: 'PICKED_READY',
@@ -19,12 +20,17 @@ export async function GET(request: NextRequest) {
         include: {
           chunks: {
             where: {
-              status: 'PICKED',
+              status: { in: ['PICKED', 'READY_FOR_SHIPPING'] },
             },
             include: {
               batch: true,
               orders: {
                 orderBy: { binNumber: 'asc' },
+              },
+              bulkBatchAssignments: {
+                include: {
+                  bulkBatch: true,
+                },
               },
             },
           },
@@ -42,42 +48,34 @@ export async function GET(request: NextRequest) {
     }
 
     // Get cart by ID or name
-    let cart
+    let cart: any = null
+    const chunkInclude = {
+      where: {
+        status: { in: ['PICKED', 'READY_FOR_SHIPPING', 'SHIPPING'] as any },
+      },
+      include: {
+        batch: true,
+        orders: {
+          orderBy: { binNumber: 'asc' as const },
+        },
+        bulkBatchAssignments: {
+          include: {
+            bulkBatch: true,
+          },
+        },
+      },
+    }
     if (cartId) {
       cart = await prisma.pickCart.findUnique({
         where: { id: cartId },
-        include: {
-          chunks: {
-            where: {
-              status: { in: ['PICKED', 'SHIPPING'] },
-            },
-            include: {
-              batch: true,
-              orders: {
-                orderBy: { binNumber: 'asc' },
-              },
-            },
-          },
-        },
+        include: { chunks: chunkInclude },
       })
     } else if (cartName) {
       cart = await prisma.pickCart.findFirst({
         where: { 
           name: { equals: cartName, mode: 'insensitive' },
         },
-        include: {
-          chunks: {
-            where: {
-              status: { in: ['PICKED', 'SHIPPING'] },
-            },
-            include: {
-              batch: true,
-              orders: {
-                orderBy: { binNumber: 'asc' },
-              },
-            },
-          },
-        },
+        include: { chunks: chunkInclude },
       })
     }
 
@@ -119,7 +117,7 @@ export async function POST(request: NextRequest) {
           where: { id: cartId },
           include: {
             chunks: {
-              where: { status: 'PICKED' },
+              where: { status: { in: ['PICKED', 'READY_FOR_SHIPPING'] } },
             },
           },
         })
@@ -140,11 +138,11 @@ export async function POST(request: NextRequest) {
           data: { status: 'SHIPPING' },
         })
 
-        // Update chunk(s) status
+        // Update chunk(s) status (both PICKED and READY_FOR_SHIPPING -> SHIPPING)
         await prisma.pickChunk.updateMany({
           where: {
             cartId,
-            status: 'PICKED',
+            status: { in: ['PICKED', 'READY_FOR_SHIPPING'] },
           },
           data: {
             status: 'SHIPPING',
@@ -323,7 +321,7 @@ export async function POST(request: NextRequest) {
         const remainingChunks = await prisma.pickChunk.count({
           where: {
             cartId,
-            status: { in: ['PICKED', 'SHIPPING'] },
+            status: { in: ['PICKED', 'READY_FOR_SHIPPING', 'SHIPPING'] },
           },
         })
 

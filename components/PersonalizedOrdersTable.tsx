@@ -2,7 +2,6 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import OrderDialog from './OrderDialog'
-import PushToQueueDialog from './PushToQueueDialog'
 import PackingSlipButton from './PackingSlipButton'
 import { getColorFromSku, getSizeFromSku, isShippingInsurance } from '@/lib/order-utils'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
@@ -42,7 +41,7 @@ interface Box {
   singleCupOnly: boolean
 }
 
-interface BoxSizeSpecificTableProps {
+interface PersonalizedOrdersTableProps {
   orders: OrderLog[]
 }
 
@@ -60,24 +59,33 @@ interface ProcessedOrder {
   boxName: string | null
   customerName: string
   orderDate: string
-  identicalSignature: string
-  identicalCount?: number
+  engravingText: string
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-function computeSimpleSignature(items: Array<{ sku: string; quantity: number }>): string {
-  const sorted = items.map(i => `${i.sku}:${i.quantity}`).sort()
-  return sorted.join('|')
+function getEngravingText(rawPayload: any): string {
+  const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
+  if (order?.engravingText) return order.engravingText
+  if (order?.customization?.text) return order.customization.text
+  if (order?.personalization?.text) return order.personalization.text
+
+  const items = order?.items || []
+  for (const item of items) {
+    if (item.engravingText) return item.engravingText
+    if (item.customization?.text) return item.customization.text
+    if (item.personalization?.text) return item.personalization.text
+  }
+  return ''
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTableProps) {
+export default function PersonalizedOrdersTable({ orders }: PersonalizedOrdersTableProps) {
   const { expeditedFilter } = useExpeditedFilter()
   const ref = useReferenceData()
   const boxes = ref.boxes as Box[]
@@ -87,22 +95,23 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [isPushDialogOpen, setIsPushDialogOpen] = useState(false)
   const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [selectedCupSize, setSelectedCupSize] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
   const [pushMessage, setPushMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [customBatchName, setCustomBatchName] = useState('')
+  const [pushing, setPushing] = useState(false)
 
-  // Process orders
+  // Process orders - only personalized, not yet batched
   const processedOrders = useMemo(() => {
     return orders
       .map((log) => {
         // Skip already-batched or on-hold orders
         if (log.batchId || log.status === 'ON_HOLD') return null
 
-        // Personalized orders have their own tab - exclude here
-        if (isOrderPersonalized(log.rawPayload)) return null
+        // Only include personalized orders
+        if (!isOrderPersonalized(log.rawPayload)) return null
 
         const payload = log.rawPayload as any
         const order = Array.isArray(payload) ? payload[0] : payload
@@ -112,7 +121,6 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
         if (items.length === 0) return null
 
-        // Order by Size = multi-item orders (5+), or non-bulk multi-item orders
         const processedItems = items.map((item: any) => ({
           sku: item.sku || 'N/A',
           name: item.name || 'Unknown',
@@ -122,14 +130,10 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         }))
 
         const totalQty = processedItems.reduce((sum: number, item: any) => sum + item.quantity, 0)
-
-        // Skip singles (1 item)
-        if (totalQty <= 1) return null
-
         const boxName = log.suggestedBox?.boxName || null
         const customerName = order?.shipTo?.name || order?.billTo?.name || 'Unknown'
         const orderDate = order?.orderDate || log.createdAt
-        const identicalSignature = computeSimpleSignature(processedItems)
+        const engravingText = getEngravingText(log.rawPayload)
 
         return {
           log,
@@ -139,38 +143,26 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           boxName,
           customerName,
           orderDate: typeof orderDate === 'string' ? orderDate : String(orderDate),
-          identicalSignature,
+          engravingText,
         } as ProcessedOrder
       })
       .filter((o): o is ProcessedOrder => o !== null)
   }, [orders])
 
-  // Compute identical counts for sorting
-  const ordersWithIdenticalCounts = useMemo(() => {
-    const sigCounts = new Map<string, number>()
-    processedOrders.forEach(o => {
-      sigCounts.set(o.identicalSignature, (sigCounts.get(o.identicalSignature) || 0) + 1)
-    })
-    return processedOrders.map(o => ({
-      ...o,
-      identicalCount: sigCounts.get(o.identicalSignature) || 1,
-    }))
-  }, [processedOrders])
-
   // Box sizes (tier 1 filter)
   const boxSizeCounts = useMemo(() => {
     const counts: Record<string, number> = {}
-    ordersWithIdenticalCounts.forEach(o => {
+    processedOrders.forEach(o => {
       const box = o.boxName || 'No Box'
       counts[box] = (counts[box] || 0) + 1
     })
     return counts
-  }, [ordersWithIdenticalCounts])
+  }, [processedOrders])
 
   // Cup sizes (tier 2 filter, filtered by selected box)
   const cupSizeCounts = useMemo(() => {
     const counts: Record<string, number> = {}
-    ordersWithIdenticalCounts.forEach(o => {
+    processedOrders.forEach(o => {
       if (selectedBoxFilter !== 'all') {
         const box = o.boxName || 'No Box'
         if (box !== selectedBoxFilter) return
@@ -182,11 +174,11 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       })
     })
     return counts
-  }, [ordersWithIdenticalCounts, selectedBoxFilter])
+  }, [processedOrders, selectedBoxFilter])
 
   // Apply all filters
   const filteredOrders = useMemo(() => {
-    let result = ordersWithIdenticalCounts
+    let result = processedOrders
 
     // Expedited filter
     if (expeditedFilter === 'only') {
@@ -219,15 +211,16 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       result = result.filter(o =>
         o.log.orderNumber.toLowerCase().includes(q) ||
         o.customerName.toLowerCase().includes(q) ||
+        o.engravingText.toLowerCase().includes(q) ||
         o.items.some(i => i.sku.toLowerCase().includes(q) || i.name.toLowerCase().includes(q))
       )
     }
 
-    // Default sort: identical orders first, then by date
-    result.sort((a, b) => (b.identicalCount || 1) - (a.identicalCount || 1))
+    // Sort by date (newest first)
+    result.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime())
 
     return result
-  }, [ordersWithIdenticalCounts, selectedBoxFilter, selectedCupSize, searchQuery, expeditedFilter])
+  }, [processedOrders, selectedBoxFilter, selectedCupSize, searchQuery, expeditedFilter])
 
   // Selection helpers
   const selectableOrders = filteredOrders.filter(o => !o.log.batchId)
@@ -253,38 +246,53 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   // Get selected count
   const selectedCount = selectedOrderIds.size > 0 ? selectedOrderIds.size : filteredOrders.length
 
-  // Push handler
-  const handlePushToQueue = useCallback(async (cellIds: string[], customName?: string) => {
+  // Push handler - personalized batches go directly to the personalized pool (no cell assignment)
+  const handlePushToQueue = useCallback(async () => {
     const orderNumbers = selectedOrderIds.size > 0
       ? Array.from(selectedOrderIds)
       : filteredOrders.map(o => o.log.orderNumber)
 
-    const res = await fetch('/api/batches', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        orderNumbers,
-        cellIds,
-        type: 'ORDER_BY_SIZE',
-        isPersonalized: false,
-        customName,
-      }),
-    })
+    if (orderNumbers.length === 0) return
 
-    if (!res.ok) {
+    setPushing(true)
+    setPushMessage(null)
+
+    try {
+      const res = await fetch('/api/batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderNumbers,
+          cellIds: [], // No cell assignment for personalized
+          type: 'ORDER_BY_SIZE',
+          isPersonalized: true,
+          customName: customBatchName || undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to create batch')
+      }
+
       const data = await res.json()
-      throw new Error(data.error || 'Failed to create batch')
+      setPushMessage({
+        type: 'success',
+        text: `Created personalized batch "${data.batch.name}" with ${data.summary.totalOrders} orders`,
+      })
+
+      setSelectedOrderIds(new Set())
+      setCustomBatchName('')
+      if (refreshOrders) refreshOrders()
+    } catch (err: any) {
+      setPushMessage({
+        type: 'error',
+        text: err.message || 'Failed to create batch',
+      })
+    } finally {
+      setPushing(false)
     }
-
-    const data = await res.json()
-    setPushMessage({
-      type: 'success',
-      text: `Created batch "${data.batch.name}" with ${data.summary.totalOrders} orders → ${data.summary.cellsAssigned} cell(s)`,
-    })
-
-    setSelectedOrderIds(new Set())
-    if (refreshOrders) refreshOrders()
-  }, [selectedOrderIds, filteredOrders, refreshOrders])
+  }, [selectedOrderIds, filteredOrders, customBatchName, refreshOrders])
 
   const sortedBoxSizes = Object.entries(boxSizeCounts).sort((a, b) => {
     const boxA = boxes.find(box => box.name === a[0])
@@ -311,17 +319,17 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         <button
           onClick={() => { setSelectedBoxFilter('all'); setSelectedCupSize('all') }}
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            selectedBoxFilter === 'all' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            selectedBoxFilter === 'all' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
           }`}
         >
-          All Boxes ({ordersWithIdenticalCounts.length})
+          All Boxes ({processedOrders.length})
         </button>
         {sortedBoxSizes.map(([size, count]) => (
           <button
             key={size}
             onClick={() => { setSelectedBoxFilter(size); setSelectedCupSize('all') }}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              selectedBoxFilter === size ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              selectedBoxFilter === size ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
             {size} ({count})
@@ -359,10 +367,10 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         <div className="flex items-center gap-3 flex-1">
           <input
             type="text"
-            placeholder="Search order #, customer, SKU..."
+            placeholder="Search order #, customer, SKU, engraving text..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+            className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
           />
         </div>
 
@@ -380,14 +388,32 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
             }))}
             disabled={filteredOrders.length === 0}
           />
-          <button
-            onClick={() => setIsPushDialogOpen(true)}
-            disabled={filteredOrders.length === 0}
-            className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
-          >
-            Push to Queue ({selectedCount})
-          </button>
         </div>
+      </div>
+
+      {/* Push to Queue controls (inline, no cell selection needed) */}
+      <div className="flex items-center gap-3 bg-purple-50 rounded-lg p-3 border border-purple-200">
+        <input
+          type="text"
+          value={customBatchName}
+          onChange={(e) => setCustomBatchName(e.target.value)}
+          placeholder="Batch name (auto-generated if empty)"
+          className="flex-1 max-w-xs px-3 py-2 border border-purple-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 bg-white"
+        />
+        <button
+          onClick={handlePushToQueue}
+          disabled={filteredOrders.length === 0 || pushing}
+          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm flex items-center gap-2"
+        >
+          {pushing ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+              Creating...
+            </>
+          ) : (
+            `Push to Personalized Queue (${selectedCount})`
+          )}
+        </button>
       </div>
 
       {/* Orders Table */}
@@ -407,7 +433,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Box</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Identical</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Engraving</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
             </tr>
@@ -416,7 +442,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
             {filteredOrders.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
-                  No orders match the current filters
+                  No personalized orders match the current filters
                 </td>
               </tr>
             ) : (
@@ -426,7 +452,7 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                   <tr
                     key={o.log.id}
                     onClick={() => { setSelectedOrder(o.order); setSelectedRawPayload(o.log.rawPayload); setIsDialogOpen(true) }}
-                    className={`hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-blue-50' : ''}`}
+                    className={`hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-purple-50' : ''}`}
                   >
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -451,18 +477,18 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                     <td className="px-4 py-2 text-sm text-gray-600">{o.totalQty}</td>
                     <td className="px-4 py-2 text-sm">
                       <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                        o.boxName ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-500'
+                        o.boxName ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'
                       }`}>
                         {o.boxName || 'Unknown'}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-sm">
-                      {(o.identicalCount || 1) > 1 ? (
-                        <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">
-                          {o.identicalCount}×
+                      {o.engravingText ? (
+                        <span className="text-purple-700 font-medium truncate block max-w-[200px]" title={o.engravingText}>
+                          {o.engravingText}
                         </span>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-gray-400 italic">No text</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-sm text-gray-800">{o.customerName}</td>
@@ -481,21 +507,6 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
           </div>
         )}
       </div>
-
-      {/* Push to Queue Dialog */}
-      <PushToQueueDialog
-        isOpen={isPushDialogOpen}
-        onClose={() => setIsPushDialogOpen(false)}
-        onConfirm={handlePushToQueue}
-        orderCount={selectedCount}
-        batchType="ORDER_BY_SIZE"
-        isPersonalized={false}
-        description={
-          selectedBoxFilter !== 'all' || selectedCupSize !== 'all'
-            ? `${selectedBoxFilter !== 'all' ? selectedBoxFilter : 'All boxes'}${selectedCupSize !== 'all' ? ` - ${selectedCupSize}` : ''}`
-            : undefined
-        }
-      />
 
       {/* Order Detail Dialog */}
       {isDialogOpen && selectedOrder && (

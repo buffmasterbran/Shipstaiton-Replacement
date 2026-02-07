@@ -1,139 +1,122 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-// POST - Reorder batches within a cell or move between cells
+/**
+ * POST - Reorder batch priority within a cell.
+ * 
+ * In the new model, batches are assigned to cells via BatchCellAssignment.
+ * Priority is set on both the batch and the assignment.
+ * Reordering updates priority within a cell, and since priority is 
+ * currently global (same across all cells), we update the batch priority too.
+ * 
+ * Request body:
+ * {
+ *   batchId: string
+ *   cellId: string       // Which cell to reorder within
+ *   newPriority: number  // New priority position
+ * }
+ */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { batchId, newCellId, newPriority } = body
-    
+    const { batchId, cellId, newPriority } = body
+
     if (!batchId) {
       return NextResponse.json({ error: 'Batch ID is required' }, { status: 400 })
     }
-    
+
+    if (!cellId) {
+      return NextResponse.json({ error: 'Cell ID is required' }, { status: 400 })
+    }
+
     if (newPriority === undefined) {
       return NextResponse.json({ error: 'New priority is required' }, { status: 400 })
     }
-    
-    // Fetch the batch
-    const batch = await prisma.pickBatch.findUnique({
-      where: { id: batchId },
+
+    // Fetch the batch and its cell assignment
+    const assignment = await prisma.batchCellAssignment.findUnique({
+      where: {
+        batchId_cellId: { batchId, cellId },
+      },
     })
-    
-    if (!batch) {
-      return NextResponse.json({ error: 'Batch not found' }, { status: 404 })
+
+    if (!assignment) {
+      return NextResponse.json({ error: 'Batch is not assigned to this cell' }, { status: 404 })
     }
-    
-    // Determine target cell (use new cell if provided, otherwise keep current)
-    const targetCellId = newCellId || batch.cellId
-    
-    // Verify target cell exists and is active
-    if (newCellId) {
-      const cell = await prisma.pickCell.findUnique({
-        where: { id: targetCellId },
-      })
-      
-      if (!cell) {
-        return NextResponse.json({ error: 'Target cell not found' }, { status: 404 })
-      }
-      
-      if (!cell.active) {
-        return NextResponse.json({ error: 'Target cell is not active' }, { status: 400 })
-      }
+
+    const oldPriority = assignment.priority
+
+    if (newPriority === oldPriority) {
+      return NextResponse.json({ success: true, message: 'No change needed' })
     }
-    
-    const oldCellId = batch.cellId
-    const oldPriority = batch.priority
-    const isMovingCells = newCellId && newCellId !== oldCellId
-    
-    // Begin transaction for reordering
+
+    // Reorder within the cell using a transaction
     await prisma.$transaction(async (tx) => {
-      if (isMovingCells) {
-        // Moving to a different cell
-        // 1. Shift priorities in the old cell to fill the gap
-        await tx.pickBatch.updateMany({
+      if (newPriority < oldPriority) {
+        // Moving up (towards priority 0)
+        // Increment priorities of assignments between new and old position
+        await tx.batchCellAssignment.updateMany({
           where: {
-            cellId: oldCellId,
-            priority: { gt: oldPriority },
-          },
-          data: {
-            priority: { decrement: 1 },
-          },
-        })
-        
-        // 2. Make room in the new cell at the target position
-        await tx.pickBatch.updateMany({
-          where: {
-            cellId: targetCellId,
-            priority: { gte: newPriority },
+            cellId,
+            priority: { gte: newPriority, lt: oldPriority },
+            batchId: { not: batchId },
           },
           data: {
             priority: { increment: 1 },
           },
         })
-        
-        // 3. Update the batch with new cell and priority
-        await tx.pickBatch.update({
-          where: { id: batchId },
+      } else {
+        // Moving down (towards higher priority number)
+        // Decrement priorities of assignments between old and new position
+        await tx.batchCellAssignment.updateMany({
+          where: {
+            cellId,
+            priority: { gt: oldPriority, lte: newPriority },
+            batchId: { not: batchId },
+          },
           data: {
-            cellId: targetCellId,
-            priority: newPriority,
+            priority: { decrement: 1 },
           },
         })
-      } else {
-        // Reordering within the same cell
-        if (newPriority === oldPriority) {
-          // No change needed
-          return
-        }
-        
-        if (newPriority < oldPriority) {
-          // Moving up (towards priority 0)
-          // Increment priorities of items between new and old position
-          await tx.pickBatch.updateMany({
-            where: {
-              cellId: targetCellId,
-              priority: { gte: newPriority, lt: oldPriority },
-              id: { not: batchId },
-            },
-            data: {
-              priority: { increment: 1 },
-            },
-          })
-        } else {
-          // Moving down (towards higher priority number)
-          // Decrement priorities of items between old and new position
-          await tx.pickBatch.updateMany({
-            where: {
-              cellId: targetCellId,
-              priority: { gt: oldPriority, lte: newPriority },
-              id: { not: batchId },
-            },
-            data: {
-              priority: { decrement: 1 },
-            },
-          })
-        }
-        
-        // Update the batch priority
-        await tx.pickBatch.update({
-          where: { id: batchId },
-          data: { priority: newPriority },
-        })
       }
+
+      // Update this assignment's priority
+      await tx.batchCellAssignment.update({
+        where: {
+          batchId_cellId: { batchId, cellId },
+        },
+        data: { priority: newPriority },
+      })
+
+      // Also update the batch's own priority (global priority = same across all cells)
+      await tx.pickBatch.update({
+        where: { id: batchId },
+        data: { priority: newPriority },
+      })
+
+      // Update all other cell assignments for this batch to match
+      await tx.batchCellAssignment.updateMany({
+        where: {
+          batchId,
+          cellId: { not: cellId },
+        },
+        data: { priority: newPriority },
+      })
     })
-    
+
     // Fetch updated batch
     const updatedBatch = await prisma.pickBatch.findUnique({
       where: { id: batchId },
       include: {
-        cell: true,
+        cellAssignments: {
+          include: { cell: true },
+        },
         _count: {
           select: { orders: true, chunks: true },
         },
       },
     })
-    
+
     return NextResponse.json({ batch: updatedBatch })
   } catch (error) {
     console.error('Failed to reorder batch:', error)

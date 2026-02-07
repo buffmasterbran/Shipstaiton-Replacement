@@ -49,16 +49,19 @@ model OrderLog {
   archivedAt DateTime? @map("archived_at")
 
   // Picking/Packing workflow fields
-  batchId   String? @map("batch_id")
-  chunkId   String? @map("chunk_id")
-  binNumber Int?    @map("bin_number") // 1-12 position on cart
+  batchId      String? @map("batch_id")
+  chunkId      String? @map("chunk_id")
+  binNumber    Int?    @map("bin_number") // 1-12 position on cart
+  bulkBatchId  String? @map("bulk_batch_id") // Which bulk batch (for BULK orders)
+  isPersonalized Boolean @default(false) @map("is_personalized") // Personalization flag from NetSuite
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  batch PickBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  chunk PickChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  batch     PickBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  chunk     PickChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  bulkBatch BulkBatch? @relation(fields: [bulkBatchId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([orderNumber])
@@ -70,6 +73,8 @@ model OrderLog {
   @@index([rateShopStatus])
   @@index([batchId])
   @@index([chunkId])
+  @@index([bulkBatchId])
+  @@index([isPersonalized])
   @@map("order_logs")
 }
 
@@ -273,10 +278,39 @@ model Location {
 }
 
 // ============================================================================
+// USER MANAGEMENT
+// ============================================================================
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?  @unique
+  pin       String?  // Quick login for shared iPads
+  role      UserRole @default(PICKER)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  pickedChunks  PickChunk[] @relation("ChunkPicker")
+  shippedChunks PickChunk[] @relation("ChunkShipper")
+
+  @@index([active])
+  @@index([role])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  PICKER
+  SHIPPER
+  ENGRAVER
+}
+
+// ============================================================================
 // PICKING/PACKING WORKFLOW TABLES
 // ============================================================================
 
-// Cell - Physical picking cell in warehouse (each handles specific box sizes)
+// Cell - Physical picking station in warehouse
 model PickCell {
   id        String   @id @default(cuid())
   name      String // e.g., "Cell A", "Cell B"
@@ -284,53 +318,119 @@ model PickCell {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  batches PickBatch[]
+  // Legacy: old batches had direct cellId. New batches use BatchCellAssignment.
+  legacyBatches   PickBatch[]
+  cellAssignments BatchCellAssignment[]
 
   @@index([active])
   @@map("pick_cells")
 }
 
-// Batch - Group of orders assigned to a cell for picking
+// Batch - Group of orders pushed to the queue for picking
 model PickBatch {
-  id            String          @id @default(cuid())
-  name          String // Auto-generated: "16oz-Feb05-001"
-  cellId        String          @map("cell_id")
-  status        PickBatchStatus @default(DRAFT)
-  priority      Int             @default(0) // Lower = higher priority within cell
-  totalOrders   Int             @default(0) @map("total_orders")
-  pickedOrders  Int             @default(0) @map("picked_orders")
-  shippedOrders Int             @default(0) @map("shipped_orders")
-  createdAt     DateTime        @default(now()) @map("created_at")
-  releasedAt    DateTime?       @map("released_at")
-  completedAt   DateTime?       @map("completed_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  id              String          @id @default(cuid())
+  name            String // Auto-generated: "SGL-Feb05-001", "BLK-Feb05-001", "OBS-Feb05-001"
+  type            BatchType       @default(ORDER_BY_SIZE) @map("batch_type")
+  cellId          String?         @map("cell_id") // Legacy - nullable for new multi-cell batches
+  status          PickBatchStatus @default(ACTIVE)
+  priority        Int             @default(0) // Lower = higher priority
+  isPersonalized  Boolean         @default(false) @map("is_personalized")
+  totalOrders     Int             @default(0) @map("total_orders")
+  pickedOrders    Int             @default(0) @map("picked_orders")
+  shippedOrders   Int             @default(0) @map("shipped_orders")
+  engravedOrders  Int             @default(0) @map("engraved_orders") // Personalized only
+  createdAt       DateTime        @default(now()) @map("created_at")
+  releasedAt      DateTime?       @map("released_at") // Legacy
+  completedAt     DateTime?       @map("completed_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  cell   PickCell    @relation(fields: [cellId], references: [id], onDelete: Cascade)
-  chunks PickChunk[]
-  orders OrderLog[]
+  // Legacy relation (old single-cell assignment)
+  cell            PickCell?           @relation(fields: [cellId], references: [id], onDelete: SetNull)
+  // New multi-cell assignment
+  cellAssignments BatchCellAssignment[]
+  chunks          PickChunk[]
+  orders          OrderLog[]
+  bulkBatches     BulkBatch[]
 
   @@index([cellId])
   @@index([status])
   @@index([priority])
+  @@index([type])
+  @@index([isPersonalized])
   @@map("pick_batches")
 }
 
+enum BatchType {
+  SINGLES
+  BULK
+  ORDER_BY_SIZE
+}
+
 enum PickBatchStatus {
-  DRAFT
-  RELEASED
+  DRAFT // Legacy - kept for backward compat
+  RELEASED // Legacy - kept for backward compat
+  ACTIVE // New: batch is available for pickers
   IN_PROGRESS
   COMPLETED
 }
 
-// Chunk - Internal unit of 12 orders assigned to a picker/cart (admin doesn't see these)
+// Many-to-many: Batch <-> Cell assignment
+model BatchCellAssignment {
+  id        String   @id @default(cuid())
+  batchId   String   @map("batch_id")
+  cellId    String   @map("cell_id")
+  priority  Int      @default(0) // Priority within this cell (lower = first)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  batch PickBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  cell  PickCell  @relation(fields: [cellId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, cellId])
+  @@index([batchId])
+  @@index([cellId])
+  @@index([priority])
+  @@map("batch_cell_assignments")
+}
+
+// BulkBatch - Nested layer within a BULK PickBatch (tile > bulk batches > orders)
+// Each represents a group of identical orders that maps to one row/shelf on the cart
+model BulkBatch {
+  id              String   @id @default(cuid())
+  parentBatchId   String   @map("parent_batch_id") // FK to PickBatch (the tile)
+  groupSignature  String   @map("group_signature") // Hash identifying identical orders
+  orderCount      Int      @map("order_count") // How many identical orders in this split
+  splitIndex      Int      @default(0) @map("split_index") // Which split (0, 1, 2...) if >24
+  totalSplits     Int      @default(1) @map("total_splits")
+  skuLayout       Json     @map("sku_layout") // Array of {sku, name, qty} for bin layout per row
+  status          String   @default("PENDING") // PENDING | ASSIGNED | COMPLETED
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  parentBatch      PickBatch                  @relation(fields: [parentBatchId], references: [id], onDelete: Cascade)
+  chunkAssignments ChunkBulkBatchAssignment[]
+  orders           OrderLog[]
+
+  @@index([parentBatchId])
+  @@index([status])
+  @@index([groupSignature])
+  @@map("bulk_batches")
+}
+
+// Chunk - Unit of work assigned to a picker/cart
 model PickChunk {
   id                  String          @id @default(cuid())
   batchId             String          @map("batch_id")
   chunkNumber         Int             @map("chunk_number") // Sequential within batch
+  pickingMode         PickingMode     @default(ORDER_BY_SIZE) @map("picking_mode")
   status              PickChunkStatus @default(AVAILABLE)
+  isPersonalized      Boolean         @default(false) @map("is_personalized")
   cartId              String?         @map("cart_id")
+  // Legacy name-based fields (kept for backward compat)
   pickerName          String?         @map("picker_name")
   shipperName         String?         @map("shipper_name")
+  // New user-based fields
+  pickerId            String?         @map("picker_id")
+  shipperId           String?         @map("shipper_id")
   ordersInChunk       Int             @default(0) @map("orders_in_chunk")
   ordersShipped       Int             @default(0) @map("orders_shipped")
   ordersSkipped       Int             @default(0) @map("orders_skipped")
@@ -344,26 +444,56 @@ model PickChunk {
   createdAt           DateTime        @default(now()) @map("created_at")
   updatedAt           DateTime        @updatedAt @map("updated_at")
 
-  batch  PickBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  cart   PickCart?  @relation(fields: [cartId], references: [id], onDelete: SetNull)
-  orders OrderLog[]
+  batch                PickBatch                  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  cart                 PickCart?                   @relation(fields: [cartId], references: [id], onDelete: SetNull)
+  picker               User?                      @relation("ChunkPicker", fields: [pickerId], references: [id], onDelete: SetNull)
+  shipper              User?                      @relation("ChunkShipper", fields: [shipperId], references: [id], onDelete: SetNull)
+  orders               OrderLog[]
+  bulkBatchAssignments ChunkBulkBatchAssignment[]
 
   @@index([batchId])
   @@index([status])
   @@index([cartId])
+  @@index([pickerId])
+  @@index([pickingMode])
   @@map("pick_chunks")
+}
+
+enum PickingMode {
+  SINGLES
+  BULK
+  ORDER_BY_SIZE
 }
 
 enum PickChunkStatus {
   AVAILABLE // Ready to be claimed
   PICKING // Picker is working on it
   PICKED // All items picked, ready for shipping
+  READY_FOR_ENGRAVING // Personalized: picked, awaiting engraving
+  READY_FOR_SHIPPING // Personalized: engraved, ready for shipping
   SHIPPING // Shipper is working on it
   COMPLETED // All orders shipped
   CANCELLED // Chunk was cancelled, orders returned to queue
 }
 
-// Cart - Physical picking cart with 12 bins
+// Links a chunk's shelf/row to a specific BulkBatch (for BULK picking mode)
+model ChunkBulkBatchAssignment {
+  id            String @id @default(cuid())
+  chunkId       String @map("chunk_id")
+  bulkBatchId   String @map("bulk_batch_id")
+  shelfNumber   Int    @map("shelf_number") // 1, 2, or 3 (which row on the cart)
+
+  chunk     PickChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  bulkBatch BulkBatch @relation(fields: [bulkBatchId], references: [id], onDelete: Cascade)
+
+  @@unique([chunkId, shelfNumber])
+  @@unique([chunkId, bulkBatchId])
+  @@index([chunkId])
+  @@index([bulkBatchId])
+  @@map("chunk_bulk_batch_assignments")
+}
+
+// Cart - Physical picking cart with 12 bins (always 4 wide x 3 tall)
 model PickCart {
   id        String         @id @default(cuid())
   name      String // e.g., "Cart 1", "Cart 2"
@@ -384,5 +514,6 @@ enum PickCartStatus {
   AVAILABLE // Cart is free to use
   PICKING // Cart is being used for picking
   PICKED_READY // Cart is picked and ready for shipping
+  ENGRAVING // Cart is at engraving station (personalized)
   SHIPPING // Cart is being shipped
 }

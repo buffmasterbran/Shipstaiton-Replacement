@@ -1,6 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface PickCell {
   id: string
@@ -29,20 +33,39 @@ interface ChunkOrder {
   rawPayload: any
 }
 
+interface BulkSkuLayoutEntry {
+  sku: string
+  binQty: number
+  masterUnitIndex: number
+}
+
 interface PickChunk {
   id: string
   batchId: string
   chunkNumber: number
   status: string
+  pickingMode?: 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE'
+  isPersonalized?: boolean
   cartId: string
   pickerName: string
   ordersInChunk: number
   batch: {
     id: string
     name: string
+    type?: 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE'
+    isPersonalized?: boolean
   }
   cart: PickCart
   orders: ChunkOrder[]
+  bulkBatchAssignments?: Array<{
+    shelfNumber: number
+    bulkBatch: {
+      id: string
+      skuLayout: BulkSkuLayoutEntry[]
+      orderCount: number
+      groupSignature: string
+    }
+  }>
 }
 
 // Item grouped by SKU with bin distribution
@@ -50,17 +73,21 @@ interface PickItem {
   sku: string
   name: string
   binLocation: string
+  productSize: string
+  productColor: string
   bins: Array<{ binNumber: number; quantity: number }>
   totalQuantity: number
 }
 
-type PickerStep = 'cell-select' | 'cart-select' | 'picking' | 'complete'
+type PickerStep = 'login' | 'cell-select' | 'cart-select' | 'picking' | 'complete'
 
-// Helper to extract items from order payload
+// ============================================================================
+// Helpers
+// ============================================================================
+
 function getOrderItems(rawPayload: any): OrderItem[] {
   const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
   const items = order?.items || []
-  
   return items
     .filter((item: any) => {
       const sku = (item.sku || '').toUpperCase()
@@ -74,35 +101,60 @@ function getOrderItems(rawPayload: any): OrderItem[] {
     }))
 }
 
-// Hamburger menu icon
-function MenuIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-    </svg>
-  )
+function extractProductInfo(sku: string): { size: string; color: string } {
+  const parts = sku.split('-')
+  // Common pattern: BRAND-SIZE-COLOR or BRAND-COLOR-SIZE
+  let size = ''
+  let color = ''
+  for (const part of parts) {
+    if (/^\d+oz$/i.test(part)) size = part
+    else if (/^\d+$/.test(part)) size = part + 'oz'
+    else if (part.length > 2 && !/^[A-Z]{2,4}$/.test(part)) color = part
+  }
+  return { size: size || 'N/A', color: color || 'N/A' }
 }
 
-// Cart visualization component - iPad optimized, full size
-function CartVisualization({ 
-  totalBins, 
+function formatTimer(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+}
+
+function getModeBadge(type?: string, isPersonalized?: boolean) {
+  if (isPersonalized) return { label: 'PERSONALIZED', bg: 'bg-purple-600' }
+  switch (type) {
+    case 'SINGLES': return { label: 'SINGLES', bg: 'bg-blue-600' }
+    case 'BULK': return { label: 'BULK', bg: 'bg-orange-600' }
+    case 'ORDER_BY_SIZE': return { label: 'ORDER BY SIZE', bg: 'bg-teal-600' }
+    default: return { label: 'PICK', bg: 'bg-gray-600' }
+  }
+}
+
+// ============================================================================
+// Cart Visualization Component
+// ============================================================================
+
+function CartVisualization({
+  totalBins,
   highlightedBins,
   completedBins,
   emptyBins,
   binQuantities,
-}: { 
+  pickingMode,
+}: {
   totalBins: number
   highlightedBins: Set<number>
   completedBins: Set<number>
   emptyBins: Set<number>
   binQuantities?: Map<number, number>
+  pickingMode?: string
 }) {
-  const isOversized = totalBins === 6
-  const cols = isOversized ? 3 : 4
+  // Bulk uses 3 rows of 4 (shelves), others use 4x3 grid
+  const cols = pickingMode === 'BULK' ? 4 : 4
   const bins = Array.from({ length: totalBins }, (_, i) => i + 1)
-  
+
   return (
-    <div 
+    <div
       className="grid gap-4 w-full h-full"
       style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
     >
@@ -111,11 +163,11 @@ function CartVisualization({
         const isEmpty = emptyBins.has(bin)
         const isHighlighted = highlightedBins.has(bin)
         const quantity = binQuantities?.get(bin)
-        
+
         let bgColor = 'bg-white'
         let borderColor = 'border-gray-300'
         let textColor = 'text-gray-400'
-        
+
         if (isEmpty) {
           bgColor = 'bg-gray-100'
           borderColor = 'border-gray-300'
@@ -129,7 +181,7 @@ function CartVisualization({
           borderColor = 'border-blue-500'
           textColor = 'text-blue-700'
         }
-        
+
         return (
           <div
             key={bin}
@@ -137,13 +189,13 @@ function CartVisualization({
             style={{ borderWidth: '4px' }}
           >
             {isEmpty ? (
-              <span className="text-5xl font-bold">—</span>
+              <span className="text-5xl font-bold">&mdash;</span>
             ) : isCompleted ? (
-              <span className="text-5xl font-bold">✓</span>
+              <span className="text-5xl font-bold">&#10003;</span>
             ) : isHighlighted && quantity ? (
               <>
                 <span className="text-2xl font-medium text-gray-500">{bin}</span>
-                <span className="text-5xl font-bold">×{quantity}</span>
+                <span className="text-5xl font-bold">&times;{quantity}</span>
               </>
             ) : (
               <span className="text-5xl font-bold">{bin}</span>
@@ -155,93 +207,98 @@ function CartVisualization({
   )
 }
 
-// Slide-out menu component
+// ============================================================================
+// Timer Hook
+// ============================================================================
+
+function useTimer() {
+  const [elapsed, setElapsed] = useState(0)
+  const [running, setRunning] = useState(false)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const start = useCallback(() => {
+    setRunning(true)
+    setElapsed(0)
+  }, [])
+
+  const pause = useCallback(() => setRunning(false), [])
+  const resume = useCallback(() => setRunning(true), [])
+  const reset = useCallback(() => { setRunning(false); setElapsed(0) }, [])
+
+  useEffect(() => {
+    if (running) {
+      intervalRef.current = setInterval(() => setElapsed(prev => prev + 1), 1000)
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+    }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+  }, [running])
+
+  return { elapsed, running, start, pause, resume, reset }
+}
+
+// ============================================================================
+// Slide Menu
+// ============================================================================
+
 function SlideMenu({
   isOpen,
   onClose,
   pickerName,
   cartName,
   cellName,
+  batchType,
+  isPersonalized,
   onCancelPick,
-  onChangeCell,
 }: {
   isOpen: boolean
   onClose: () => void
   pickerName: string
   cartName: string
   cellName: string
+  batchType?: string
+  isPersonalized?: boolean
   onCancelPick: () => void
-  onChangeCell: () => void
 }) {
   if (!isOpen) return null
+  const badge = getModeBadge(batchType, isPersonalized)
 
   return (
     <>
-      {/* Backdrop */}
-      <div 
-        className="fixed inset-0 bg-black/50 z-40"
-        onClick={onClose}
-      />
-      
-      {/* Menu panel */}
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
       <div className="fixed left-0 top-0 bottom-0 w-72 bg-white shadow-2xl z-50 flex flex-col">
-        {/* Header */}
         <div className="p-6 border-b bg-gray-50">
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 mb-4"
-          >
-            ✕ Close
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 mb-4">
+            Close
           </button>
           <h2 className="text-xl font-bold text-gray-900">Menu</h2>
         </div>
-
-        {/* Info section */}
         <div className="p-6 space-y-4 border-b">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">👤</span>
-            <div>
-              <div className="text-sm text-gray-500">Picker</div>
-              <div className="font-bold text-gray-900">{pickerName}</div>
-            </div>
+          <div>
+            <div className="text-sm text-gray-500">Picker</div>
+            <div className="font-bold text-gray-900">{pickerName}</div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🛒</span>
-            <div>
-              <div className="text-sm text-gray-500">Cart</div>
-              <div className="font-bold text-gray-900">{cartName}</div>
-            </div>
+          <div>
+            <div className="text-sm text-gray-500">Cart</div>
+            <div className="font-bold text-gray-900">{cartName}</div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">📦</span>
-            <div>
-              <div className="text-sm text-gray-500">Cell</div>
-              <div className="font-bold text-gray-900">{cellName}</div>
-            </div>
+          <div>
+            <div className="text-sm text-gray-500">Cell</div>
+            <div className="font-bold text-gray-900">{cellName}</div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-500">Mode</div>
+            <span className={`inline-flex px-2 py-1 rounded text-xs font-bold text-white ${badge.bg}`}>
+              {badge.label}
+            </span>
           </div>
         </div>
-
-        {/* Actions */}
-        <div className="flex-1 p-4 space-y-3">
+        <div className="flex-1 p-4">
           <button
-            onClick={() => {
-              onClose()
-              onCancelPick()
-            }}
-            className="w-full py-4 px-4 text-left text-red-600 hover:bg-red-50 rounded-xl font-medium flex items-center gap-3"
+            onClick={() => { onClose(); onCancelPick() }}
+            className="w-full py-4 px-4 text-left text-red-600 hover:bg-red-50 rounded-xl font-medium"
           >
-            <span className="text-xl">❌</span>
             Cancel Pick
-          </button>
-          <button
-            onClick={() => {
-              onClose()
-              onChangeCell()
-            }}
-            className="w-full py-4 px-4 text-left text-gray-700 hover:bg-gray-100 rounded-xl font-medium flex items-center gap-3"
-          >
-            <span className="text-xl">🔄</span>
-            Change Cell
           </button>
         </div>
       </div>
@@ -249,114 +306,167 @@ function SlideMenu({
   )
 }
 
+// ============================================================================
+// Main Page
+// ============================================================================
+
 export default function PickerPage() {
-  const [step, setStep] = useState<PickerStep>('cell-select')
+  const [step, setStep] = useState<PickerStep>('login')
   const [cells, setCells] = useState<PickCell[]>([])
   const [carts, setCarts] = useState<PickCart[]>([])
   const [selectedCell, setSelectedCell] = useState<PickCell | null>(null)
   const [selectedCart, setSelectedCart] = useState<PickCart | null>(null)
   const [pickerName, setPickerName] = useState('')
   const [chunk, setChunk] = useState<PickChunk | null>(null)
-  
-  // Location-based picking state
+
+  // Pick state
   const [pickItems, setPickItems] = useState<PickItem[]>([])
   const [currentItemIndex, setCurrentItemIndex] = useState(0)
   const [pickedSkus, setPickedSkus] = useState<Set<string>>(new Set())
   const [emptyBins, setEmptyBins] = useState<Set<number>>(new Set())
-  const [skuToBinLocation, setSkuToBinLocation] = useState<Map<string, string>>(new Map())
-  
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [availableOrderCount, setAvailableOrderCount] = useState(0)
-  
-  // Menu and dialog state
   const [menuOpen, setMenuOpen] = useState(false)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [cancelling, setCancelling] = useState(false)
-  
-  // Track if we're in an active pick (for navigation guard)
+  const [returnToCell, setReturnToCell] = useState<PickCell | null>(null) // Track cell to return to after personalized pick
+  const [personalizedOrderCount, setPersonalizedOrderCount] = useState(0)
+
+  // Timer
+  const timer = useTimer()
+
   const isActivePick = step === 'picking' && chunk !== null
 
-  // Navigation guard - warn when leaving during active pick
+  // Navigation guard
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (isActivePick) {
         e.preventDefault()
-        e.returnValue = 'You have an active pick in progress. Are you sure you want to leave?'
+        e.returnValue = 'You have an active pick in progress. Leave?'
         return e.returnValue
       }
     }
-
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [isActivePick])
 
-  // Load saved picker name from localStorage
+  // Load saved picker name
   useEffect(() => {
-    const savedName = localStorage.getItem('picker-name')
-    if (savedName) {
-      setPickerName(savedName)
+    const saved = localStorage.getItem('picker-name')
+    if (saved) {
+      setPickerName(saved)
+      setStep('cell-select')
     }
   }, [])
 
   // Fetch cells
   useEffect(() => {
-    const fetchCells = async () => {
-      try {
-        const res = await fetch('/api/pick?action=active-cells')
-        if (res.ok) {
-          const data = await res.json()
-          setCells(data.cells || [])
-        }
-      } catch (err) {
-        console.error('Failed to fetch cells:', err)
-      }
-    }
-    fetchCells()
+    fetch('/api/pick?action=active-cells')
+      .then(res => res.json())
+      .then(data => setCells(data.cells || []))
+      .catch(() => {})
   }, [])
 
-  // Fetch carts
+  // Fetch carts when needed
   useEffect(() => {
-    const fetchCarts = async () => {
-      try {
-        const res = await fetch('/api/pick?action=available-carts')
-        if (res.ok) {
-          const data = await res.json()
-          setCarts(data.carts || [])
-        }
-      } catch (err) {
-        console.error('Failed to fetch carts:', err)
-      }
-    }
     if (step === 'cart-select') {
-      fetchCarts()
+      fetch('/api/pick?action=available-carts')
+        .then(res => res.json())
+        .then(data => setCarts(data.carts || []))
+        .catch(() => {})
     }
   }, [step])
 
-  // Fetch available orders for selected cell
+  // Fetch available orders for cell
   useEffect(() => {
-    const fetchAvailable = async () => {
-      if (!selectedCell) return
-      try {
-        const res = await fetch(`/api/pick?cellId=${selectedCell.id}`)
-        if (res.ok) {
-          const data = await res.json()
-          setAvailableOrderCount(data.availableOrderCount || 0)
-        }
-      } catch (err) {
-        console.error('Failed to fetch available orders:', err)
-      }
-    }
-    if (selectedCell) {
-      fetchAvailable()
-    }
+    if (!selectedCell) return
+    fetch(`/api/pick?cellId=${selectedCell.id}`)
+      .then(res => res.json())
+      .then(data => setAvailableOrderCount(data.availableOrderCount || 0))
+      .catch(() => {})
   }, [selectedCell])
 
-  // Process chunk into location-based pick items
+  // Fetch personalized order count from the personalized pool
+  useEffect(() => {
+    if (step !== 'cell-select' && step !== 'cart-select') return
+    fetch('/api/pick?action=personalized-count')
+      .then(res => res.json())
+      .then(data => setPersonalizedOrderCount(data.availableOrderCount || 0))
+      .catch(() => setPersonalizedOrderCount(0))
+  }, [step])
+
+  // Process chunk into pick items sorted by location
   const processChunkForPicking = useCallback(async (chunkData: PickChunk) => {
-    // Extract all items from all orders, grouped by SKU
+    // Fetch bin locations for all SKUs
+    const locationMap = new Map<string, string>()
+    try {
+      const res = await fetch('/api/products')
+      if (res.ok) {
+        const data = await res.json()
+        for (const record of (data.skus || [])) {
+          if (record.binLocation) locationMap.set(record.sku.toUpperCase(), record.binLocation)
+        }
+      }
+    } catch {}
+
+    const isBulkMode = chunkData.batch.type === 'BULK' && 
+      chunkData.bulkBatchAssignments && 
+      chunkData.bulkBatchAssignments.length > 0
+
+    if (isBulkMode) {
+      // BULK MODE: Use the BulkBatch skuLayout to determine pick items
+      // Each skuLayout entry = one physical bin (master unit)
+      // Group by SKU for efficient picking (go to one location, fill multiple bins)
+      const bulkBatch = chunkData.bulkBatchAssignments![0].bulkBatch
+      const layout = (bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
+
+      // Group layout entries by SKU
+      const skuGroups = new Map<string, { bins: Array<{ binNumber: number; quantity: number }>; totalQty: number }>()
+      for (const entry of layout) {
+        const skuKey = entry.sku.toUpperCase()
+        if (!skuGroups.has(skuKey)) {
+          skuGroups.set(skuKey, { bins: [], totalQty: 0 })
+        }
+        const group = skuGroups.get(skuKey)!
+        group.bins.push({ binNumber: entry.masterUnitIndex + 1, quantity: entry.binQty })
+        group.totalQty += entry.binQty
+      }
+
+      // Build pick items from the layout
+      const items: PickItem[] = []
+      for (const [sku, data] of Array.from(skuGroups.entries())) {
+        data.bins.sort((a, b) => a.binNumber - b.binNumber)
+        // Try to get a friendly name from the first order's payload
+        let friendlyName = sku
+        if (chunkData.orders.length > 0) {
+          const orderItems = getOrderItems(chunkData.orders[0].rawPayload)
+          const match = orderItems.find(i => i.sku.toUpperCase() === sku)
+          if (match) friendlyName = match.name
+        }
+        const info = extractProductInfo(sku)
+        items.push({
+          sku,
+          name: friendlyName,
+          binLocation: locationMap.get(sku) || 'ZZZ',
+          productSize: info.size,
+          productColor: info.color,
+          bins: data.bins,
+          totalQuantity: data.totalQty,
+        })
+      }
+
+      items.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
+      setPickItems(items)
+      setCurrentItemIndex(0)
+      setPickedSkus(new Set())
+      return
+    }
+
+    // SINGLES / OBS / PERSONALIZED: Derive from order payloads
     const skuMap = new Map<string, { name: string; bins: Map<number, number> }>()
-    
+
     for (const order of chunkData.orders) {
       const items = getOrderItems(order.rawPayload)
       for (const item of items) {
@@ -365,32 +475,11 @@ export default function PickerPage() {
           skuMap.set(skuKey, { name: item.name, bins: new Map() })
         }
         const existing = skuMap.get(skuKey)!
-        const currentQty = existing.bins.get(order.binNumber) || 0
-        existing.bins.set(order.binNumber, currentQty + item.quantity)
+        existing.bins.set(order.binNumber, (existing.bins.get(order.binNumber) || 0) + item.quantity)
       }
     }
 
-    // Fetch bin locations for all SKUs
-    const locationMap = new Map<string, string>()
-    
-    try {
-      const res = await fetch('/api/products')
-      if (res.ok) {
-        const data = await res.json()
-        const skuRecords = data.skus || []
-        for (const record of skuRecords) {
-          if (record.binLocation) {
-            locationMap.set(record.sku.toUpperCase(), record.binLocation)
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch SKU locations:', err)
-    }
-
-    setSkuToBinLocation(locationMap)
-
-    // Convert to PickItem array and sort by location
+    // Build pick items
     const items: PickItem[] = []
     for (const [sku, data] of Array.from(skuMap.entries())) {
       const bins: Array<{ binNumber: number; quantity: number }> = []
@@ -400,64 +489,89 @@ export default function PickerPage() {
         total += qty
       }
       bins.sort((a, b) => a.binNumber - b.binNumber)
-      
+
+      const info = extractProductInfo(sku)
       items.push({
         sku,
         name: data.name,
         binLocation: locationMap.get(sku) || 'ZZZ',
+        productSize: info.size,
+        productColor: info.color,
         bins,
         totalQuantity: total,
       })
     }
 
-    // Sort by bin location
     items.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
-    
     setPickItems(items)
     setCurrentItemIndex(0)
     setPickedSkus(new Set())
   }, [])
 
-  // Handle cell selection
+  // ============================================
+  // Actions
+  // ============================================
+
+  const handleLogin = () => {
+    if (!pickerName.trim()) return
+    localStorage.setItem('picker-name', pickerName.trim())
+    setStep('cell-select')
+  }
+
   const handleCellSelect = (cell: PickCell) => {
     setSelectedCell(cell)
     setStep('cart-select')
   }
 
-  // Handle cart selection and start picking
+  const [pickingPersonalized, setPickingPersonalized] = useState(false)
+
+  const handlePickPersonalized = () => {
+    // Remember the current cell to return to after the personalized pick
+    if (selectedCell) {
+      setReturnToCell(selectedCell)
+    }
+    setPickingPersonalized(true)
+    setStep('cart-select')
+  }
+
   const handleStartPicking = async () => {
-    if (!selectedCell || !selectedCart || !pickerName.trim()) {
+    if (!pickingPersonalized && !selectedCell) {
+      setError('Please select a cell')
+      return
+    }
+    if (!selectedCart || !pickerName.trim()) {
       setError('Please fill in all fields')
       return
     }
-
-    // Save picker name
-    localStorage.setItem('picker-name', pickerName.trim())
 
     setLoading(true)
     setError(null)
 
     try {
+      const claimBody: any = {
+        action: 'claim-chunk',
+        cartId: selectedCart.id,
+        pickerName: pickerName.trim(),
+      }
+      if (pickingPersonalized) {
+        claimBody.personalized = true
+      } else {
+        claimBody.cellId = selectedCell!.id
+      }
+
       const res = await fetch('/api/pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'claim-chunk',
-          cellId: selectedCell.id,
-          cartId: selectedCart.id,
-          pickerName: pickerName.trim(),
-        }),
+        body: JSON.stringify(claimBody),
       })
 
       const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to claim chunk')
-      }
+      if (!res.ok) throw new Error(data.error || 'Failed to claim chunk')
 
       setChunk(data.chunk)
       setEmptyBins(new Set())
       await processChunkForPicking(data.chunk)
+      timer.start()
       setStep('picking')
     } catch (err: any) {
       setError(err.message || 'Failed to start picking')
@@ -466,24 +580,24 @@ export default function PickerPage() {
     }
   }
 
-  // Get current pick item
+  // Current pick item
   const currentItem = pickItems[currentItemIndex] || null
-  const isOversized = chunk?.batch.name.startsWith('O-')
-  const totalBins = isOversized ? 6 : 12
+  const batchType = chunk?.batch.type || chunk?.pickingMode
+  const isPersonalized = chunk?.batch.isPersonalized || chunk?.isPersonalized || false
+  // Bulk uses 4 bins per shelf (master units), others use 12 bins per cart
+  const totalBins = batchType === 'BULK' ? 4 : 12
 
-  // Calculate completed bins (all items for that bin have been picked)
+  // Calculate completed and highlighted bins
   const completedBins = new Set<number>()
   if (chunk) {
     for (const order of chunk.orders) {
       const orderItems = getOrderItems(order.rawPayload)
-      const allPicked = orderItems.every(item => pickedSkus.has(item.sku.toUpperCase()))
-      if (allPicked) {
+      if (orderItems.every(item => pickedSkus.has(item.sku.toUpperCase()))) {
         completedBins.add(order.binNumber)
       }
     }
   }
 
-  // Get highlighted bins for current item
   const highlightedBins = new Set<number>()
   const binQuantities = new Map<number, number>()
   if (currentItem) {
@@ -495,16 +609,13 @@ export default function PickerPage() {
     }
   }
 
-  // Handle complete current item (advance to next location)
   const handleCompleteItem = useCallback(async () => {
     if (!chunk || !currentItem) return
 
-    // Mark this SKU as picked
     setPickedSkus(prev => new Set([...Array.from(prev), currentItem.sku]))
 
-    // Check if this was the last item
     if (currentItemIndex >= pickItems.length - 1) {
-      // All items completed
+      // All done
       setLoading(true)
       try {
         await fetch('/api/pick', {
@@ -515,6 +626,7 @@ export default function PickerPage() {
             chunkId: chunk.id,
           }),
         })
+        timer.pause()
         setStep('complete')
       } catch (err) {
         console.error('Failed to complete chunk:', err)
@@ -522,23 +634,14 @@ export default function PickerPage() {
         setLoading(false)
       }
     } else {
-      // Move to next item
       setCurrentItemIndex(prev => prev + 1)
     }
-  }, [chunk, currentItem, currentItemIndex, pickItems.length])
+  }, [chunk, currentItem, currentItemIndex, pickItems.length, timer])
 
-  // Handle out of stock
   const handleOutOfStock = async () => {
     if (!chunk || !currentItem) return
-
-    // Find all bins that have this item
     const affectedBinNumbers = currentItem.bins.map(b => b.binNumber)
-
-    const confirmed = confirm(
-      `Mark "${currentItem.sku}" as out of stock? This will empty ${affectedBinNumbers.length} bin(s) and return those orders to the queue.`
-    )
-
-    if (!confirmed) return
+    if (!confirm(`Mark "${currentItem.sku}" as out of stock? This will empty ${affectedBinNumbers.length} bin(s).`)) return
 
     setLoading(true)
     try {
@@ -552,30 +655,20 @@ export default function PickerPage() {
           affectedBinNumbers,
         }),
       })
+      if (!res.ok) throw new Error('Failed')
 
-      if (!res.ok) {
-        throw new Error('Failed to mark out of stock')
-      }
-
-      // Mark affected bins as empty
       setEmptyBins(prev => new Set([...Array.from(prev), ...affectedBinNumbers]))
-      
-      // Mark this SKU as "picked" (actually skipped)
       setPickedSkus(prev => new Set([...Array.from(prev), currentItem.sku]))
 
-      // Move to next item or complete
       if (currentItemIndex >= pickItems.length - 1) {
-        // Check if there are any non-empty bins left
-        const remainingBins = chunk.orders.filter(o => !emptyBins.has(o.binNumber) && !affectedBinNumbers.includes(o.binNumber))
-        if (remainingBins.length === 0) {
+        const remaining = chunk.orders.filter(o => !emptyBins.has(o.binNumber) && !affectedBinNumbers.includes(o.binNumber))
+        if (remaining.length === 0) {
           await fetch('/api/pick', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'complete-chunk',
-              chunkId: chunk.id,
-            }),
+            body: JSON.stringify({ action: 'complete-chunk', chunkId: chunk.id }),
           })
+          timer.pause()
           setStep('complete')
         } else {
           setCurrentItemIndex(prev => prev + 1)
@@ -583,65 +676,58 @@ export default function PickerPage() {
       } else {
         setCurrentItemIndex(prev => prev + 1)
       }
-    } catch (err) {
-      console.error('Failed to mark out of stock:', err)
+    } catch {
+      console.error('Failed to mark out of stock')
     } finally {
       setLoading(false)
     }
   }
 
-  // Cancel the current chunk and return orders to queue
   const handleCancelChunk = async () => {
     if (!chunk) return
-
     setCancelling(true)
     try {
       const res = await fetch('/api/pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'cancel-chunk',
-          chunkId: chunk.id,
-          reason: 'picker_cancelled',
-        }),
+        body: JSON.stringify({ action: 'cancel-chunk', chunkId: chunk.id, reason: 'picker_cancelled' }),
       })
+      if (!res.ok) throw new Error('Failed to cancel')
 
-      if (!res.ok) {
-        throw new Error('Failed to cancel pick')
-      }
-
-      // Reset state and go back to cart selection
       setChunk(null)
       setPickItems([])
       setCurrentItemIndex(0)
       setPickedSkus(new Set())
       setEmptyBins(new Set())
       setShowCancelDialog(false)
+      timer.reset()
       setStep('cart-select')
-    } catch (err) {
-      console.error('Failed to cancel chunk:', err)
-      alert('Failed to cancel pick. Please try again.')
+    } catch {
+      alert('Failed to cancel. Try again.')
     } finally {
       setCancelling(false)
     }
   }
 
-  // Reset and start new chunk
   const handleStartNewChunk = () => {
     setChunk(null)
     setPickItems([])
     setCurrentItemIndex(0)
     setPickedSkus(new Set())
     setEmptyBins(new Set())
+    timer.reset()
+    setPickingPersonalized(false)
+
+    // If we were on a personalized detour, return to the original cell
+    if (returnToCell) {
+      setSelectedCell(returnToCell)
+      setReturnToCell(null)
+    }
     setStep('cart-select')
   }
 
-  // Reset completely
   const handleReset = () => {
-    if (isActivePick) {
-      setShowCancelDialog(true)
-      return
-    }
+    if (isActivePick) { setShowCancelDialog(true); return }
     setSelectedCell(null)
     setSelectedCart(null)
     setChunk(null)
@@ -649,22 +735,59 @@ export default function PickerPage() {
     setCurrentItemIndex(0)
     setPickedSkus(new Set())
     setEmptyBins(new Set())
+    setPickingPersonalized(false)
+    setReturnToCell(null)
+    timer.reset()
     setStep('cell-select')
   }
 
   // ============================================
-  // RENDER: Cell Selection (Full Screen)
+  // RENDER: Login
+  // ============================================
+  if (step === 'login') {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center p-8">
+        <div className="w-full max-w-md">
+          <h1 className="text-5xl font-bold text-white mb-4 text-center">Pick Station</h1>
+          <p className="text-xl text-gray-400 mb-10 text-center">Enter your name to begin</p>
+          <div className="bg-white rounded-2xl shadow-2xl p-8">
+            <input
+              type="text"
+              value={pickerName}
+              onChange={(e) => setPickerName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+              placeholder="Your name"
+              autoFocus
+              className="w-full px-6 py-4 text-2xl border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none mb-6"
+            />
+            <button
+              onClick={handleLogin}
+              disabled={!pickerName.trim()}
+              className="w-full py-5 bg-blue-600 text-white text-2xl font-bold rounded-2xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ============================================
+  // RENDER: Cell Selection
   // ============================================
   if (step === 'cell-select') {
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-8">
         <div className="w-full max-w-2xl">
-          <h1 className="text-5xl font-bold text-white mb-4 text-center">
-            Pick Station
-          </h1>
-          <p className="text-xl text-blue-200 mb-12 text-center">
-            Select your cell to begin
-          </p>
+          <div className="text-center mb-2 text-blue-200">
+            Logged in as <span className="font-bold text-white">{pickerName}</span>
+            <button onClick={() => { setStep('login'); localStorage.removeItem('picker-name') }} className="ml-2 underline text-blue-300 hover:text-white">
+              change
+            </button>
+          </div>
+          <h1 className="text-5xl font-bold text-white mb-4 text-center">Pick Station</h1>
+          <p className="text-xl text-blue-200 mb-12 text-center">Select your cell to begin</p>
 
           {cells.length === 0 ? (
             <div className="bg-white/20 backdrop-blur text-white p-8 rounded-2xl text-center">
@@ -672,17 +795,35 @@ export default function PickerPage() {
               <p className="text-blue-200 mt-2">Contact admin to set up cells</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-6">
-              {cells.map((cell) => (
+            <>
+              <div className="grid grid-cols-2 gap-6">
+                {cells.map((cell) => (
+                  <button
+                    key={cell.id}
+                    onClick={() => handleCellSelect(cell)}
+                    className="bg-white rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-transform active:scale-95"
+                  >
+                    <div className="text-4xl font-bold text-gray-900">{cell.name}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Personalized quick-pick button (always shown, grabs from pool) */}
+              <div className="mt-8">
                 <button
-                  key={cell.id}
-                  onClick={() => handleCellSelect(cell)}
-                  className="bg-white rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-transform active:scale-95"
+                  onClick={handlePickPersonalized}
+                  disabled={personalizedOrderCount === 0}
+                  className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 disabled:cursor-not-allowed text-white rounded-2xl shadow-2xl p-6 text-center transition-all hover:scale-[1.02] active:scale-[0.98]"
                 >
-                  <div className="text-4xl font-bold text-gray-900">{cell.name}</div>
+                  <div className="text-2xl font-bold">Pick Personalized Cart</div>
+                  <div className="text-purple-200 text-lg mt-1">
+                    {personalizedOrderCount > 0
+                      ? `${personalizedOrderCount} orders waiting`
+                      : 'No personalized orders'}
+                  </div>
                 </button>
-              ))}
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -690,43 +831,25 @@ export default function PickerPage() {
   }
 
   // ============================================
-  // RENDER: Cart Selection (Full Screen)
+  // RENDER: Cart Selection
   // ============================================
   if (step === 'cart-select') {
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center p-8">
         <div className="w-full max-w-3xl">
-          <button
-            onClick={handleReset}
-            className="mb-6 text-white/80 hover:text-white flex items-center gap-2 text-lg"
-          >
-            ← Back to cell selection
+          <button onClick={handleReset} className="mb-6 text-white/80 hover:text-white flex items-center gap-2 text-lg">
+            &larr; Back to cell selection
           </button>
 
           <h1 className="text-4xl font-bold text-white mb-2 text-center">
-            {selectedCell?.name}
+            {pickingPersonalized ? 'Personalized' : selectedCell?.name}
           </h1>
           <p className="text-xl text-green-200 mb-8 text-center">
-            {availableOrderCount} orders waiting
+            {pickingPersonalized ? `${personalizedOrderCount} personalized orders waiting` : `${availableOrderCount} orders waiting`}
           </p>
 
           <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6">
-            <label className="block text-lg font-medium text-gray-700 mb-3">
-              Your Name
-            </label>
-            <input
-              type="text"
-              value={pickerName}
-              onChange={(e) => setPickerName(e.target.value)}
-              placeholder="Enter your name"
-              className="w-full px-6 py-4 text-2xl border-2 border-gray-300 rounded-xl focus:border-green-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6">
-            <label className="block text-lg font-medium text-gray-700 mb-3">
-              Select Cart
-            </label>
+            <label className="block text-lg font-medium text-gray-700 mb-3">Select Cart</label>
             {carts.length === 0 ? (
               <div className="text-amber-600 text-center py-8">
                 <p className="text-xl font-medium">No carts available</p>
@@ -738,12 +861,12 @@ export default function PickerPage() {
                   <button
                     key={cart.id}
                     onClick={() => setSelectedCart(cart)}
-                    className={`p-6 rounded-xl border-3 text-center transition-all ${
+                    className={`p-6 rounded-xl text-center transition-all ${
                       selectedCart?.id === cart.id
                         ? 'border-green-500 bg-green-50'
                         : 'border-gray-200 bg-white hover:border-gray-300'
                     }`}
-                    style={{ borderWidth: '3px' }}
+                    style={{ borderWidth: '3px', borderStyle: 'solid', borderColor: selectedCart?.id === cart.id ? '#22c55e' : '#e5e7eb' }}
                   >
                     <div
                       className="w-12 h-12 rounded-full mx-auto mb-3"
@@ -757,66 +880,72 @@ export default function PickerPage() {
           </div>
 
           {error && (
-            <div className="mb-6 bg-red-100 text-red-700 p-4 rounded-xl text-center text-lg">
-              {error}
-            </div>
+            <div className="mb-6 bg-red-100 text-red-700 p-4 rounded-xl text-center text-lg">{error}</div>
           )}
 
           <button
             onClick={handleStartPicking}
-            disabled={loading || !selectedCart || !pickerName.trim() || carts.length === 0}
+            disabled={loading || !selectedCart || carts.length === 0}
             className="w-full py-6 bg-white text-green-700 text-3xl font-bold rounded-2xl hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-xl"
           >
             {loading ? 'Starting...' : 'Start Picking →'}
           </button>
+
+          {/* Personalized detour button (only show if not already picking personalized) */}
+          {!pickingPersonalized && (
+            <button
+              onClick={handlePickPersonalized}
+              disabled={personalizedOrderCount === 0}
+              className="w-full mt-4 py-4 bg-purple-600 text-white text-xl font-bold rounded-2xl hover:bg-purple-700 disabled:bg-purple-400 disabled:cursor-not-allowed transition-colors shadow-lg"
+            >
+              Switch to Personalized Cart ({personalizedOrderCount} waiting)
+            </button>
+          )}
         </div>
       </div>
     )
   }
 
   // ============================================
-  // RENDER: Picking (iPad Landscape Optimized)
+  // RENDER: Picking
   // ============================================
   if (step === 'picking' && chunk && currentItem) {
     const activeBins = currentItem.bins.filter(b => !emptyBins.has(b.binNumber))
     const activeTotal = activeBins.reduce((sum, b) => sum + b.quantity, 0)
+    const badge = getModeBadge(batchType, isPersonalized)
 
     return (
       <div className="fixed inset-0 bg-gray-100 flex flex-col">
-        {/* Slide-out menu */}
         <SlideMenu
           isOpen={menuOpen}
           onClose={() => setMenuOpen(false)}
           pickerName={chunk.pickerName}
           cartName={chunk.cart.name}
           cellName={selectedCell?.name || ''}
+          batchType={batchType}
+          isPersonalized={isPersonalized}
           onCancelPick={() => setShowCancelDialog(true)}
-          onChangeCell={() => setShowCancelDialog(true)}
         />
 
-        {/* Cancel confirmation dialog */}
+        {/* Cancel dialog */}
         {showCancelDialog && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-8">
             <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8">
               <h2 className="text-3xl font-bold text-gray-900 mb-6">Cancel This Pick?</h2>
-              <div className="text-xl text-gray-600 mb-8 space-y-3">
-                <p>The cart will be released and all orders will return to the batch queue.</p>
-                <p className="text-amber-600 font-medium">
-                  Return any items in the cart to their shelves.
-                </p>
-              </div>
+              <p className="text-xl text-gray-600 mb-4">Cart will be released and orders return to the queue.</p>
+              <p className="text-xl text-amber-600 font-medium mb-8">Return items to shelves.</p>
               <div className="flex gap-4">
                 <button
                   onClick={() => setShowCancelDialog(false)}
                   disabled={cancelling}
-                  className="flex-1 py-5 bg-gray-100 text-gray-700 text-xl font-bold rounded-2xl hover:bg-gray-200 transition-colors disabled:opacity-50"
+                  className="flex-1 py-5 bg-gray-100 text-gray-700 text-xl font-bold rounded-2xl"
                 >
                   Keep Picking
                 </button>
                 <button
                   onClick={handleCancelChunk}
                   disabled={cancelling}
-                  className="flex-1 py-5 bg-red-600 text-white text-xl font-bold rounded-2xl hover:bg-red-700 transition-colors disabled:opacity-50"
+                  className="flex-1 py-5 bg-red-600 text-white text-xl font-bold rounded-2xl"
                 >
                   {cancelling ? 'Cancelling...' : 'Cancel Pick'}
                 </button>
@@ -825,25 +954,44 @@ export default function PickerPage() {
           </div>
         )}
 
-        {/* Top header bar - compact */}
+        {/* Top header bar */}
         <div className="bg-white shadow-lg px-4 py-2 flex items-center justify-between">
-          <button
-            onClick={() => setMenuOpen(true)}
-            className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
-          >
-            <MenuIcon className="w-8 h-8 text-gray-700" />
-          </button>
-          <div className="text-center">
-            <div className="text-xl font-medium text-gray-700">{chunk.batch.name} • {chunk.cart.name}</div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setMenuOpen(true)} className="p-2 hover:bg-gray-100 rounded-xl">
+              <svg className="w-8 h-8 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <span className={`px-2 py-1 rounded text-xs font-bold text-white ${badge.bg}`}>{badge.label}</span>
           </div>
-          <div className="text-right">
-            <div className="text-xl font-medium text-gray-700">Item {currentItemIndex + 1} of {pickItems.length}</div>
+
+          {/* Progress + Timer */}
+          <div className="text-center">
+            <div className="text-lg font-medium text-gray-700">
+              {chunk.batch.name} &bull; {chunk.cart.name}
+            </div>
+            <div className="text-sm text-gray-500">
+              Item {currentItemIndex + 1} of {pickItems.length}
+              &nbsp;&bull;&nbsp;
+              {completedBins.size}/{chunk.orders.length} bins
+            </div>
+          </div>
+
+          {/* Timer */}
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xl text-gray-700">{formatTimer(timer.elapsed)}</span>
+            <button
+              onClick={timer.running ? timer.pause : timer.resume}
+              className="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200"
+            >
+              {timer.running ? 'Pause' : 'Resume'}
+            </button>
           </div>
         </div>
 
-        {/* Main content - two columns on landscape, maximized space */}
+        {/* Main content */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
-          {/* Left column: Cart visualization - takes maximum space */}
+          {/* Left: Cart */}
           <div className="lg:w-1/2 p-4 flex flex-col bg-gray-50">
             <div className="text-lg font-bold text-gray-500 mb-2 text-center">CART</div>
             <div className="flex-1 min-h-0">
@@ -853,11 +1001,12 @@ export default function PickerPage() {
                 completedBins={completedBins}
                 emptyBins={emptyBins}
                 binQuantities={binQuantities}
+                pickingMode={batchType}
               />
             </div>
           </div>
 
-          {/* Right column: Pick instructions - maximized */}
+          {/* Right: Pick instructions */}
           <div className="lg:w-1/2 p-4 flex flex-col">
             <div className="bg-white rounded-3xl shadow-xl p-6 flex-1 flex flex-col justify-center text-center">
               {/* Location */}
@@ -866,16 +1015,25 @@ export default function PickerPage() {
                 {currentItem.binLocation !== 'ZZZ' ? currentItem.binLocation : '—'}
               </div>
 
-              {/* Divider */}
               <div className="border-t border-gray-200 my-4" />
 
-              {/* SKU */}
+              {/* SKU + Product info */}
               <div className="text-xl text-gray-500 mb-1">Pick item:</div>
-              <div className="text-4xl font-bold text-gray-900 font-mono mb-1">
-                {currentItem.sku}
-              </div>
-              <div className="text-xl text-gray-500 mb-4 truncate">
-                {currentItem.name}
+              <div className="text-4xl font-bold text-gray-900 font-mono mb-1">{currentItem.sku}</div>
+              <div className="text-xl text-gray-500 mb-2 truncate">{currentItem.name}</div>
+
+              {/* Product size & color */}
+              <div className="flex justify-center gap-4 mb-4">
+                {currentItem.productSize !== 'N/A' && (
+                  <span className="px-3 py-1 bg-gray-100 rounded-lg text-gray-700 font-medium">
+                    {currentItem.productSize}
+                  </span>
+                )}
+                {currentItem.productColor !== 'N/A' && (
+                  <span className="px-3 py-1 bg-gray-100 rounded-lg text-gray-700 font-medium">
+                    {currentItem.productColor}
+                  </span>
+                )}
               </div>
 
               {/* Quantity */}
@@ -889,12 +1047,9 @@ export default function PickerPage() {
               {activeBins.length > 1 && (
                 <div className="flex flex-wrap justify-center gap-4 mt-4">
                   {activeBins.map((bin) => (
-                    <div
-                      key={bin.binNumber}
-                      className="bg-gray-100 rounded-xl px-5 py-3 text-center"
-                    >
+                    <div key={bin.binNumber} className="bg-gray-100 rounded-xl px-5 py-3 text-center">
                       <div className="text-lg text-gray-500">Bin {bin.binNumber}</div>
-                      <div className="text-2xl font-bold text-gray-700">×{bin.quantity}</div>
+                      <div className="text-2xl font-bold text-gray-700">&times;{bin.quantity}</div>
                     </div>
                   ))}
                 </div>
@@ -903,13 +1058,13 @@ export default function PickerPage() {
           </div>
         </div>
 
-        {/* Bottom action bar - compact but large touch targets */}
+        {/* Bottom bar */}
         <div className="bg-white shadow-lg px-4 py-3 flex gap-4">
           <button
             onClick={handleOutOfStock}
             disabled={loading}
-            className="flex-1 py-4 text-red-600 border-3 border-red-200 text-xl font-bold rounded-2xl hover:bg-red-50 transition-colors disabled:opacity-50"
-            style={{ borderWidth: '3px' }}
+            className="flex-1 py-4 text-red-600 text-xl font-bold rounded-2xl hover:bg-red-50 transition-colors disabled:opacity-50"
+            style={{ borderWidth: '3px', borderColor: '#fecaca', borderStyle: 'solid' }}
           >
             Out of Stock
           </button>
@@ -918,7 +1073,7 @@ export default function PickerPage() {
             disabled={loading}
             className="flex-[2] py-4 bg-green-600 text-white text-2xl font-bold rounded-2xl hover:bg-green-700 transition-colors disabled:opacity-50"
           >
-            {loading ? 'Processing...' : currentItemIndex >= pickItems.length - 1 ? 'Complete Cart ✓' : 'Continue →'}
+            {loading ? 'Processing...' : currentItemIndex >= pickItems.length - 1 ? 'Complete Cart' : 'Continue →'}
           </button>
         </div>
       </div>
@@ -926,24 +1081,43 @@ export default function PickerPage() {
   }
 
   // ============================================
-  // RENDER: Complete (Full Screen)
+  // RENDER: Complete
   // ============================================
   if (step === 'complete') {
+    const completionMessage = isPersonalized
+      ? 'Take cart to the ENGRAVING station'
+      : 'Take cart to the SHIPPING station'
+
+    const bgGradient = isPersonalized
+      ? 'from-purple-500 to-purple-700'
+      : 'from-green-500 to-green-700'
+
     return (
-      <div className="fixed inset-0 bg-gradient-to-br from-green-500 to-green-700 flex items-center justify-center p-8">
+      <div className={`fixed inset-0 bg-gradient-to-br ${bgGradient} flex items-center justify-center p-8`}>
         <div className="text-center">
-          <div className="text-9xl mb-8">✓</div>
+          <div className="text-9xl mb-8">{isPersonalized ? '&#9998;' : '&#10003;'}</div>
           <h1 className="text-5xl font-bold text-white mb-4">
             Cart Complete!
           </h1>
-          <p className="text-2xl text-green-100 mb-12">
-            Take <span className="font-bold">{chunk?.cart.name}</span> to the shipping station
+          <p className="text-2xl text-white/80 mb-2">
+            Time: <span className="font-mono font-bold">{formatTimer(timer.elapsed)}</span>
           </p>
+          <p className="text-2xl text-white/90 mb-12">
+            {completionMessage}: <span className="font-bold">{chunk?.cart.name}</span>
+          </p>
+
+          {isPersonalized && (
+            <div className="bg-white/20 backdrop-blur rounded-2xl p-6 mb-8 max-w-md mx-auto">
+              <p className="text-xl text-white font-medium">
+                This is a PERSONALIZED cart. Place it in the engraving staging zone.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-col gap-4 max-w-md mx-auto">
             <button
               onClick={handleStartNewChunk}
-              className="py-6 bg-white text-green-700 text-2xl font-bold rounded-2xl hover:bg-green-50 transition-colors shadow-xl"
+              className="py-6 bg-white text-gray-800 text-2xl font-bold rounded-2xl hover:bg-gray-50 transition-colors shadow-xl"
             >
               Pick Another Cart →
             </button>

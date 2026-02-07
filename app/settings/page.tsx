@@ -721,6 +721,64 @@ export default function SettingsPage() {
           </>
         )}
       </div>
+
+      {/* SKU Display Names */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">SKU Display Names</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          These mappings translate SKU prefixes into readable names for the admin tabs and picker screens.
+        </p>
+        <div className="bg-gray-50 rounded-lg p-4">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500">
+                <th className="pb-2 font-medium">SKU Prefix</th>
+                <th className="pb-2 font-medium">Display Name</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              <tr><td className="py-1.5 font-mono">LID-AT</td><td className="py-1.5">Air-tight Lid</td></tr>
+              <tr><td className="py-1.5 font-mono">LID-PS</td><td className="py-1.5">Perfect Sip Lid</td></tr>
+              <tr><td className="py-1.5 font-mono">PTLD-OG</td><td className="py-1.5">OG Air-tight Lid</td></tr>
+              <tr><td className="py-1.5 font-mono">LDRACK</td><td className="py-1.5">Lid Rack</td></tr>
+            </tbody>
+          </table>
+          <p className="text-xs text-gray-400 mt-3">
+            To add more mappings, update the SKU_DISPLAY_NAMES constant in SinglesOrdersTable.tsx
+          </p>
+        </div>
+      </div>
+
+      {/* Picking Configuration */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-2">Picking Configuration</h2>
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <span className="text-gray-700">Max items per bin (Standard)</span>
+            <span className="font-mono font-bold text-gray-900">24</span>
+          </div>
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <span className="text-gray-700">Max items per bin (Water bottles)</span>
+            <span className="font-mono font-bold text-gray-900">9</span>
+          </div>
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <span className="text-gray-700">Bins per cart</span>
+            <span className="font-mono font-bold text-gray-900">12 (4 wide × 3 tall)</span>
+          </div>
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <span className="text-gray-700">Bulk shelves per cart</span>
+            <span className="font-mono font-bold text-gray-900">3 (4 bins per shelf)</span>
+          </div>
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <span className="text-gray-700">Singles spot-check rate</span>
+            <span className="font-mono font-bold text-gray-900">20%</span>
+          </div>
+          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <span className="text-gray-700">Bulk threshold (min identical orders)</span>
+            <span className="font-mono font-bold text-gray-900">4 (configurable via slider)</span>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

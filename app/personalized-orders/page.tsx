@@ -1,17 +1,17 @@
 'use client'
 
-import BulkOrdersTable from '@/components/BulkOrdersTable'
+import PersonalizedOrdersTable from '@/components/PersonalizedOrdersTable'
 import { useOrders } from '@/context/OrdersContext'
 
-export default function BulkOrdersPage() {
+export default function PersonalizedOrdersPage() {
   const { orders, loading, error } = useOrders()
 
   if (loading) {
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Bulk Orders</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Personalized Orders</h1>
         <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
           <span className="ml-3 text-gray-600">Loading orders...</span>
         </div>
       </div>
@@ -21,7 +21,7 @@ export default function BulkOrdersPage() {
   if (error) {
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Bulk Orders</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Personalized Orders</h1>
         <div className="bg-red-50 text-red-600 p-4 rounded-lg">
           Error loading orders: {error}
         </div>
@@ -31,8 +31,8 @@ export default function BulkOrdersPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Bulk Orders</h1>
-      <BulkOrdersTable orders={orders} />
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">Personalized Orders</h1>
+      <PersonalizedOrdersTable orders={orders} />
     </div>
   )
 }

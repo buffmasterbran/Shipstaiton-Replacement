@@ -1,95 +1,133 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import {
+  computeOrderSignature,
+  splitBulkGroup,
+  buildBulkSkuLayout,
+  type ClassifiableItem,
+} from '@/lib/order-classifier'
+import { isShippingInsurance } from '@/lib/order-utils'
 
-// Types for order categorization
-type OrderCategory = 'standard' | 'oversized' | 'print_only'
+// ============================================================================
+// Batch Name Generation
+// ============================================================================
 
-interface CategorizedOrder {
-  orderNumber: string
-  itemCount: number
-  category: OrderCategory
-}
-
-// Helper to count items in an order (excluding insurance)
-function countOrderItems(rawPayload: any): number {
-  const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
-  const items = order?.items || []
-  
-  return items.reduce((total: number, item: any) => {
-    // Skip insurance items
-    const sku = (item.sku || '').toUpperCase()
-    const name = (item.name || '').toUpperCase()
-    if (sku.includes('INSURANCE') || sku.includes('SHIPPING') || name.includes('INSURANCE')) {
-      return total
-    }
-    return total + (item.quantity || 1)
-  }, 0)
-}
-
-// Categorize order by item count
-function categorizeOrder(itemCount: number): OrderCategory {
-  if (itemCount <= 12) return 'standard'
-  if (itemCount <= 24) return 'oversized'
-  return 'print_only'
-}
-
-// Generate batch name: "S-Feb05-001" or "O-Feb05-001"
-async function generateBatchName(isOversized: boolean): Promise<string> {
-  const prefix = isOversized ? 'O' : 'S'
+/**
+ * Generate batch name: "SGL-Feb05-001", "BLK-Feb05-001", "OBS-Feb05-001"
+ */
+async function generateBatchName(type: 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE'): Promise<string> {
+  const prefixMap = { SINGLES: 'SGL', BULK: 'BLK', ORDER_BY_SIZE: 'OBS' }
+  const prefix = prefixMap[type]
   const now = new Date()
   const month = now.toLocaleString('en-US', { month: 'short' })
   const day = String(now.getDate()).padStart(2, '0')
   const datePrefix = `${prefix}-${month}${day}`
-  
-  // Find existing batches with this prefix today
+
   const existingBatches = await prisma.pickBatch.findMany({
-    where: {
-      name: {
-        startsWith: datePrefix,
-      },
-    },
+    where: { name: { startsWith: datePrefix } },
     select: { name: true },
   })
-  
-  // Extract numbers and find the max
+
   let maxNum = 0
-  existingBatches.forEach(batch => {
+  existingBatches.forEach((batch) => {
     const match = batch.name.match(/-(\d+)$/)
     if (match) {
       const num = parseInt(match[1], 10)
       if (num > maxNum) maxNum = num
     }
   })
-  
+
   return `${datePrefix}-${String(maxNum + 1).padStart(3, '0')}`
 }
 
-// GET - List all batches with status/progress
+/**
+ * Get the next priority value for batches across given cells
+ */
+async function getNextPriority(cellIds: string[]): Promise<number> {
+  const maxPriority = await prisma.batchCellAssignment.aggregate({
+    where: { cellId: { in: cellIds } },
+    _max: { priority: true },
+  })
+  return (maxPriority._max.priority ?? -1) + 1
+}
+
+/**
+ * Get the next priority for personalized batches (no cell assignment)
+ */
+async function getNextPersonalizedPriority(): Promise<number> {
+  const maxPriority = await prisma.pickBatch.aggregate({
+    where: {
+      isPersonalized: true,
+      cellAssignments: { none: {} },
+    },
+    _max: { priority: true },
+  })
+  return (maxPriority._max.priority ?? -1) + 1
+}
+
+/**
+ * Extract non-insurance items from a raw order payload
+ */
+function extractRealItems(rawPayload: any): ClassifiableItem[] {
+  const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
+  const items = order?.items || []
+  return items
+    .filter((item: any) => !isShippingInsurance(item.sku || '', item.name || ''))
+    .map((item: any) => ({
+      sku: item.sku || '',
+      name: item.name || '',
+      quantity: item.quantity || 1,
+    }))
+}
+
+// ============================================================================
+// GET - List batches with cell assignments
+// ============================================================================
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status')
     const cellId = searchParams.get('cellId')
-    
+    const type = searchParams.get('type')
+
     const where: any = {}
     if (status) where.status = status
-    if (cellId) where.cellId = cellId
-    
+    if (type) where.type = type
+
+    // If filtering by cell, find batches assigned to that cell
+    if (cellId) {
+      where.cellAssignments = {
+        some: { cellId },
+      }
+    }
+
     const batches = await prisma.pickBatch.findMany({
       where,
       include: {
-        cell: true,
+        cellAssignments: {
+          include: { cell: true },
+        },
+        bulkBatches: {
+          select: {
+            id: true,
+            groupSignature: true,
+            orderCount: true,
+            splitIndex: true,
+            totalSplits: true,
+            status: true,
+          },
+        },
         _count: {
           select: { orders: true, chunks: true },
         },
       },
       orderBy: [
-        { cellId: 'asc' },
         { priority: 'asc' },
         { createdAt: 'desc' },
       ],
     })
-    
+
     return NextResponse.json({ batches })
   } catch (error) {
     console.error('Failed to fetch batches:', error)
@@ -97,140 +135,194 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create batch(es) from selected orders
+// ============================================================================
+// POST - Create batch from selected orders
+// ============================================================================
+
+/**
+ * Request body:
+ * {
+ *   orderNumbers: string[]         // Orders to include
+ *   cellIds: string[]              // Cells to assign to (multi-cell)
+ *   type: 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE'
+ *   isPersonalized?: boolean       // For personalized orders
+ *   customName?: string            // Optional custom batch name
+ * }
+ */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { orderNumbers, cellId } = body
-    
+    const {
+      orderNumbers,
+      cellIds,
+      type = 'ORDER_BY_SIZE',
+      isPersonalized = false,
+      customName,
+    } = body
+
+    // Validate inputs
     if (!orderNumbers || !Array.isArray(orderNumbers) || orderNumbers.length === 0) {
       return NextResponse.json({ error: 'Order numbers are required' }, { status: 400 })
     }
-    
-    if (!cellId) {
-      return NextResponse.json({ error: 'Cell ID is required' }, { status: 400 })
+
+    const validTypes = ['SINGLES', 'BULK', 'ORDER_BY_SIZE']
+    if (!validTypes.includes(type)) {
+      return NextResponse.json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` }, { status: 400 })
     }
-    
-    // Verify cell exists and is active
-    const cell = await prisma.pickCell.findUnique({
-      where: { id: cellId },
-    })
-    
-    if (!cell) {
-      return NextResponse.json({ error: 'Cell not found' }, { status: 404 })
+
+    // Personalized batches don't need cell assignments (they go to the personalized pool)
+    const hasCells = cellIds && Array.isArray(cellIds) && cellIds.length > 0
+
+    if (!isPersonalized && !hasCells) {
+      return NextResponse.json({ error: 'At least one cell ID is required for non-personalized batches' }, { status: 400 })
     }
-    
-    if (!cell.active) {
-      return NextResponse.json({ error: 'Cell is not active' }, { status: 400 })
+
+    // Verify all cells exist and are active (if any provided)
+    let cells: any[] = []
+    if (hasCells) {
+      cells = await prisma.pickCell.findMany({
+        where: { id: { in: cellIds }, active: true },
+      })
+
+      if (cells.length !== cellIds.length) {
+        return NextResponse.json({ error: 'One or more cells not found or not active' }, { status: 400 })
+      }
     }
-    
-    // Fetch orders and categorize them
+
+    // Fetch eligible orders (awaiting shipment, not already in a batch)
     const orders = await prisma.orderLog.findMany({
       where: {
         orderNumber: { in: orderNumbers },
         status: 'AWAITING_SHIPMENT',
-        batchId: null, // Only orders not already in a batch
+        batchId: null,
       },
     })
-    
+
     if (orders.length === 0) {
-      return NextResponse.json({ 
-        error: 'No eligible orders found. Orders must be awaiting shipment and not already in a batch.' 
+      return NextResponse.json({
+        error: 'No eligible orders found. Orders must be awaiting shipment and not already in a batch.',
       }, { status: 400 })
     }
-    
-    // Categorize orders by item count
-    const categorized: CategorizedOrder[] = orders.map(order => {
-      const itemCount = countOrderItems(order.rawPayload)
-      return {
-        orderNumber: order.orderNumber,
-        itemCount,
-        category: categorizeOrder(itemCount),
-      }
+
+    // Generate batch name (personalized batches use PRS prefix)
+    const batchName = customName || (await generateBatchName(isPersonalized ? 'ORDER_BY_SIZE' : type as any))
+    const priority = hasCells ? await getNextPriority(cellIds) : await getNextPersonalizedPriority()
+
+    // Create the batch
+    const batch = await prisma.pickBatch.create({
+      data: {
+        name: isPersonalized && !customName ? batchName.replace('OBS-', 'PRS-') : batchName,
+        type: type as any,
+        status: 'ACTIVE',
+        priority,
+        isPersonalized,
+        totalOrders: orders.length,
+      },
     })
-    
-    // Group by category
-    const standardOrders = categorized.filter(o => o.category === 'standard')
-    const oversizedOrders = categorized.filter(o => o.category === 'oversized')
-    const printOnlyOrders = categorized.filter(o => o.category === 'print_only')
-    
-    const createdBatches: any[] = []
-    
-    // Create standard batch if there are standard orders
-    if (standardOrders.length > 0) {
-      const batchName = await generateBatchName(false)
-      const orderNums = standardOrders.map(o => o.orderNumber)
-      
-      // Get the max priority for this cell to add at the end
-      const maxPriority = await prisma.pickBatch.aggregate({
-        where: { cellId },
-        _max: { priority: true },
-      })
-      
-      const batch = await prisma.pickBatch.create({
-        data: {
-          name: batchName,
-          cellId,
-          status: 'DRAFT',
-          priority: (maxPriority._max.priority ?? -1) + 1,
-          totalOrders: standardOrders.length,
-        },
-      })
-      
-      // Update orders to link to this batch
-      await prisma.orderLog.updateMany({
-        where: { orderNumber: { in: orderNums } },
-        data: { batchId: batch.id },
-      })
-      
-      createdBatches.push({
-        ...batch,
-        type: 'standard',
-        orderCount: standardOrders.length,
+
+    // Create cell assignments (many-to-many) - skip for personalized (they live in a pool)
+    if (hasCells) {
+      await prisma.batchCellAssignment.createMany({
+        data: cellIds.map((cId: string) => ({
+          batchId: batch.id,
+          cellId: cId,
+          priority,
+        })),
       })
     }
-    
-    // Create oversized batch if there are oversized orders
-    if (oversizedOrders.length > 0) {
-      const batchName = await generateBatchName(true)
-      const orderNums = oversizedOrders.map(o => o.orderNumber)
-      
-      // Get the max priority for this cell to add at the end
-      const maxPriority = await prisma.pickBatch.aggregate({
-        where: { cellId },
-        _max: { priority: true },
+
+    // For BULK type: create BulkBatch records with balanced splitting
+    if (type === 'BULK') {
+      // Group orders by their signature
+      const signatureGroups = new Map<string, typeof orders>()
+
+      for (const order of orders) {
+        const items = extractRealItems(order.rawPayload)
+        const sig = computeOrderSignature(items)
+        const existing = signatureGroups.get(sig.signature)
+        if (existing) {
+          existing.push(order)
+        } else {
+          signatureGroups.set(sig.signature, [order])
+        }
+      }
+
+      // Create BulkBatch records for each group (with splitting if > 24)
+      const bulkBatchPromises: Promise<any>[] = []
+
+      signatureGroups.forEach((groupOrders, signature) => {
+        const items = extractRealItems(groupOrders[0].rawPayload)
+        const sig = computeOrderSignature(items)
+        const splits = splitBulkGroup(groupOrders.length)
+        const skuLayout = buildBulkSkuLayout(sig.items, 0) // qty filled per-split below
+
+        let orderIndex = 0
+        splits.forEach((splitCount, splitIdx) => {
+          // Build layout with actual count for this split
+          const splitLayout = buildBulkSkuLayout(sig.items, splitCount)
+
+          const promise = prisma.bulkBatch.create({
+            data: {
+              parentBatchId: batch.id,
+              groupSignature: signature,
+              orderCount: splitCount,
+              splitIndex: splitIdx,
+              totalSplits: splits.length,
+              skuLayout: splitLayout as any,
+              status: 'PENDING',
+            },
+          }).then(async (bulkBatch) => {
+            // Assign orders to this bulk batch
+            const splitOrders = groupOrders.slice(orderIndex, orderIndex + splitCount)
+            orderIndex += splitCount
+
+            await prisma.orderLog.updateMany({
+              where: {
+                orderNumber: { in: splitOrders.map((o) => o.orderNumber) },
+              },
+              data: {
+                batchId: batch.id,
+                bulkBatchId: bulkBatch.id,
+              },
+            })
+
+            return bulkBatch
+          })
+
+          bulkBatchPromises.push(promise)
+        })
       })
-      
-      const batch = await prisma.pickBatch.create({
-        data: {
-          name: batchName,
-          cellId,
-          status: 'DRAFT',
-          priority: (maxPriority._max.priority ?? -1) + 1,
-          totalOrders: oversizedOrders.length,
-        },
-      })
-      
-      // Update orders to link to this batch
+
+      await Promise.all(bulkBatchPromises)
+    } else {
+      // For SINGLES and ORDER_BY_SIZE: just link orders to the batch
       await prisma.orderLog.updateMany({
-        where: { orderNumber: { in: orderNums } },
+        where: { orderNumber: { in: orders.map((o) => o.orderNumber) } },
         data: { batchId: batch.id },
       })
-      
-      createdBatches.push({
-        ...batch,
-        type: 'oversized',
-        orderCount: oversizedOrders.length,
-      })
     }
-    
+
+    // Fetch the complete batch with relations
+    const completeBatch = await prisma.pickBatch.findUnique({
+      where: { id: batch.id },
+      include: {
+        cellAssignments: {
+          include: { cell: true },
+        },
+        bulkBatches: true,
+        _count: {
+          select: { orders: true, chunks: true },
+        },
+      },
+    })
+
     return NextResponse.json({
-      batches: createdBatches,
+      batch: completeBatch,
       summary: {
-        standardOrders: standardOrders.length,
-        oversizedOrders: oversizedOrders.length,
-        printOnlyOrders: printOnlyOrders.length,
-        printOnlyOrderNumbers: printOnlyOrders.map(o => o.orderNumber),
+        totalOrders: orders.length,
+        cellsAssigned: hasCells ? cellIds.length : 0,
+        isPersonalized,
+        bulkBatches: type === 'BULK' ? completeBatch?.bulkBatches?.length || 0 : 0,
       },
     })
   } catch (error) {
@@ -239,74 +331,61 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH - Update batch (cell assignment, priority, status)
+// ============================================================================
+// PATCH - Update batch (priority, status)
+// ============================================================================
+
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json()
-    const { id, cellId, priority, status } = body
-    
+    const { id, priority, status } = body
+
     if (!id) {
       return NextResponse.json({ error: 'Batch ID is required' }, { status: 400 })
     }
-    
-    // Verify batch exists
+
     const existingBatch = await prisma.pickBatch.findUnique({
       where: { id },
     })
-    
+
     if (!existingBatch) {
       return NextResponse.json({ error: 'Batch not found' }, { status: 404 })
     }
-    
+
     const updateData: any = {}
-    
-    // Update cell if provided
-    if (cellId !== undefined) {
-      const cell = await prisma.pickCell.findUnique({
-        where: { id: cellId },
-      })
-      if (!cell) {
-        return NextResponse.json({ error: 'Cell not found' }, { status: 404 })
-      }
-      if (!cell.active) {
-        return NextResponse.json({ error: 'Cell is not active' }, { status: 400 })
-      }
-      updateData.cellId = cellId
-    }
-    
-    // Update priority if provided
+
     if (priority !== undefined) {
       updateData.priority = priority
     }
-    
-    // Update status if provided
+
     if (status !== undefined) {
-      const validStatuses = ['DRAFT', 'RELEASED', 'IN_PROGRESS', 'COMPLETED']
+      const validStatuses = ['ACTIVE', 'IN_PROGRESS', 'COMPLETED']
       if (!validStatuses.includes(status)) {
-        return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 })
+        return NextResponse.json(
+          { error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` },
+          { status: 400 }
+        )
       }
       updateData.status = status
-      
-      // Set timestamps based on status changes
-      if (status === 'RELEASED' && !existingBatch.releasedAt) {
-        updateData.releasedAt = new Date()
-      }
+
       if (status === 'COMPLETED' && !existingBatch.completedAt) {
         updateData.completedAt = new Date()
       }
     }
-    
+
     const batch = await prisma.pickBatch.update({
       where: { id },
       data: updateData,
       include: {
-        cell: true,
+        cellAssignments: {
+          include: { cell: true },
+        },
         _count: {
           select: { orders: true, chunks: true },
         },
       },
     })
-    
+
     return NextResponse.json({ batch })
   } catch (error) {
     console.error('Failed to update batch:', error)
@@ -314,17 +393,19 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
+// ============================================================================
 // DELETE - Delete batch (returns orders to unassigned)
+// ============================================================================
+
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    
+
     if (!id) {
       return NextResponse.json({ error: 'Batch ID is required' }, { status: 400 })
     }
-    
-    // Verify batch exists
+
     const batch = await prisma.pickBatch.findUnique({
       where: { id },
       include: {
@@ -333,41 +414,52 @@ export async function DELETE(request: NextRequest) {
         },
       },
     })
-    
+
     if (!batch) {
       return NextResponse.json({ error: 'Batch not found' }, { status: 404 })
     }
-    
+
     // Don't allow deletion of in-progress or completed batches
     if (batch.status === 'IN_PROGRESS') {
       return NextResponse.json({ error: 'Cannot delete a batch that is in progress' }, { status: 400 })
     }
-    
+
     if (batch.status === 'COMPLETED') {
       return NextResponse.json({ error: 'Cannot delete a completed batch' }, { status: 400 })
     }
-    
+
     // Unassign orders from this batch
     await prisma.orderLog.updateMany({
       where: { batchId: id },
-      data: { 
+      data: {
         batchId: null,
         chunkId: null,
         binNumber: null,
+        bulkBatchId: null,
       },
     })
-    
+
+    // Delete bulk batches (cascade should handle this, but be explicit)
+    await prisma.bulkBatch.deleteMany({
+      where: { parentBatchId: id },
+    })
+
+    // Delete cell assignments
+    await prisma.batchCellAssignment.deleteMany({
+      where: { batchId: id },
+    })
+
     // Delete any chunks
     await prisma.pickChunk.deleteMany({
       where: { batchId: id },
     })
-    
+
     // Delete the batch
     await prisma.pickBatch.delete({
       where: { id },
     })
-    
-    return NextResponse.json({ 
+
+    return NextResponse.json({
       success: true,
       ordersUnassigned: batch._count.orders,
     })

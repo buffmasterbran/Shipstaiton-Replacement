@@ -18,10 +18,10 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders } = useOrders()
   const [canProcess, setCanProcess] = useState(true)
 
-  const operatorAllowedPaths = ['/bulk-verification', '/scan-to-verify', '/local-pickup', '/analytics', '/returns', '/inventory-count']
+  const operatorAllowedPaths = ['/pick', '/cart-scan', '/scan-to-verify', '/local-pickup', '/analytics', '/returns', '/inventory-count']
   useEffect(() => {
     if (role === 'operator' && !operatorAllowedPaths.includes(pathname)) {
-      router.replace('/bulk-verification')
+      router.replace('/pick')
     }
   }, [role, pathname, router])
 

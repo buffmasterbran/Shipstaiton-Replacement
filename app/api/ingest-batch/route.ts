@@ -340,6 +340,17 @@ export async function POST(request: NextRequest) {
       const orderType = classifyOrder(order)
       console.log(`${logPrefix} Order type: ${orderType}`)
 
+      // Check for personalization flag from NetSuite
+      const isPersonalized = !!(
+        order.isPersonalized ||
+        order.personalized ||
+        order.customization ||
+        order.engravingText ||
+        (order.items || []).some((item: any) =>
+          item.isPersonalized || item.personalized || item.customization || item.engravingText
+        )
+      )
+
       // Initialize rate shopping fields
       let preShoppedRate: PreShoppedRate | null = null
       let shippedWeight: number | null = null
@@ -444,6 +455,7 @@ export async function POST(request: NextRequest) {
         rawPayload: order,
         suggestedBox: suggestedBox as any,
         orderType,
+        isPersonalized,
         shippedWeight,
         preShoppedRate: preShoppedRate as any,
         rateFetchedAt: rateShopStatus === 'SUCCESS' ? new Date() : null,
