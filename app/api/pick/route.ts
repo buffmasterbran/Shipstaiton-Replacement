@@ -222,6 +222,7 @@ export async function POST(request: NextRequest) {
         }
 
         let batch: any = null
+        const findBatchStart = Date.now()
 
         if (personalized) {
           // Find next personalized batch from the pool (no cell assignment)
@@ -280,6 +281,8 @@ export async function POST(request: NextRequest) {
           batch = nextAssignment?.batch ?? null
         }
 
+        console.log(`[claim-chunk] Found batch in ${Date.now() - findBatchStart}ms: ${batch ? `"${batch.name}" (${batch.id}) with ${batch.orders.length} orders` : 'NONE'}`)
+
         if (!batch || batch.orders.length === 0) {
           return NextResponse.json({ 
             error: 'No orders available to pick in this cell' 
@@ -295,6 +298,9 @@ export async function POST(request: NextRequest) {
         const isOversized = batch.name.startsWith('O-')
         const maxBins = isOversized ? 6 : 12
         const maxPerBin = 24
+        const claimStart = Date.now()
+        const mode = isSingles ? 'SINGLES' : isBulk ? 'BULK' : 'OBS'
+        console.log(`[${mode} claim-chunk] START — batch "${batch.name}" (${batch.id}), ${batch.orders.length} available orders`)
 
         let ordersForChunk: typeof batch.orders
         let bulkBatchForChunk: any = null
@@ -318,12 +324,13 @@ export async function POST(request: NextRequest) {
           // Take up to maxBins SKU groups, each capped at maxPerBin orders
           ordersForChunk = []
           let binCount = 0
-          for (const [, group] of Array.from(skuGroups.entries())) {
+          for (const [sku, group] of Array.from(skuGroups.entries())) {
             if (binCount >= maxBins) break
             const take = group.slice(0, maxPerBin)
             ordersForChunk.push(...take)
             binCount++
           }
+          console.log(`[SINGLES claim-chunk] Grouped into ${binCount} bins, ${ordersForChunk.length} orders selected (${Date.now() - claimStart}ms)`)
         } else if (isBulk) {
           // BULK: Grab up to 3 BulkBatches (one per shelf) from the same parent batch
           console.log('[BULK claim-chunk] Looking for PENDING BulkBatches under parentBatchId:', batch.id)
@@ -375,6 +382,8 @@ export async function POST(request: NextRequest) {
           ordersForChunk = batch.orders.slice(0, maxBins)
         }
 
+        console.log(`[${mode} claim-chunk] Orders selected: ${ordersForChunk.length} (${Date.now() - claimStart}ms)`)
+
         // Get the next chunk number for this batch
         const maxChunk = await prisma.pickChunk.aggregate({
           where: { batchId: batch.id },
@@ -399,11 +408,14 @@ export async function POST(request: NextRequest) {
           },
         })
 
+        console.log(`[${mode} claim-chunk] Chunk ${chunk.id} created (${Date.now() - claimStart}ms)`)
+
         // Assign orders to the chunk with bin numbers
         if (isSingles) {
           // SINGLES: group by SKU, all orders with same SKU get the same bin number
-          // Look up bin locations for sorting
-          const skuBinGroups = new Map<string, { orders: typeof ordersForChunk; binLocation: string }>()
+          // Step 1: Extract unique SKUs from orders
+          const orderSkuMap = new Map<string, string>() // orderId -> SKU
+          const uniqueSkus = new Set<string>()
           for (const order of ordersForChunk) {
             const payload = order.rawPayload as any
             const orderData = Array.isArray(payload) ? payload[0] : payload
@@ -413,17 +425,29 @@ export async function POST(request: NextRequest) {
               return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
             })
             const sku = (items[0]?.sku || 'UNKNOWN').toUpperCase()
+            orderSkuMap.set(order.id, sku)
+            uniqueSkus.add(sku)
+          }
+
+          console.log(`[SINGLES claim-chunk] Extracted ${uniqueSkus.size} unique SKUs from ${ordersForChunk.length} orders (${Date.now() - claimStart}ms)`)
+
+          // Step 2: Batch fetch ALL bin locations in one query
+          const skuRecords = await prisma.productSku.findMany({
+            where: { sku: { in: Array.from(uniqueSkus) } },
+            select: { sku: true, binLocation: true },
+          })
+          const binLocationMap = new Map<string, string>()
+          for (const rec of skuRecords) {
+            if (rec.binLocation) binLocationMap.set(rec.sku.toUpperCase(), rec.binLocation)
+          }
+          console.log(`[SINGLES claim-chunk] Fetched ${skuRecords.length} bin locations (${Date.now() - claimStart}ms)`)
+
+          // Step 3: Group orders by SKU with pre-fetched locations
+          const skuBinGroups = new Map<string, { orders: typeof ordersForChunk; binLocation: string }>()
+          for (const order of ordersForChunk) {
+            const sku = orderSkuMap.get(order.id)!
             if (!skuBinGroups.has(sku)) {
-              // Look up bin location
-              let binLocation = 'ZZZ'
-              if (items[0]?.sku) {
-                const skuRecord = await prisma.productSku.findUnique({
-                  where: { sku: items[0].sku.toUpperCase() },
-                  select: { binLocation: true },
-                })
-                if (skuRecord?.binLocation) binLocation = skuRecord.binLocation
-              }
-              skuBinGroups.set(sku, { orders: [], binLocation })
+              skuBinGroups.set(sku, { orders: [], binLocation: binLocationMap.get(sku) || 'ZZZ' })
             }
             skuBinGroups.get(sku)!.orders.push(order)
           }
@@ -432,107 +456,144 @@ export async function POST(request: NextRequest) {
           const sortedGroups = Array.from(skuBinGroups.entries())
             .sort((a, b) => a[1].binLocation.localeCompare(b[1].binLocation))
 
-          // Assign bin numbers: each SKU group gets one bin number
+          // Step 4: Batch update using updateMany per bin (1 SQL per bin instead of 1 per order)
+          const singlesUpdates: any[] = []
           let binNumber = 1
-          for (const [, group] of sortedGroups) {
-            for (const order of group.orders) {
-              await prisma.orderLog.update({
-                where: { id: order.id },
-                data: {
-                  chunkId: chunk.id,
-                  binNumber, // All orders with same SKU share the same bin
-                },
+          for (const [sku, group] of sortedGroups) {
+            const orderIds = group.orders.map((o: any) => o.id)
+            console.log(`[SINGLES claim-chunk]   Bin ${binNumber}: ${sku} (${orderIds.length} orders, loc: ${group.binLocation})`)
+            singlesUpdates.push(
+              prisma.orderLog.updateMany({
+                where: { id: { in: orderIds } },
+                data: { chunkId: chunk.id, binNumber },
               })
-            }
+            )
             binNumber++
           }
+          console.log(`[SINGLES claim-chunk] Running transaction: ${singlesUpdates.length} updateMany ops for ${ordersForChunk.length} orders (${Date.now() - claimStart}ms)`)
+          await prisma.$transaction(singlesUpdates)
+          console.log(`[SINGLES claim-chunk] Transaction complete (${Date.now() - claimStart}ms)`)
         } else if (isBulk) {
           // BULK: Assign orders shelf-by-shelf with sequential binNumbers
           // Shelf 1 orders first, then shelf 2, then shelf 3
           const bulkBatches = bulkBatchForChunk as any[] // Array of up to 3
           let globalBinNumber = 1
+          const bulkTxOps: any[] = []
 
           console.log('[BULK assign] Assigning', bulkBatches.length, 'shelves to chunk', chunk.id)
 
+          // Step 1: Set chunkId for ALL bulk orders at once
+          const allBulkOrderIds = ordersForChunk.map((o: any) => o.id)
+          await prisma.orderLog.updateMany({
+            where: { id: { in: allBulkOrderIds } },
+            data: { chunkId: chunk.id },
+          })
+          console.log(`[BULK assign] chunkId set for ${allBulkOrderIds.length} orders (${Date.now() - claimStart}ms)`)
+
+          // Step 2: Build binNumber updates + shelf assignments
           for (let shelfIdx = 0; shelfIdx < bulkBatches.length; shelfIdx++) {
             const bb = bulkBatches[shelfIdx]
             const shelfOrders = ordersForChunk.filter((o: any) => o.bulkBatchId === bb.id)
 
             console.log(`[BULK assign] Shelf ${shelfIdx + 1}: BulkBatch ${bb.id}, ${shelfOrders.length} orders, skuLayout:`, bb.skuLayout)
 
-            // Assign sequential binNumbers for this shelf's orders
+            // Queue binNumber updates
             const startBin = globalBinNumber
             for (const order of shelfOrders) {
-              await prisma.orderLog.update({
-                where: { id: order.id },
-                data: {
-                  chunkId: chunk.id,
-                  binNumber: globalBinNumber++,
-                },
-              })
+              bulkTxOps.push(
+                prisma.orderLog.update({
+                  where: { id: order.id },
+                  data: { binNumber: globalBinNumber++ },
+                })
+              )
             }
             console.log(`[BULK assign] Shelf ${shelfIdx + 1}: assigned binNumbers ${startBin} to ${globalBinNumber - 1}`)
 
-            // Link chunk to this BulkBatch with shelf number
-            await prisma.chunkBulkBatchAssignment.create({
-              data: {
-                chunkId: chunk.id,
-                bulkBatchId: bb.id,
-                shelfNumber: shelfIdx + 1,
-              },
-            })
+            // Queue chunk-to-bulkbatch link
+            bulkTxOps.push(
+              prisma.chunkBulkBatchAssignment.create({
+                data: { chunkId: chunk.id, bulkBatchId: bb.id, shelfNumber: shelfIdx + 1 },
+              })
+            )
 
-            // Mark BulkBatch as ASSIGNED
-            await prisma.bulkBatch.update({
-              where: { id: bb.id },
-              data: { status: 'ASSIGNED' },
-            })
-
-            console.log(`[BULK assign] Shelf ${shelfIdx + 1}: ChunkBulkBatchAssignment created, BulkBatch marked ASSIGNED`)
+            // Queue bulk batch status update
+            bulkTxOps.push(
+              prisma.bulkBatch.update({
+                where: { id: bb.id },
+                data: { status: 'ASSIGNED' },
+              })
+            )
           }
+
+          // Execute binNumber + shelf assignments in a single transaction
+          console.log(`[BULK assign] Running transaction: ${bulkTxOps.length} ops (${Date.now() - claimStart}ms)`)
+          await prisma.$transaction(bulkTxOps)
+          console.log(`[BULK assign] Transaction complete (${Date.now() - claimStart}ms)`)
         } else {
           // STANDARD (OBS/Personalized): 1 order per bin, sorted by bin location
-          const ordersWithBinLocation = await Promise.all(
-            ordersForChunk.map(async (order: any) => {
-              const payload = order.rawPayload as any
-              const orderData = Array.isArray(payload) ? payload[0] : payload
-              const items = orderData?.items || []
-              
-              const firstItem = items.find((item: any) => {
-                const sku = (item.sku || '').toUpperCase()
-                const name = (item.name || '').toUpperCase()
-                return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
-              })
+          // Step 1: Extract unique SKUs from all orders
+          const obsSkus = new Set<string>()
+          const obsOrderSkuMap = new Map<string, string>() // orderId -> SKU
+          for (const order of ordersForChunk) {
+            const payload = (order as any).rawPayload as any
+            const orderData = Array.isArray(payload) ? payload[0] : payload
+            const items = orderData?.items || []
+            const firstItem = items.find((item: any) => {
+              const sku = (item.sku || '').toUpperCase()
+              const name = (item.name || '').toUpperCase()
+              return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
+            })
+            const sku = firstItem?.sku?.toUpperCase() || ''
+            obsOrderSkuMap.set(order.id, sku)
+            if (sku) obsSkus.add(sku)
+          }
 
-              let binLocation = 'ZZZ'
-              if (firstItem?.sku) {
-                const skuRecord = await prisma.productSku.findUnique({
-                  where: { sku: firstItem.sku.toUpperCase() },
-                  select: { binLocation: true },
-                })
-                if (skuRecord?.binLocation) {
-                  binLocation = skuRecord.binLocation
-                }
-              }
+          console.log(`[OBS claim-chunk] Extracted ${obsSkus.size} unique SKUs from ${ordersForChunk.length} orders (${Date.now() - claimStart}ms)`)
 
-              return { ...order, binLocation }
+          // Step 2: Batch fetch all bin locations in one query
+          const obsSkuRecords = await prisma.productSku.findMany({
+            where: { sku: { in: Array.from(obsSkus) } },
+            select: { sku: true, binLocation: true },
+          })
+          const obsBinLocMap = new Map<string, string>()
+          for (const rec of obsSkuRecords) {
+            if (rec.binLocation) obsBinLocMap.set(rec.sku.toUpperCase(), rec.binLocation)
+          }
+          console.log(`[OBS claim-chunk] Fetched ${obsSkuRecords.length} bin locations (${Date.now() - claimStart}ms)`)
+
+          // Step 3: Sort orders by bin location
+          const ordersWithBinLocation = ordersForChunk.map((order: any) => ({
+            ...order,
+            binLocation: obsBinLocMap.get(obsOrderSkuMap.get(order.id) || '') || 'ZZZ',
+          }))
+          ordersWithBinLocation.sort((a: any, b: any) => a.binLocation.localeCompare(b.binLocation))
+
+          console.log(`[OBS claim-chunk] Sorted orders:`, ordersWithBinLocation.map((o: any, i: number) => `Bin ${i + 1}: ${o.orderNumber} (loc: ${o.binLocation})`))
+
+          // Step 4: Set chunkId for all orders in one call, then assign binNumbers
+          const allObsIds = ordersWithBinLocation.map((o: any) => o.id)
+          console.log(`[OBS claim-chunk] Setting chunkId for ${allObsIds.length} orders (${Date.now() - claimStart}ms)`)
+          await prisma.orderLog.updateMany({
+            where: { id: { in: allObsIds } },
+            data: { chunkId: chunk.id },
+          })
+          console.log(`[OBS claim-chunk] chunkId set (${Date.now() - claimStart}ms). Assigning binNumbers...`)
+
+          // Each order needs a unique binNumber, so we need individual updates
+          // But only updating binNumber (chunkId already set), still in a transaction
+          const binUpdates = ordersWithBinLocation.map((order: any, i: number) =>
+            prisma.orderLog.update({
+              where: { id: order.id },
+              data: { binNumber: i + 1 },
             })
           )
-
-          ordersWithBinLocation.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
-
-          for (let i = 0; i < ordersWithBinLocation.length; i++) {
-            await prisma.orderLog.update({
-              where: { id: ordersWithBinLocation[i].id },
-              data: {
-                chunkId: chunk.id,
-                binNumber: i + 1,
-              },
-            })
-          }
+          console.log(`[OBS claim-chunk] Running transaction: ${binUpdates.length} binNumber updates (${Date.now() - claimStart}ms)`)
+          await prisma.$transaction(binUpdates)
+          console.log(`[OBS claim-chunk] Transaction complete (${Date.now() - claimStart}ms)`)
         }
 
         // Update cart status
+        console.log(`[${mode} claim-chunk] Updating cart & batch status (${Date.now() - claimStart}ms)`)
         await prisma.pickCart.update({
           where: { id: cartId },
           data: { status: 'PICKING' },
@@ -547,6 +608,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Fetch the complete chunk with orders
+        console.log(`[${mode} claim-chunk] Fetching complete chunk (${Date.now() - claimStart}ms)`)
         const completeChunk = await prisma.pickChunk.findUnique({
           where: { id: chunk.id },
           include: {
@@ -579,6 +641,7 @@ export async function POST(request: NextRequest) {
           }, null, 2))
         }
 
+        console.log(`[${mode} claim-chunk] DONE — ${ordersForChunk.length} orders, total time: ${Date.now() - claimStart}ms`)
         return NextResponse.json({ chunk: completeChunk })
       }
 
