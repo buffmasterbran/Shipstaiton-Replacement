@@ -390,15 +390,37 @@ function SinglesVerification({
         {verified && !labelsPrinted && (
           <div className="text-center">
             <div className="text-6xl text-green-500 mb-4">&#10003;</div>
-            <div className="text-xl text-green-700 font-medium mb-6">
+            <div className="text-xl text-green-700 font-medium mb-4">
               Bin verified! Ready to print {binOrders.length} labels.
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-2">
+              {binOrders.map((o, i) => {
+                const bc = getShipstationBarcode(o)
+                return bc ? (
+                  <div key={o.id} className="flex items-center justify-center gap-2">
+                    <span className="text-xs text-gray-400 w-16 text-right">#{o.orderNumber}</span>
+                    <Barcode value={bc} width={1.2} height={30} fontSize={10} margin={2} />
+                  </div>
+                ) : null
+              })}
             </div>
           </div>
         )}
         {labelsPrinted && (
           <div className="text-center">
-            <div className="text-xl text-green-700 font-medium">
+            <div className="text-xl text-green-700 font-medium mb-4">
               {binOrders.length} labels printed. Apply labels and move on.
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-2">
+              {binOrders.map((o, i) => {
+                const bc = getShipstationBarcode(o)
+                return bc ? (
+                  <div key={o.id} className="flex items-center justify-center gap-2">
+                    <span className="text-xs text-gray-400 w-16 text-right">#{o.orderNumber}</span>
+                    <Barcode value={bc} width={1.2} height={30} fontSize={10} margin={2} />
+                  </div>
+                ) : null
+              })}
             </div>
           </div>
         )}
