@@ -10,17 +10,19 @@ export async function GET(request: NextRequest) {
     const action = searchParams.get('action')
 
     if (action === 'ready-carts') {
+      const includeActive = searchParams.get('includeActive') === 'true'
+
       // Get carts that are picked and ready for shipping
       // Include PICKED (normal) and READY_FOR_SHIPPING (post-engraving personalized)
       const carts = await prisma.pickCart.findMany({
         where: {
-          status: 'PICKED_READY',
+          status: includeActive ? { in: ['PICKED_READY', 'SHIPPING'] } : 'PICKED_READY',
           active: true,
         },
         include: {
           chunks: {
             where: {
-              status: { in: ['PICKED', 'READY_FOR_SHIPPING'] },
+              status: { in: ['PICKED', 'READY_FOR_SHIPPING', 'SHIPPING'] },
             },
             include: {
               batch: true,
@@ -38,13 +40,31 @@ export async function GET(request: NextRequest) {
         orderBy: { name: 'asc' },
       })
 
-      return NextResponse.json({ 
-        carts: carts.map(cart => ({
+      // For SHIPPING carts, attach progress info (shipper name, start time, shipped count)
+      const cartsWithInfo = carts.map(cart => {
+        const totalOrders = cart.chunks.reduce((sum, chunk) => sum + chunk.orders.length, 0)
+        const shippedCount = cart.chunks.reduce((sum, chunk) =>
+          sum + chunk.orders.filter(o => o.status === 'SHIPPED').length, 0)
+        const shippingChunk = cart.status === 'SHIPPING'
+          ? cart.chunks.find(c => c.status === 'SHIPPING')
+          : null
+
+        return {
           ...cart,
           chunkCount: cart.chunks.length,
-          orderCount: cart.chunks.reduce((sum, chunk) => sum + chunk.orders.length, 0),
-        }))
+          orderCount: totalOrders,
+          ...(cart.status === 'SHIPPING' && shippingChunk ? {
+            shippingInfo: {
+              shipperName: shippingChunk.shipperName,
+              shippingStartedAt: shippingChunk.shippingStartedAt,
+              ordersShipped: shippedCount,
+              ordersTotal: totalOrders,
+            },
+          } : {}),
+        }
       })
+
+      return NextResponse.json({ carts: cartsWithInfo })
     }
 
     // Get cart by ID or name
@@ -337,6 +357,101 @@ export async function POST(request: NextRequest) {
           success: true,
           shipDurationSeconds: shipDuration,
           cartComplete: remainingChunks === 0,
+        })
+      }
+
+      case 'release-shipping-cart': {
+        // Admin action: release a stuck SHIPPING cart
+        // Keeps already-shipped orders, returns unshipped orders to queue
+        const { cartId: releaseCartId, reason: releaseReason } = body
+
+        if (!releaseCartId) {
+          return NextResponse.json({ error: 'Cart ID is required' }, { status: 400 })
+        }
+
+        const releaseCart = await prisma.pickCart.findUnique({
+          where: { id: releaseCartId },
+          include: {
+            chunks: {
+              where: { status: 'SHIPPING' },
+              include: { orders: true },
+            },
+          },
+        })
+
+        if (!releaseCart) {
+          return NextResponse.json({ error: 'Cart not found' }, { status: 404 })
+        }
+
+        if (releaseCart.status !== 'SHIPPING') {
+          return NextResponse.json({ error: 'Cart is not in SHIPPING status' }, { status: 400 })
+        }
+
+        let totalOrdersReturned = 0
+        let totalOrdersKept = 0
+        let shipperName: string | null = null
+
+        for (const chunk of releaseCart.chunks) {
+          if (!shipperName && chunk.shipperName) {
+            shipperName = chunk.shipperName
+          }
+
+          const unshippedOrders = chunk.orders.filter(o => o.status !== 'SHIPPED')
+          const shippedOrders = chunk.orders.filter(o => o.status === 'SHIPPED')
+          totalOrdersReturned += unshippedOrders.length
+          totalOrdersKept += shippedOrders.length
+
+          // Return unshipped orders to the batch queue
+          if (unshippedOrders.length > 0) {
+            await prisma.orderLog.updateMany({
+              where: { id: { in: unshippedOrders.map(o => o.id) } },
+              data: { chunkId: null, binNumber: null },
+            })
+          }
+
+          // Mark chunk as completed (partial ship)
+          await prisma.pickChunk.update({
+            where: { id: chunk.id },
+            data: {
+              status: 'COMPLETED',
+              shippingCompletedAt: new Date(),
+              ordersSkipped: unshippedOrders.length,
+              shipDurationSeconds: chunk.shippingStartedAt
+                ? Math.round((Date.now() - new Date(chunk.shippingStartedAt).getTime()) / 1000)
+                : null,
+            },
+          })
+
+          // Update batch shipped count
+          const batch = await prisma.pickBatch.findUnique({
+            where: { id: chunk.batchId },
+            include: { orders: { where: { status: 'SHIPPED' } } },
+          })
+          if (batch) {
+            const shippedCount = batch.orders.length
+            await prisma.pickBatch.update({
+              where: { id: batch.id },
+              data: {
+                shippedOrders: shippedCount,
+                status: shippedCount >= batch.totalOrders ? 'COMPLETED' : batch.status,
+                completedAt: shippedCount >= batch.totalOrders ? new Date() : batch.completedAt,
+              },
+            })
+          }
+        }
+
+        // Release the cart
+        await prisma.pickCart.update({
+          where: { id: releaseCartId },
+          data: { status: 'AVAILABLE' },
+        })
+
+        return NextResponse.json({
+          success: true,
+          ordersReturned: totalOrdersReturned,
+          ordersKept: totalOrdersKept,
+          shipperName,
+          reason: releaseReason || 'admin_release',
         })
       }
 

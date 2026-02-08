@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useRole } from '@/context/RoleContext'
 import Barcode from 'react-barcode'
 
 // ============================================================================
@@ -739,6 +740,8 @@ function BulkVerification({
 // ============================================================================
 
 export default function CartScanPage() {
+  const { role } = useRole()
+  const isAdmin = role === 'admin'
   const [step, setStep] = useState<ShipStep>('cart-select')
   const [readyCarts, setReadyCarts] = useState<any[]>([])
   const [cart, setCart] = useState<CartWithChunks | null>(null)
@@ -749,6 +752,8 @@ export default function CartScanPage() {
   const [emptyBins, setEmptyBins] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [releaseShipCart, setReleaseShipCart] = useState<any | null>(null)
+  const [releasing, setReleasing] = useState(false)
 
   // Load saved name
   useEffect(() => {
@@ -756,15 +761,16 @@ export default function CartScanPage() {
     if (saved) setShipperName(saved)
   }, [])
 
-  // Fetch ready carts
+  // Fetch ready carts (and SHIPPING carts for admins)
   useEffect(() => {
     if (step === 'cart-select') {
-      fetch('/api/ship?action=ready-carts')
+      const params = isAdmin ? '&includeActive=true' : ''
+      fetch(`/api/ship?action=ready-carts${params}`)
         .then(res => res.json())
         .then(data => setReadyCarts(data.carts || []))
         .catch(() => {})
     }
-  }, [step])
+  }, [step, isAdmin])
 
   // Determine cart's picking mode
   const pickingMode: PickingMode = useMemo(() => {
@@ -798,10 +804,10 @@ export default function CartScanPage() {
     return sorted
   }, [cart, pickingMode])
 
-  // Get all orders sorted by bin
+  // Get all orders sorted by bin (include SHIPPED for resume flow — they show as completed)
   const allOrders = useMemo(() => {
     return cart?.chunks.flatMap(chunk =>
-      chunk.orders.filter(o => o.status === 'AWAITING_SHIPMENT')
+      chunk.orders.filter(o => o.status === 'AWAITING_SHIPMENT' || o.status === 'SHIPPED')
     ).sort((a, b) => (a.binNumber || 0) - (b.binNumber || 0)) || []
   }, [cart])
 
@@ -938,6 +944,71 @@ export default function CartScanPage() {
     setStep('cart-select')
   }
 
+  // Resume a SHIPPING cart — load it and pre-populate shipped orders from DB
+  const handleResumeCart = async (cartId: string) => {
+    if (!shipperName.trim()) { setError('Please enter your name'); return }
+    localStorage.setItem('shipper-name', shipperName.trim())
+    setLoading(true)
+    setError(null)
+
+    try {
+      const cartRes = await fetch(`/api/ship?cartId=${cartId}`)
+      if (!cartRes.ok) throw new Error((await cartRes.json()).error || 'Cart not found')
+      const cartData = await cartRes.json()
+
+      // Don't call start-shipping again — cart is already in SHIPPING status
+      setCart(cartData.cart)
+      setCurrentBinIndex(0)
+
+      // Pre-populate shipped orders from the database
+      const alreadyShipped = new Set<string>()
+      for (const chunk of cartData.cart.chunks) {
+        for (const order of chunk.orders) {
+          if (order.status === 'SHIPPED') {
+            alreadyShipped.add(order.orderNumber)
+          }
+        }
+      }
+      setShippedOrders(alreadyShipped)
+
+      // Identify empty bins
+      const usedBins = new Set(cartData.cart.chunks.flatMap((c: PickChunk) => c.orders.map((o: ChunkOrder) => o.binNumber)))
+      const empty = new Set<number>()
+      for (let i = 1; i <= 12; i++) { if (!usedBins.has(i)) empty.add(i) }
+      setEmptyBins(empty)
+
+      setStep('shipping')
+    } catch (err: any) {
+      setError(err.message || 'Failed to resume cart')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Release a stuck SHIPPING cart — keep shipped orders, return rest to queue
+  const handleReleaseShippingCart = async () => {
+    if (!releaseShipCart) return
+    setReleasing(true)
+    try {
+      const res = await fetch('/api/ship', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'release-shipping-cart', cartId: releaseShipCart.id, reason: 'admin_release' }),
+      })
+      if (!res.ok) throw new Error('Failed to release cart')
+      setReleaseShipCart(null)
+      // Re-fetch carts
+      const params = isAdmin ? '&includeActive=true' : ''
+      const cartsRes = await fetch(`/api/ship?action=ready-carts${params}`)
+      const cartsData = await cartsRes.json()
+      setReadyCarts(cartsData.carts || [])
+    } catch {
+      alert('Failed to release cart. Try again.')
+    } finally {
+      setReleasing(false)
+    }
+  }
+
   // ============================================
   // RENDER: Cart Select
   // ============================================
@@ -981,11 +1052,11 @@ export default function CartScanPage() {
 
           {error && <div className="mb-4 bg-red-50 text-red-600 p-3 rounded-lg text-center">{error}</div>}
 
-          {readyCarts.length > 0 && (
+          {readyCarts.filter(c => c.status === 'PICKED_READY').length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Or Select Ready Cart</label>
               <div className="grid gap-3">
-                {readyCarts.map((c: any) => (
+                {readyCarts.filter(c => c.status === 'PICKED_READY').map((c: any) => (
                   <button
                     key={c.id}
                     onClick={() => handleSelectCart(c.id)}
@@ -1005,10 +1076,104 @@ export default function CartScanPage() {
             </div>
           )}
 
-          {readyCarts.length === 0 && (
+          {readyCarts.filter(c => c.status === 'PICKED_READY').length === 0 && readyCarts.filter(c => c.status === 'SHIPPING').length === 0 && (
             <div className="bg-amber-50 text-amber-700 p-4 rounded-lg text-center">
               <p className="font-medium">No carts ready for shipping</p>
               <p className="text-sm mt-1">Wait for pickers to complete carts</p>
+            </div>
+          )}
+
+          {/* SHIPPING carts — admin only */}
+          {isAdmin && readyCarts.filter(c => c.status === 'SHIPPING').length > 0 && (
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-red-600 mb-2 uppercase tracking-wide">Active Shipping Carts (Admin)</label>
+              <div className="grid gap-3">
+                {readyCarts.filter(c => c.status === 'SHIPPING').map((c: any) => {
+                  const info = c.shippingInfo
+                  const minutesAgo = info?.shippingStartedAt
+                    ? Math.floor((Date.now() - new Date(info.shippingStartedAt).getTime()) / 60000)
+                    : null
+                  return (
+                    <div
+                      key={c.id}
+                      className="p-4 bg-red-50 rounded-xl shadow border-2 border-red-300"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full opacity-60" style={{ backgroundColor: c.color || '#9ca3af' }} />
+                        <div className="flex-1">
+                          <div className="font-bold text-lg text-gray-900">{c.name}</div>
+                          <div className="text-sm text-gray-500">
+                            {info?.shipperName || 'Unknown'}
+                            {minutesAgo !== null ? ` · ${minutesAgo} min ago` : ''}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            {info?.ordersShipped || 0} of {info?.ordersTotal || 0} orders shipped
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={() => handleResumeCart(c.id)}
+                          disabled={loading || !shipperName.trim()}
+                          className="flex-1 py-2 text-sm font-bold text-blue-600 bg-white border-2 border-blue-300 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
+                        >
+                          Resume Shipping
+                        </button>
+                        <button
+                          onClick={() => setReleaseShipCart(c)}
+                          disabled={loading}
+                          className="flex-1 py-2 text-sm font-bold text-red-600 bg-white border-2 border-red-300 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                        >
+                          Release Cart
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Release shipping cart confirmation dialog */}
+          {releaseShipCart && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-8">
+              <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8">
+                <h2 className="text-2xl font-bold text-gray-900 mb-4">Release Shipping Cart?</h2>
+                <div className="bg-red-50 rounded-xl p-4 mb-4">
+                  <p className="text-lg text-gray-800">
+                    <span className="font-bold">{releaseShipCart.name}</span> is being shipped by{' '}
+                    <span className="font-bold">{releaseShipCart.shippingInfo?.shipperName || 'Unknown'}</span>
+                  </p>
+                  {releaseShipCart.shippingInfo && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      {releaseShipCart.shippingInfo.ordersShipped} of {releaseShipCart.shippingInfo.ordersTotal} orders already shipped
+                    </p>
+                  )}
+                </div>
+                <p className="text-lg text-gray-600 mb-2">This will:</p>
+                <ul className="text-gray-600 mb-4 space-y-1 ml-4">
+                  <li>• Keep {releaseShipCart.shippingInfo?.ordersShipped || 0} already-shipped orders (labels exist)</li>
+                  <li>• Return {(releaseShipCart.shippingInfo?.ordersTotal || 0) - (releaseShipCart.shippingInfo?.ordersShipped || 0)} unshipped orders back to the queue</li>
+                  <li>• Make the cart available again</li>
+                </ul>
+                <p className="text-lg text-amber-600 font-medium mb-6">Make sure the physical cart is empty before releasing.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setReleaseShipCart(null)}
+                    disabled={releasing}
+                    className="flex-1 py-3 bg-gray-100 text-gray-700 text-lg font-bold rounded-2xl hover:bg-gray-200 transition-colors"
+                  >
+                    Go Back
+                  </button>
+                  <button
+                    onClick={handleReleaseShippingCart}
+                    disabled={releasing}
+                    className="flex-1 py-3 bg-red-600 text-white text-lg font-bold rounded-2xl hover:bg-red-700 transition-colors disabled:opacity-50"
+                  >
+                    {releasing ? 'Releasing...' : 'Release Cart'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
