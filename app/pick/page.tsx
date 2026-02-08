@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRole } from '@/context/RoleContext'
 
 // ============================================================================
 // Types
@@ -18,6 +19,11 @@ interface PickCart {
   color: string | null
   status: string
   active: boolean
+  activeChunk?: {
+    pickerName: string
+    claimedAt: string
+    ordersInChunk: number
+  } | null
 }
 
 interface OrderItem {
@@ -311,6 +317,8 @@ function SlideMenu({
 // ============================================================================
 
 export default function PickerPage() {
+  const { role } = useRole()
+  const isAdmin = role === 'admin'
   const [step, setStep] = useState<PickerStep>('login')
   const [cells, setCells] = useState<PickCell[]>([])
   const [carts, setCarts] = useState<PickCart[]>([])
@@ -333,6 +341,8 @@ export default function PickerPage() {
   const [cancelling, setCancelling] = useState(false)
   const [returnToCell, setReturnToCell] = useState<PickCell | null>(null) // Track cell to return to after personalized pick
   const [personalizedOrderCount, setPersonalizedOrderCount] = useState(0)
+  const [releaseCart, setReleaseCart] = useState<PickCart | null>(null)
+  const [releasing, setReleasing] = useState(false)
 
   // Timer
   const timer = useTimer()
@@ -372,12 +382,13 @@ export default function PickerPage() {
   // Fetch carts when needed
   useEffect(() => {
     if (step === 'cart-select') {
-      fetch('/api/pick?action=available-carts')
+      const params = isAdmin ? '&includeActive=true' : ''
+      fetch(`/api/pick?action=available-carts${params}`)
         .then(res => res.json())
         .then(data => setCarts(data.carts || []))
         .catch(() => {})
     }
-  }, [step])
+  }, [step, isAdmin])
 
   // Fetch available orders for cell
   useEffect(() => {
@@ -786,6 +797,29 @@ export default function PickerPage() {
     setStep('cell-select')
   }
 
+  const handleReleaseCart = async () => {
+    if (!releaseCart) return
+    setReleasing(true)
+    try {
+      const res = await fetch('/api/carts/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cartId: releaseCart.id, reason: 'admin_release' }),
+      })
+      if (!res.ok) throw new Error('Failed to release cart')
+      setReleaseCart(null)
+      // Re-fetch carts to reflect the change
+      const params = isAdmin ? '&includeActive=true' : ''
+      const cartsRes = await fetch(`/api/pick?action=available-carts${params}`)
+      const cartsData = await cartsRes.json()
+      setCarts(cartsData.carts || [])
+    } catch {
+      alert('Failed to release cart. Try again.')
+    } finally {
+      setReleasing(false)
+    }
+  }
+
   // ============================================
   // RENDER: Login
   // ============================================
@@ -895,34 +929,120 @@ export default function PickerPage() {
 
           <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6">
             <label className="block text-lg font-medium text-gray-700 mb-3">Select Cart</label>
-            {carts.length === 0 ? (
+            {carts.filter(c => c.status === 'AVAILABLE').length === 0 && carts.filter(c => c.status === 'PICKING').length === 0 ? (
               <div className="text-amber-600 text-center py-8">
                 <p className="text-xl font-medium">No carts available</p>
                 <p className="text-gray-500 mt-1">All carts are in use</p>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-4">
-                {carts.map((cart) => (
-                  <button
-                    key={cart.id}
-                    onClick={() => setSelectedCart(cart)}
-                    className={`p-6 rounded-xl text-center transition-all ${
-                      selectedCart?.id === cart.id
-                        ? 'border-green-500 bg-green-50'
-                        : 'border-gray-200 bg-white hover:border-gray-300'
-                    }`}
-                    style={{ borderWidth: '3px', borderStyle: 'solid', borderColor: selectedCart?.id === cart.id ? '#22c55e' : '#e5e7eb' }}
-                  >
-                    <div
-                      className="w-12 h-12 rounded-full mx-auto mb-3"
-                      style={{ backgroundColor: cart.color || '#9ca3af' }}
-                    />
-                    <div className="text-xl font-bold text-gray-900">{cart.name}</div>
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="grid grid-cols-3 gap-4">
+                  {carts.filter(c => c.status === 'AVAILABLE').map((cart) => (
+                    <button
+                      key={cart.id}
+                      onClick={() => setSelectedCart(cart)}
+                      className={`p-6 rounded-xl text-center transition-all ${
+                        selectedCart?.id === cart.id
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                      style={{ borderWidth: '3px', borderStyle: 'solid', borderColor: selectedCart?.id === cart.id ? '#22c55e' : '#e5e7eb' }}
+                    >
+                      <div
+                        className="w-12 h-12 rounded-full mx-auto mb-3"
+                        style={{ backgroundColor: cart.color || '#9ca3af' }}
+                      />
+                      <div className="text-xl font-bold text-gray-900">{cart.name}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* PICKING carts — admin only */}
+                {isAdmin && carts.filter(c => c.status === 'PICKING').length > 0 && (
+                  <div className="mt-6 pt-6 border-t border-gray-200">
+                    <label className="block text-sm font-medium text-red-600 mb-3 uppercase tracking-wide">Active Carts (Admin)</label>
+                    <div className="grid grid-cols-3 gap-4">
+                      {carts.filter(c => c.status === 'PICKING').map((cart) => {
+                        const minutesAgo = cart.activeChunk?.claimedAt
+                          ? Math.floor((Date.now() - new Date(cart.activeChunk.claimedAt).getTime()) / 60000)
+                          : null
+                        return (
+                          <div
+                            key={cart.id}
+                            className="p-4 rounded-xl text-center border-red-300 bg-red-50"
+                            style={{ borderWidth: '3px', borderStyle: 'solid' }}
+                          >
+                            <div
+                              className="w-12 h-12 rounded-full mx-auto mb-2 opacity-60"
+                              style={{ backgroundColor: cart.color || '#9ca3af' }}
+                            />
+                            <div className="text-lg font-bold text-gray-900">{cart.name}</div>
+                            <div className="text-sm text-gray-500 mt-1">
+                              {cart.activeChunk?.pickerName || 'Unknown'}
+                            </div>
+                            <div className="text-xs text-gray-400">
+                              {minutesAgo !== null ? `${minutesAgo} min ago` : 'Unknown time'}
+                              {cart.activeChunk?.ordersInChunk ? ` · ${cart.activeChunk.ordersInChunk} orders` : ''}
+                            </div>
+                            <button
+                              onClick={() => setReleaseCart(cart)}
+                              className="mt-3 w-full py-2 text-sm font-bold text-red-600 bg-white border-2 border-red-300 rounded-lg hover:bg-red-100 transition-colors"
+                            >
+                              Cancel Pick
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
+
+          {/* Release cart confirmation dialog */}
+          {releaseCart && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-8">
+              <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8">
+                <h2 className="text-3xl font-bold text-gray-900 mb-4">Release Cart?</h2>
+                <div className="bg-red-50 rounded-xl p-4 mb-6">
+                  <p className="text-lg text-gray-800">
+                    <span className="font-bold">{releaseCart.name}</span> is being picked by{' '}
+                    <span className="font-bold">{releaseCart.activeChunk?.pickerName || 'Unknown'}</span>
+                  </p>
+                  {releaseCart.activeChunk?.claimedAt && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Started {Math.floor((Date.now() - new Date(releaseCart.activeChunk.claimedAt).getTime()) / 60000)} minutes ago
+                      {releaseCart.activeChunk?.ordersInChunk ? ` · ${releaseCart.activeChunk.ordersInChunk} orders assigned` : ''}
+                    </p>
+                  )}
+                </div>
+                <p className="text-lg text-gray-600 mb-2">This will:</p>
+                <ul className="text-gray-600 mb-6 space-y-1 ml-4">
+                  <li>• Return all orders back to the queue</li>
+                  <li>• Cancel the active pick session</li>
+                  <li>• Make the cart available again</li>
+                </ul>
+                <p className="text-lg text-amber-600 font-medium mb-6">Make sure the physical cart is empty before releasing.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setReleaseCart(null)}
+                    disabled={releasing}
+                    className="flex-1 py-4 bg-gray-100 text-gray-700 text-xl font-bold rounded-2xl hover:bg-gray-200 transition-colors"
+                  >
+                    Go Back
+                  </button>
+                  <button
+                    onClick={handleReleaseCart}
+                    disabled={releasing}
+                    className="flex-1 py-4 bg-red-600 text-white text-xl font-bold rounded-2xl hover:bg-red-700 transition-colors disabled:opacity-50"
+                  >
+                    {releasing ? 'Releasing...' : 'Release Cart'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 bg-red-100 text-red-700 p-4 rounded-xl text-center text-lg">{error}</div>
@@ -930,7 +1050,7 @@ export default function PickerPage() {
 
           <button
             onClick={handleStartPicking}
-            disabled={loading || !selectedCart || carts.length === 0}
+            disabled={loading || !selectedCart || carts.filter(c => c.status === 'AVAILABLE').length === 0}
             className="w-full py-6 bg-white text-green-700 text-3xl font-bold rounded-2xl hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-xl"
           >
             {loading ? 'Starting...' : 'Start Picking →'}

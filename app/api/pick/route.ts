@@ -24,14 +24,52 @@ export async function GET(request: NextRequest) {
     const action = searchParams.get('action')
 
     if (action === 'available-carts') {
+      const includeActive = searchParams.get('includeActive') === 'true'
+
       // Get available carts
       const carts = await prisma.pickCart.findMany({
         where: {
           active: true,
-          status: 'AVAILABLE',
+          status: includeActive ? { in: ['AVAILABLE', 'PICKING'] } : 'AVAILABLE',
         },
         orderBy: { name: 'asc' },
       })
+
+      // For PICKING carts, attach the active chunk info (picker name, start time)
+      if (includeActive) {
+        const pickingCartIds = carts.filter(c => c.status === 'PICKING').map(c => c.id)
+        if (pickingCartIds.length > 0) {
+          const activeChunks = await prisma.pickChunk.findMany({
+            where: {
+              cartId: { in: pickingCartIds },
+              status: 'PICKING',
+            },
+            select: {
+              cartId: true,
+              pickerName: true,
+              claimedAt: true,
+              ordersInChunk: true,
+            },
+          })
+          const chunkByCart = new Map(activeChunks.map(c => [c.cartId, c]))
+          const cartsWithInfo = carts.map(cart => {
+            if (cart.status === 'PICKING') {
+              const chunk = chunkByCart.get(cart.id)
+              return {
+                ...cart,
+                activeChunk: chunk ? {
+                  pickerName: chunk.pickerName,
+                  claimedAt: chunk.claimedAt,
+                  ordersInChunk: chunk.ordersInChunk,
+                } : null,
+              }
+            }
+            return cart
+          })
+          return NextResponse.json({ carts: cartsWithInfo })
+        }
+      }
+
       return NextResponse.json({ carts })
     }
 
