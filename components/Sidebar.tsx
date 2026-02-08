@@ -54,6 +54,7 @@ const navSections: NavSection[] = [
     title: 'Reports',
     access: 'operator',
     items: [
+      { name: 'Dashboard', href: '/dashboard', access: 'admin' },
       { name: 'Analytics', href: '/analytics', access: 'operator', externalHref: 'https://paws-analytics.vercel.app/' },
     ],
   },
