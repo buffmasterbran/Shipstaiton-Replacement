@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import type { UserRole } from './MainLayout'
 import type { FilterMode } from '@/context/ExpeditedFilterContext'
 
@@ -26,6 +25,10 @@ interface HeaderProps {
   ordersLoading?: boolean
   lastFetchedAt?: Date | null
   onRefreshOrders?: () => void
+  dateStart?: string
+  dateEnd?: string
+  setDateStart?: (d: string) => void
+  setDateEnd?: (d: string) => void
 }
 
 // Cycle through filter modes: all -> only -> hide -> all
@@ -86,8 +89,11 @@ export default function Header({
   ordersLoading = false,
   lastFetchedAt,
   onRefreshOrders,
+  dateStart: startDate = '',
+  dateEnd: endDate = '',
+  setDateStart: setStartDate,
+  setDateEnd: setEndDate,
 }: HeaderProps) {
-  const [dateRange, setDateRange] = useState('')
 
   const formatLastFetched = (date: Date | null | undefined) => {
     if (!date) return ''
@@ -104,25 +110,28 @@ export default function Header({
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <input
-            type="text"
-            placeholder="MM/DD/YYYY - MM/DD/YYYY"
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate?.(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-sm text-gray-700"
           />
-          <svg
-            className="w-5 h-5 text-gray-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-            />
-          </svg>
+          <span className="text-gray-400 text-sm">–</span>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate?.(e.target.value)}
+            min={startDate || undefined}
+            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-sm text-gray-700"
+          />
+          {(startDate || endDate) && (
+            <button
+              onClick={() => { setStartDate?.(''); setEndDate?.('') }}
+              className="text-gray-400 hover:text-gray-600 text-sm"
+              title="Clear dates"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
         {/* Expedited Filter Toggle (3-state) */}

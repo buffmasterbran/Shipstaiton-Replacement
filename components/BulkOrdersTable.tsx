@@ -194,6 +194,8 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
   const selectedGroups = filteredGroups.filter(g => selectedGroupSigs.has(g.signature))
   const selectedOrderCount = selectedGroups.reduce((sum, g) => sum + g.totalOrders, 0)
 
+  const [pushProgress, setPushProgress] = useState<string | null>(null)
+
   // Push handler for a single group
   const handlePushGroup = useCallback(async (cellIds: string[], customName?: string) => {
     if (!selectedGroup && !pushAllMode && !pushSelectedMode) return
@@ -205,6 +207,14 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
         : selectedGroup ? [selectedGroup] : []
     const allOrderNumbers = groups.flatMap(g => g.orders.map(o => o.log.orderNumber))
 
+    console.log(`[BULK PUSH] Pushing ${groups.length} group(s) with ${allOrderNumbers.length} total orders`)
+    groups.forEach((g, i) => {
+      console.log(`[BULK PUSH]   Group ${i + 1}: "${g.signature}" — ${g.totalOrders} orders, ${g.orders.length} order records`)
+    })
+
+    setPushProgress(`Sending ${allOrderNumbers.length} orders from ${groups.length} group(s) to queue...`)
+
+    const startTime = Date.now()
     const res = await fetch('/api/batches', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,15 +226,25 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
         }),
       })
 
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+
     if (!res.ok) {
       const data = await res.json()
+      console.error(`[BULK PUSH] FAILED after ${elapsed}s:`, data.error)
+      setPushProgress(null)
       throw new Error(data.error || 'Failed to create batch')
     }
 
     const data = await res.json()
+    console.log(`[BULK PUSH] SUCCESS in ${elapsed}s: batch="${data.batch.name}", ${data.summary.totalOrders} orders, ${data.summary.bulkBatches} bulk groups`)
+
+    setPushProgress(null)
+    const skippedInfo = data.summary.skippedOrders > 0
+      ? ` ⚠️ ${data.summary.skippedOrders} orders skipped (${data.summary.alreadyBatched} already batched, ${data.summary.wrongStatus} wrong status, ${data.summary.notFound} not found)`
+      : ''
     setPushMessage({
-      type: 'success',
-      text: `Created batch "${data.batch.name}" with ${data.summary.totalOrders} orders (${data.summary.bulkBatches} bulk groups) → ${data.summary.cellsAssigned} cell(s)`,
+      type: data.summary.skippedOrders > 0 ? 'error' : 'success',
+      text: `Created batch "${data.batch.name}" with ${data.summary.totalOrders} of ${data.summary.requestedOrders} orders (${data.summary.bulkBatches} bulk groups) → ${data.summary.cellsAssigned} cell(s) [${elapsed}s]${skippedInfo}`,
     })
 
     // Reset and refresh orders so batched orders disappear from the list
@@ -243,6 +263,14 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
 
   return (
     <div className="space-y-4">
+      {/* Progress indicator */}
+      {pushProgress && (
+        <div className="p-3 rounded-lg text-sm bg-blue-50 text-blue-700 flex items-center gap-3">
+          <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent" />
+          {pushProgress}
+        </div>
+      )}
+
       {/* Success/Error message */}
       {pushMessage && (
         <div className={`p-3 rounded-lg text-sm ${

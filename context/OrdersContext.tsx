@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
 
 // Order log type matching the database schema
 export interface OrderLog {
@@ -51,15 +51,32 @@ interface OrdersContextType {
   updateOrdersInPlace: (updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => void
   updateOrderStatus: (orderId: string, status: string) => void
   updateOrderInPlace: (orderId: string, updates: Partial<OrderLog>) => void
+  dateStart: string
+  dateEnd: string
+  setDateStart: (d: string) => void
+  setDateEnd: (d: string) => void
 }
 
 const OrdersContext = createContext<OrdersContextType | null>(null)
 
 export function OrdersProvider({ children }: { children: ReactNode }) {
-  const [orders, setOrders] = useState<OrderLog[]>([])
+  const [allOrders, setAllOrders] = useState<OrderLog[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null)
+  const [dateStart, setDateStart] = useState('')
+  const [dateEnd, setDateEnd] = useState('')
+
+  // Filter orders by date range (based on order's createdAt)
+  const orders = useMemo(() => {
+    if (!dateStart && !dateEnd) return allOrders
+    return allOrders.filter(order => {
+      const orderDate = order.createdAt?.slice(0, 10) // "YYYY-MM-DD"
+      if (dateStart && orderDate < dateStart) return false
+      if (dateEnd && orderDate > dateEnd) return false
+      return true
+    })
+  }, [allOrders, dateStart, dateEnd])
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -73,7 +90,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
       }
 
       const data = await res.json()
-      setOrders(data.orders || [])
+      setAllOrders(data.orders || [])
       setLastFetchedAt(new Date())
     } catch (err) {
       setError((err as Error).message)
@@ -108,7 +125,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
 
   // Update specific orders in place without full refresh (for real-time rate updates)
   const updateOrdersInPlace = useCallback((updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => {
-    setOrders(prevOrders => {
+    setAllOrders(prevOrders => {
       return prevOrders.map(order => {
         const update = updates.find(u => u.id === order.id)
         if (update) {
@@ -127,7 +144,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
 
   // Update a single order's status in place (for hold/unhold without full refresh)
   const updateOrderStatus = useCallback((orderId: string, status: string) => {
-    setOrders(prevOrders => {
+    setAllOrders(prevOrders => {
       return prevOrders.map(order => {
         if (order.id === orderId) {
           return { ...order, status }
@@ -139,7 +156,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
 
   // Update a single order with arbitrary fields (for edit dialog saves)
   const updateOrderInPlace = useCallback((orderId: string, updates: Partial<OrderLog>) => {
-    setOrders(prevOrders => {
+    setAllOrders(prevOrders => {
       return prevOrders.map(order => {
         if (order.id === orderId) {
           return { ...order, ...updates }
@@ -150,7 +167,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus, updateOrderInPlace }}>
+    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus, updateOrderInPlace, dateStart, dateEnd, setDateStart, setDateEnd }}>
       {children}
     </OrdersContext.Provider>
   )

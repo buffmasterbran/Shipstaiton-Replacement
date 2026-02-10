@@ -190,6 +190,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch eligible orders (awaiting shipment, not already in a batch)
+    console.log(`[BATCH CREATE] Received ${orderNumbers.length} order numbers, type=${type}, cells=${cellIds?.length || 0}`)
+
+    const allMatchingOrders = await prisma.orderLog.findMany({
+      where: {
+        orderNumber: { in: orderNumbers },
+      },
+      select: { orderNumber: true, status: true, batchId: true },
+    })
+
+    const alreadyBatched = allMatchingOrders.filter(o => o.batchId !== null)
+    const wrongStatus = allMatchingOrders.filter(o => o.batchId === null && o.status !== 'AWAITING_SHIPMENT')
+    const notFound = orderNumbers.filter(on => !allMatchingOrders.find(o => o.orderNumber === on))
+
+    if (alreadyBatched.length > 0) {
+      console.log(`[BATCH CREATE] WARNING: ${alreadyBatched.length} orders already in a batch:`, alreadyBatched.map(o => `${o.orderNumber} (batch=${o.batchId})`))
+    }
+    if (wrongStatus.length > 0) {
+      console.log(`[BATCH CREATE] WARNING: ${wrongStatus.length} orders have wrong status:`, wrongStatus.map(o => `${o.orderNumber} (status=${o.status})`))
+    }
+    if (notFound.length > 0) {
+      console.log(`[BATCH CREATE] WARNING: ${notFound.length} order numbers not found in DB:`, notFound)
+    }
+
     const orders = await prisma.orderLog.findMany({
       where: {
         orderNumber: { in: orderNumbers },
@@ -198,9 +221,11 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    console.log(`[BATCH CREATE] Eligible orders: ${orders.length} of ${orderNumbers.length} requested (${alreadyBatched.length} already batched, ${wrongStatus.length} wrong status, ${notFound.length} not found)`)
+
     if (orders.length === 0) {
       return NextResponse.json({
-        error: 'No eligible orders found. Orders must be awaiting shipment and not already in a batch.',
+        error: `No eligible orders found. ${alreadyBatched.length} already batched, ${wrongStatus.length} wrong status, ${notFound.length} not found.`,
       }, { status: 400 })
     }
 
@@ -246,6 +271,11 @@ export async function POST(request: NextRequest) {
           signatureGroups.set(sig.signature, [order])
         }
       }
+
+      console.log(`[BATCH CREATE] BULK: ${signatureGroups.size} signature groups`)
+      signatureGroups.forEach((groupOrders, signature) => {
+        console.log(`[BATCH CREATE]   Group "${signature}": ${groupOrders.length} orders`)
+      })
 
       // Create BulkBatch records for each group (with splitting if > 24)
       const bulkBatchPromises: Promise<any>[] = []
@@ -316,10 +346,17 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    console.log(`[BATCH CREATE] DONE: batch="${completeBatch?.name}", ${orders.length} orders assigned, ${orderNumbers.length - orders.length} skipped`)
+
     return NextResponse.json({
       batch: completeBatch,
       summary: {
         totalOrders: orders.length,
+        requestedOrders: orderNumbers.length,
+        skippedOrders: orderNumbers.length - orders.length,
+        alreadyBatched: alreadyBatched.length,
+        wrongStatus: wrongStatus.length,
+        notFound: notFound.length,
         cellsAssigned: hasCells ? cellIds.length : 0,
         isPersonalized,
         bulkBatches: type === 'BULK' ? completeBatch?.bulkBatches?.length || 0 : 0,

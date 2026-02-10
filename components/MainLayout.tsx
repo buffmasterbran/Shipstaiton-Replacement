@@ -15,7 +15,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { role, setRole } = useRole()
   const { expeditedFilter, setExpeditedFilter, personalizedFilter, setPersonalizedFilter } = useExpeditedFilter()
-  const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders } = useOrders()
+  const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders, dateStart, dateEnd, setDateStart, setDateEnd } = useOrders()
   const [canProcess, setCanProcess] = useState(true)
 
   const operatorAllowedPaths = ['/pick', '/cart-scan', '/scan-to-verify', '/local-pickup', '/analytics', '/returns', '/inventory-count']
@@ -63,6 +63,10 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
             ordersLoading={ordersLoading}
             lastFetchedAt={lastFetchedAt}
             onRefreshOrders={refreshOrders}
+            dateStart={dateStart}
+            dateEnd={dateEnd}
+            setDateStart={setDateStart}
+            setDateEnd={setDateEnd}
           />
         )}
         <main className={isFullScreenPage ? 'flex-1 flex flex-col' : 'flex-1 p-6'}>{children}</main>

@@ -488,6 +488,7 @@ export default function BatchQueuePage() {
   const [activeBatch, setActiveBatch] = useState<PickBatch | null>(null)
   const [showCompleted, setShowCompleted] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [archiving, setArchiving] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -634,6 +635,22 @@ export default function BatchQueuePage() {
     }
   }
 
+  const handleClearShipped = async () => {
+    if (!confirm('⚠️ TESTING ONLY: This will reset ALL shipped orders back to "awaiting shipment" and clear their tracking/label data. Continue?')) return
+
+    setArchiving(true)
+    try {
+      const res = await fetch('/api/orders/archive-shipped', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Clear failed')
+      alert(`Reset ${data.cleared} shipped orders back to awaiting shipment.`)
+    } catch (err: any) {
+      alert('Clear failed: ' + (err.message || 'Unknown error'))
+    } finally {
+      setArchiving(false)
+    }
+  }
+
   const handleResetBatches = async () => {
     if (!confirm('⚠️ This will DELETE all batches, chunks, and bulk batches, unlink all orders, and reset all carts. Are you sure?')) return
     if (!confirm('This cannot be undone. Type OK to confirm you want to clear ALL batch data.')) return
@@ -692,6 +709,13 @@ export default function BatchQueuePage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-900">Batch Queue</h1>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleClearShipped}
+            disabled={archiving}
+            className="px-3 py-2 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {archiving ? 'Archiving...' : 'Clear Shipped Orders'}
+          </button>
           <button
             onClick={handleResetBatches}
             disabled={resetting}
