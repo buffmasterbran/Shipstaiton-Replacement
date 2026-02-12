@@ -294,7 +294,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
             className="w-40"
           />
           <span className="text-sm font-mono font-medium text-gray-900 w-8">{bulkThreshold}</span>
-  </div>
+      </div>
   
         {/* Box size filter */}
         {boxSizes.length > 0 && (

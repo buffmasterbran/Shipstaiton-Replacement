@@ -80,6 +80,38 @@ interface PrintNodeComputer {
   friendlyName: string
   state: string
   printers: { id: number; name: string; friendlyName: string; isDefault: boolean }[]
+  scales: { deviceName: string; deviceNum: number; friendlyName: string }[]
+}
+
+interface ShippingDetails {
+  weightOz: string
+  weightLbs: string
+  boxName: string
+  boxId: string
+  lengthIn: string
+  widthIn: string
+  heightIn: string
+  carrier: string
+  service: string
+  carrierServiceKey: string // "carrier|serviceCode" for dropdown matching
+}
+
+interface BoxOption {
+  id: string
+  name: string
+  lengthInches: number
+  widthInches: number
+  heightInches: number
+  weightLbs: number
+  active: boolean
+}
+
+interface CarrierServiceOption {
+  key: string // "carrierCode|serviceCode"
+  carrier: string
+  carrierCode: string
+  serviceCode: string
+  serviceName: string
 }
 
 type ShipStep = 'cart-select' | 'shipping' | 'complete'
@@ -181,7 +213,7 @@ function StandardVerification({
 
   const handlePrintLabel = async () => {
     setLabelPrinted(true)
-    onComplete()
+      onComplete()
     // TODO: Call ShipEngine to generate actual label
   }
 
@@ -236,21 +268,21 @@ function StandardVerification({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
-        {items.map((item, idx) => {
-          const scanned = scannedCounts.get(item.sku.toUpperCase()) || 0
-          const isComplete = scanned >= item.quantity
-          return (
+          {items.map((item, idx) => {
+            const scanned = scannedCounts.get(item.sku.toUpperCase()) || 0
+            const isComplete = scanned >= item.quantity
+            return (
             <div key={idx} className={`p-4 rounded-xl border-2 ${isComplete ? 'border-green-500 bg-green-50' : 'border-gray-200 bg-white'}`}>
-              <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between">
                 <div>
                   <div className="font-mono text-lg font-bold text-gray-900">{item.sku}</div>
                   <div className="text-sm text-gray-600">{item.name}</div>
-                </div>
+                    </div>
                 <div className={`text-3xl font-bold ${isComplete ? 'text-green-600' : 'text-gray-400'}`}>
                   {scanned}/{item.quantity}
-                </div>
-              </div>
-            </div>
+                    </div>
+                  </div>
+                    </div>
           )
         })}
       </div>
@@ -269,8 +301,8 @@ function StandardVerification({
         >
           {labelPrinted ? 'Next Order →' : 'Verify Items First'}
         </button>
-      </div>
-    </div>
+                  </div>
+                </div>
   )
 }
 
@@ -350,8 +382,8 @@ function SinglesVerification({
         <button onClick={onNext} className="px-8 py-4 bg-blue-600 text-white text-xl font-bold rounded-xl hover:bg-blue-700">
           Continue →
         </button>
-      </div>
-    )
+              </div>
+            )
   }
 
   return (
@@ -411,8 +443,8 @@ function SinglesVerification({
                     <Barcode value={bc} width={1.2} height={30} fontSize={10} margin={2} />
                   </div>
                 ) : null
-              })}
-            </div>
+          })}
+        </div>
           </div>
         )}
         {labelsPrinted && (
@@ -599,7 +631,7 @@ function BulkVerification({
                 }`}>
                   Shelf {assignment.shelfNumber}
                   <div className="text-[10px] font-normal">{shipped}/{total}</div>
-                </div>
+          </div>
                 <div className="flex-1 grid grid-cols-4 gap-1">
                   {Array.from({ length: 4 }, (_, binIdx) => {
                     const physicalBin = binIdx + 1 + binOffset
@@ -767,7 +799,21 @@ export default function CartScanPage() {
   const [pnComputers, setPnComputers] = useState<PrintNodeComputer[]>([])
   const [selectedComputerName, setSelectedComputerName] = useState<string>('')
   const [selectedPrinterId, setSelectedPrinterId] = useState<number | null>(null)
+  const [selectedScaleKey, setSelectedScaleKey] = useState<string>('') // "deviceName:deviceNum"
   const [pnLoading, setPnLoading] = useState(true)
+
+  // Shipping details panel state
+  const [shippingDetails, setShippingDetails] = useState<ShippingDetails>({
+    weightOz: '', weightLbs: '', boxName: '', boxId: '', lengthIn: '', widthIn: '', heightIn: '', carrier: '', service: '', carrierServiceKey: '',
+  })
+  const [scaleWeight, setScaleWeight] = useState<string | null>(null)
+  const [scaleLoading, setScaleLoading] = useState(false)
+  const [scalePolling, setScalePolling] = useState(false)
+  const scalePollingRef = useRef(false) // ref so interval callback always sees latest value
+
+  // Reference data for dropdowns
+  const [allBoxes, setAllBoxes] = useState<BoxOption[]>([])
+  const [allCarrierServices, setAllCarrierServices] = useState<CarrierServiceOption[]>([])
 
   // Derived: selected computer and its printers
   const selectedComputer = useMemo(
@@ -786,8 +832,17 @@ export default function CartScanPage() {
     (p: { name: string; friendlyName: string }) => p.friendlyName || p.name,
     []
   )
+  const selectedScale = useMemo(() => {
+    if (!selectedComputer || !selectedScaleKey) return null
+    const [dn, dnStr] = selectedScaleKey.split(':')
+    return selectedComputer.scales.find(s => s.deviceName === dn && s.deviceNum === parseInt(dnStr || '0', 10)) || null
+  }, [selectedComputer, selectedScaleKey])
+  const scaleDisplayName = useCallback(
+    (s: { deviceName: string; friendlyName: string }) => s.friendlyName || s.deviceName,
+    []
+  )
 
-  // Load saved name + saved printer selections from localStorage
+  // Load saved name + saved printer/scale selections from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('shipper-name')
     if (saved) setShipperName(saved)
@@ -795,6 +850,55 @@ export default function CartScanPage() {
     if (savedComputer) setSelectedComputerName(savedComputer)
     const savedPrinter = localStorage.getItem('selected-printer-id')
     if (savedPrinter) setSelectedPrinterId(parseInt(savedPrinter, 10))
+    const savedScale = localStorage.getItem('selected-scale')
+    if (savedScale) setSelectedScaleKey(savedScale)
+  }, [])
+
+  // Fetch boxes and carrier services for shipping details dropdowns
+  useEffect(() => {
+    // Fetch boxes
+    fetch('/api/box-config')
+      .then(r => r.json())
+      .then(data => {
+        const boxes = (data.boxes || [])
+          .filter((b: any) => b.active)
+          .map((b: any) => ({
+            id: b.id,
+            name: b.name,
+            lengthInches: b.lengthInches,
+            widthInches: b.widthInches,
+            heightInches: b.heightInches,
+            weightLbs: b.weightLbs || 0,
+            active: b.active,
+          }))
+        setAllBoxes(boxes)
+      })
+      .catch(() => {})
+
+    // Fetch carrier services from rate shoppers
+    fetch('/api/rate-shoppers')
+      .then(r => r.json())
+      .then(data => {
+        const shoppers = data.rateShoppers || []
+        const serviceMap = new Map<string, CarrierServiceOption>()
+        for (const rs of shoppers) {
+          const services = rs.services || []
+          for (const svc of services) {
+            const key = `${svc.carrierCode || svc.carrierId}|${svc.serviceCode}`
+            if (!serviceMap.has(key)) {
+              serviceMap.set(key, {
+                key,
+                carrier: svc.carrierName || svc.carrierCode || '',
+                carrierCode: svc.carrierCode || svc.carrierId || '',
+                serviceCode: svc.serviceCode || '',
+                serviceName: svc.serviceName || '',
+              })
+            }
+          }
+        }
+        setAllCarrierServices(Array.from(serviceMap.values()))
+      })
+      .catch(() => {})
   }, [])
 
   // Fetch available computers/printers from PrintNode
@@ -812,17 +916,35 @@ export default function CartScanPage() {
           if (!stillOnline) {
             setSelectedComputerName('')
             setSelectedPrinterId(null)
+            setSelectedScaleKey('')
             localStorage.removeItem('selected-computer')
             localStorage.removeItem('selected-printer-id')
-          } else if (selectedPrinterId) {
-            // Verify printer still exists on that computer
-            const printerExists = stillOnline.printers.find(p => p.id === selectedPrinterId)
-            if (!printerExists) {
-              // Fall back to default printer
-              const defaultP = stillOnline.printers.find(p => p.isDefault) || stillOnline.printers[0]
-              if (defaultP) {
-                setSelectedPrinterId(defaultP.id)
-                localStorage.setItem('selected-printer-id', String(defaultP.id))
+            localStorage.removeItem('selected-scale')
+          } else {
+            if (selectedPrinterId) {
+              // Verify printer still exists on that computer
+              const printerExists = stillOnline.printers.find(p => p.id === selectedPrinterId)
+              if (!printerExists) {
+                // Fall back to default printer
+                const defaultP = stillOnline.printers.find(p => p.isDefault) || stillOnline.printers[0]
+                if (defaultP) {
+                  setSelectedPrinterId(defaultP.id)
+                  localStorage.setItem('selected-printer-id', String(defaultP.id))
+                }
+              }
+            }
+            // Verify scale still exists on that computer
+            if (selectedScaleKey) {
+              const [dn, dnStr] = selectedScaleKey.split(':')
+              const scaleExists = stillOnline.scales.find(s => s.deviceName === dn && s.deviceNum === parseInt(dnStr || '0', 10))
+              if (!scaleExists && stillOnline.scales.length > 0) {
+                const s = stillOnline.scales[0]
+                const key = `${s.deviceName}:${s.deviceNum}`
+                setSelectedScaleKey(key)
+                localStorage.setItem('selected-scale', key)
+              } else if (!scaleExists) {
+                setSelectedScaleKey('')
+                localStorage.removeItem('selected-scale')
               }
             }
           }
@@ -848,6 +970,16 @@ export default function CartScanPage() {
         setSelectedPrinterId(null)
         localStorage.removeItem('selected-printer-id')
       }
+      // Auto-select scale if computer has one
+      if (computer.scales.length > 0) {
+        const s = computer.scales[0]
+        const key = `${s.deviceName}:${s.deviceNum}`
+        setSelectedScaleKey(key)
+        localStorage.setItem('selected-scale', key)
+      } else {
+        setSelectedScaleKey('')
+        localStorage.removeItem('selected-scale')
+      }
     }
   }, [pnComputers])
 
@@ -856,6 +988,87 @@ export default function CartScanPage() {
     setSelectedPrinterId(printerId)
     localStorage.setItem('selected-printer-id', String(printerId))
   }, [])
+
+  // Handle scale selection
+  const handleSelectScale = useCallback((scaleKey: string) => {
+    setSelectedScaleKey(scaleKey)
+    if (scaleKey) {
+      localStorage.setItem('selected-scale', scaleKey)
+    } else {
+      localStorage.removeItem('selected-scale')
+    }
+  }, [])
+
+  // Toggle live scale polling ON/OFF
+  const toggleScalePolling = useCallback(() => {
+    setScalePolling(prev => {
+      const next = !prev
+      scalePollingRef.current = next
+      if (!next) setScaleLoading(false)
+      return next
+    })
+  }, [])
+
+  // Stop polling when scale or computer changes, or when leaving shipping step
+  useEffect(() => {
+    setScalePolling(false)
+    scalePollingRef.current = false
+  }, [selectedScaleKey, step])
+
+  // Live scale polling interval (500ms)
+  useEffect(() => {
+    if (!scalePolling || !selectedComputer || !selectedScaleKey) return
+
+    const [deviceName, deviceNumStr] = selectedScaleKey.split(':')
+    const deviceNum = parseInt(deviceNumStr || '0', 10)
+    const computerId = selectedComputer.id
+
+    let cancelled = false
+
+    const poll = async () => {
+      if (cancelled || !scalePollingRef.current) return
+      try {
+        setScaleLoading(true)
+        const res = await fetch('/api/printnode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get-weight', computerId, deviceName, deviceNum }),
+        })
+        if (cancelled || !scalePollingRef.current) return
+        const data = await res.json()
+        if (data.success) {
+          setScaleWeight(data.weight)
+          if (data.massOz !== null && data.massOz !== undefined) {
+            const totalOz = data.massOz
+            const wholeLbs = Math.floor(totalOz / 16)
+            const remainOz = totalOz - wholeLbs * 16
+            setShippingDetails(prev => ({
+              ...prev,
+              weightLbs: String(wholeLbs),
+              weightOz: remainOz.toFixed(1),
+            }))
+          }
+        } else {
+          setScaleWeight('Error: ' + (data.error || 'No reading'))
+        }
+      } catch {
+        if (!cancelled && scalePollingRef.current) {
+          setScaleWeight('Error: Connection failed')
+        }
+      } finally {
+        if (!cancelled) setScaleLoading(false)
+      }
+    }
+
+    // Immediately poll once, then every 500ms
+    poll()
+    const interval = setInterval(poll, 500)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [scalePolling, selectedComputer, selectedScaleKey])
 
   // Fetch ready carts (and SHIPPING carts for admins)
   useEffect(() => {
@@ -944,6 +1157,55 @@ export default function CartScanPage() {
   const currentBin = binNumbers[currentBinIndex] || 0
   const currentChunk = cart?.chunks[0]
 
+  // Current order for shipping details panel (non-bulk: first order in current bin)
+  const currentOrder = useMemo(() => {
+    if (!cart || pickingMode === 'BULK') return null
+    const binOrders = ordersByBin.get(currentBin) || []
+    return binOrders[0] || null
+  }, [cart, pickingMode, ordersByBin, currentBin])
+
+  // Populate shipping details when current order changes
+  useEffect(() => {
+    if (!currentOrder) {
+      setShippingDetails({ weightOz: '', weightLbs: '', boxName: '', boxId: '', lengthIn: '', widthIn: '', heightIn: '', carrier: '', service: '', carrierServiceKey: '' })
+      setScaleWeight(null)
+      return
+    }
+
+    const raw = Array.isArray(currentOrder.rawPayload) ? currentOrder.rawPayload[0] : currentOrder.rawPayload
+    const rate = raw?.preShoppedRate || (currentOrder as any).preShoppedRate
+    const weight = (currentOrder as any).shippedWeight
+    const box = (currentOrder as any).suggestedBox
+
+    const decimalLbs = weight ? parseFloat(weight) : 0
+    const totalOz = decimalLbs * 16
+    const wholeLbs = Math.floor(totalOz / 16)
+    const remainOz = totalOz - wholeLbs * 16
+
+    // Try to match the suggested box to one in our boxes list
+    const matchedBox = box?.boxId ? allBoxes.find(b => b.id === box.boxId) :
+      box?.boxName ? allBoxes.find(b => b.name === box.boxName) : null
+
+    // Try to match the pre-shopped rate to a carrier service option
+    const carrierCode = rate?.carrierCode || ''
+    const serviceCode = rate?.serviceCode || ''
+    const matchedCarrierKey = carrierCode && serviceCode ? `${carrierCode}|${serviceCode}` : ''
+
+    setShippingDetails({
+      weightLbs: decimalLbs ? String(wholeLbs) : '',
+      weightOz: decimalLbs ? remainOz.toFixed(1) : '',
+      boxName: box?.boxName || matchedBox?.name || '',
+      boxId: matchedBox?.id || '',
+      lengthIn: box?.lengthInches ? String(box.lengthInches) : matchedBox ? String(matchedBox.lengthInches) : '',
+      widthIn: box?.widthInches ? String(box.widthInches) : matchedBox ? String(matchedBox.widthInches) : '',
+      heightIn: box?.heightInches ? String(box.heightInches) : matchedBox ? String(matchedBox.heightInches) : '',
+      carrier: rate?.carrier || rate?.carrierCode || '',
+      service: rate?.serviceName || rate?.serviceCode || '',
+      carrierServiceKey: matchedCarrierKey,
+    })
+    setScaleWeight(null)
+  }, [currentOrder, allBoxes])
+
   // Whether station is selected (has computers available AND one is chosen with a printer)
   const hasStation = !!(selectedComputerName && selectedPrinterId)
 
@@ -960,7 +1222,7 @@ export default function CartScanPage() {
     try {
       const cartRes = await fetch(`/api/ship?cartId=${searchId}`)
       if (!cartRes.ok) throw new Error((await cartRes.json()).error || 'Cart not found')
-      const cartData = await cartRes.json()
+        const cartData = await cartRes.json()
 
       await fetch('/api/ship', {
         method: 'POST',
@@ -971,13 +1233,13 @@ export default function CartScanPage() {
       setCart(cartData.cart)
       setCurrentBinIndex(0)
       setShippedOrders(new Set())
-
+      
       // Identify empty bins (always 12 bins for all modes)
       const usedBins = new Set(cartData.cart.chunks.flatMap((c: PickChunk) => c.orders.map(o => o.binNumber)))
       const empty = new Set<number>()
       for (let i = 1; i <= 12; i++) { if (!usedBins.has(i)) empty.add(i) }
       setEmptyBins(empty)
-
+      
       setStep('shipping')
     } catch (err: any) {
       setError(err.message || 'Failed to load cart')
@@ -991,10 +1253,10 @@ export default function CartScanPage() {
     if (!currentChunk) return
     const binOrders = ordersByBin.get(currentBin) || []
     for (const order of binOrders) {
-      try {
-        await fetch('/api/ship', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+    try {
+      await fetch('/api/ship', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'complete-order', chunkId: currentChunk.id, orderNumber: order.orderNumber }),
         })
         setShippedOrders(prev => new Set([...Array.from(prev), order.orderNumber]))
@@ -1133,9 +1395,9 @@ export default function CartScanPage() {
           {/* Computer / Printer Selection */}
           {!pnLoading && pnComputers.length > 0 && (
             <div className="mb-6 bg-white rounded-xl shadow p-4 border border-gray-200">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
                 Your Station (Computer)
-              </label>
+            </label>
               <select
                 value={selectedComputerName}
                 onChange={(e) => handleSelectComputer(e.target.value)}
@@ -1170,6 +1432,36 @@ export default function CartScanPage() {
                       <div className="flex items-center gap-1.5 text-xs shrink-0">
                         <div className="w-2 h-2 rounded-full bg-green-500" />
                         <span className="text-green-700 font-medium">Ready</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Scale dropdown (shows when computer is selected and has scales) */}
+              {selectedComputer && selectedComputer.scales.length > 0 && (
+                <div className="mt-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Scale</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedScaleKey}
+                      onChange={(e) => handleSelectScale(e.target.value)}
+                      className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none bg-white text-sm"
+                    >
+                      <option value="">No scale</option>
+                      {selectedComputer.scales.map(s => {
+                        const key = `${s.deviceName}:${s.deviceNum}`
+                        return (
+                          <option key={key} value={key}>
+                            {scaleDisplayName(s)}
+                          </option>
+                        )
+                      })}
+                    </select>
+                    {selectedScale && (
+                      <div className="flex items-center gap-1.5 text-xs shrink-0">
+                        <svg className="w-3.5 h-3.5 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z" /></svg>
+                        <span className="text-green-700 font-medium">Connected</span>
                       </div>
                     )}
                   </div>
@@ -1229,7 +1521,7 @@ export default function CartScanPage() {
                       <div className="flex-1">
                         <div className="font-bold text-lg">{c.name}</div>
                         <div className="text-sm text-gray-600">{c.orderCount} orders</div>
-                      </div>
+                        </div>
                     </div>
                   </button>
                 ))}
@@ -1359,25 +1651,64 @@ export default function CartScanPage() {
             <div className="flex items-center gap-3">
               <div className="font-bold text-lg">{cart.name}</div>
               <span className={`px-2 py-1 rounded text-xs font-bold ${badge.bg}`}>{badge.label}</span>
-            </div>
-            <div className="flex items-center gap-4">
-              {/* Printer indicator */}
-              {selectedPrinter && selectedComputer ? (
-                <div className="flex items-center gap-1.5 text-xs bg-green-50 border border-green-200 px-2 py-1 rounded-lg">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                  <span className="text-green-700 font-medium">
-                    {printerDisplayName(selectedPrinter)}
-                  </span>
-                  <span className="text-green-500">
-                    @ {computerDisplayName(selectedComputer)}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 text-xs bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
-                  <span className="text-amber-700">No printer selected</span>
-                </div>
+              </div>
+            <div className="flex items-center gap-3">
+              {/* Computer dropdown */}
+              {pnComputers.length > 0 && (
+                <select
+                  value={selectedComputerName}
+                  onChange={(e) => handleSelectComputer(e.target.value)}
+                  className="text-xs px-2 py-1 border border-gray-300 rounded-lg bg-white focus:border-blue-500 focus:outline-none max-w-[140px]"
+                >
+                  <option value="">No computer</option>
+                  {pnComputers.map(c => (
+                    <option key={c.name} value={c.name}>{computerDisplayName(c)}</option>
+                  ))}
+                </select>
               )}
-              <div className="text-right">
+              {/* Printer dropdown */}
+              {selectedComputer && selectedComputer.printers.length > 0 ? (
+                <select
+                  value={selectedPrinterId || ''}
+                  onChange={(e) => handleSelectPrinter(parseInt(e.target.value, 10))}
+                  className={`text-xs px-2 py-1 border rounded-lg focus:outline-none max-w-[160px] ${
+                    selectedPrinterId
+                      ? 'bg-green-50 border-green-300 text-green-700 focus:border-green-500'
+                      : 'bg-amber-50 border-amber-300 text-amber-700 focus:border-amber-500'
+                  }`}
+                >
+                  {selectedComputer.printers.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {printerDisplayName(p)}{p.isDefault ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : pnComputers.length > 0 ? (
+                <div className="flex items-center text-xs bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
+                  <span className="text-amber-700">No printer</span>
+                </div>
+              ) : null}
+              {/* Scale dropdown */}
+              {selectedComputer && selectedComputer.scales.length > 0 && (
+                <select
+                  value={selectedScaleKey}
+                  onChange={(e) => handleSelectScale(e.target.value)}
+                  className={`text-xs px-2 py-1 border rounded-lg focus:outline-none max-w-[160px] ${
+                    selectedScaleKey
+                      ? 'bg-blue-50 border-blue-300 text-blue-700 focus:border-blue-500'
+                      : 'bg-gray-50 border-gray-300 text-gray-500 focus:border-gray-400'
+                  }`}
+                >
+                  <option value="">No scale</option>
+                  {selectedComputer.scales.map(s => {
+                    const key = `${s.deviceName}:${s.deviceNum}`
+                    return (
+                      <option key={key} value={key}>{scaleDisplayName(s)}</option>
+                    )
+                  })}
+                </select>
+              )}
+            <div className="text-right">
                 {!isBulkMode && (
                   <div className="text-sm text-gray-600">Bin {currentBinIndex + 1} / {binNumbers.length}</div>
                 )}
@@ -1386,6 +1717,164 @@ export default function CartScanPage() {
             </div>
           </div>
         </div>
+
+        {/* Shipping Details Panel (non-bulk only) */}
+        {!isBulkMode && currentOrder && !isEmptyBin && (
+          <div className="bg-white border-t border-gray-200 px-4 py-2 shrink-0">
+            <div className="flex items-center gap-6 text-sm">
+              {/* Weight (lb + remaining oz) */}
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 font-medium">Weight:</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={shippingDetails.weightLbs}
+                    onChange={(e) => setShippingDetails(prev => ({ ...prev, weightLbs: e.target.value }))}
+                    className="w-12 px-1.5 py-1 border border-gray-300 rounded text-center text-sm focus:border-blue-500 focus:outline-none"
+                    placeholder="0"
+                  />
+                  <span className="text-gray-400 text-xs">lb</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={shippingDetails.weightOz}
+                    onChange={(e) => setShippingDetails(prev => ({ ...prev, weightOz: e.target.value }))}
+                    className="w-14 px-1.5 py-1 border border-gray-300 rounded text-center text-sm focus:border-blue-500 focus:outline-none"
+                    placeholder="0.0"
+                  />
+                  <span className="text-gray-400 text-xs">oz</span>
+                </div>
+                {/* Scale live polling toggle */}
+                {selectedScale && (
+                  <button
+                    onClick={toggleScalePolling}
+                    className={`ml-1 flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
+                      scalePolling
+                        ? 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
+                    }`}
+                    title={scalePolling ? 'Stop live weighing' : `Start live weighing on ${scaleDisplayName(selectedScale)}`}
+                  >
+                    {scalePolling && (
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                    )}
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z" /></svg>
+                    {scalePolling ? 'LIVE' : 'Scale'}
+                  </button>
+                )}
+                {scaleWeight && !scaleWeight.startsWith('Error') && (
+                  <span className={`text-xs font-medium ${scalePolling ? 'text-green-600' : 'text-gray-600'}`}>
+                    {shippingDetails.weightLbs}lb {shippingDetails.weightOz}oz
+                  </span>
+                )}
+                {scaleWeight && scaleWeight.startsWith('Error') && (
+                  <span className="text-xs text-red-500">{scaleWeight}</span>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div className="w-px h-6 bg-gray-200" />
+
+              {/* Box / Dims */}
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 font-medium">Box:</span>
+                <select
+                  value={shippingDetails.boxId}
+                  onChange={(e) => {
+                    const boxId = e.target.value
+                    if (boxId === '__custom__') {
+                      setShippingDetails(prev => ({ ...prev, boxId: '', boxName: 'Custom', lengthIn: '', widthIn: '', heightIn: '' }))
+                      return
+                    }
+                    const box = allBoxes.find(b => b.id === boxId)
+                    if (box) {
+                      setShippingDetails(prev => ({
+                        ...prev,
+                        boxId: box.id,
+                        boxName: box.name,
+                        lengthIn: String(box.lengthInches),
+                        widthIn: String(box.widthInches),
+                        heightIn: String(box.heightInches),
+                      }))
+                    } else {
+                      setShippingDetails(prev => ({ ...prev, boxId: '', boxName: '' }))
+                    }
+                  }}
+                  className="text-xs px-1.5 py-1 border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none max-w-[140px]"
+                >
+                  <option value="">Select box...</option>
+                  {allBoxes.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                  <option value="__custom__">Custom</option>
+                </select>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={shippingDetails.lengthIn}
+                    onChange={(e) => setShippingDetails(prev => ({ ...prev, lengthIn: e.target.value, boxId: '', boxName: 'Custom' }))}
+                    className="w-10 px-1 py-1 border border-gray-300 rounded text-center text-xs focus:border-blue-500 focus:outline-none"
+                    placeholder="L"
+                  />
+                  <span className="text-gray-400 text-xs">x</span>
+                  <input
+                    type="text"
+                    value={shippingDetails.widthIn}
+                    onChange={(e) => setShippingDetails(prev => ({ ...prev, widthIn: e.target.value, boxId: '', boxName: 'Custom' }))}
+                    className="w-10 px-1 py-1 border border-gray-300 rounded text-center text-xs focus:border-blue-500 focus:outline-none"
+                    placeholder="W"
+                  />
+                  <span className="text-gray-400 text-xs">x</span>
+                  <input
+                    type="text"
+                    value={shippingDetails.heightIn}
+                    onChange={(e) => setShippingDetails(prev => ({ ...prev, heightIn: e.target.value, boxId: '', boxName: 'Custom' }))}
+                    className="w-10 px-1 py-1 border border-gray-300 rounded text-center text-xs focus:border-blue-500 focus:outline-none"
+                    placeholder="H"
+                  />
+                  <span className="text-gray-400 text-xs">in</span>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="w-px h-6 bg-gray-200" />
+
+              {/* Carrier / Service */}
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 font-medium">Carrier:</span>
+                <select
+                  value={shippingDetails.carrierServiceKey}
+                  onChange={(e) => {
+                    const key = e.target.value
+                    const svc = allCarrierServices.find(s => s.key === key)
+                    if (svc) {
+                      setShippingDetails(prev => ({
+                        ...prev,
+                        carrierServiceKey: key,
+                        carrier: svc.carrier,
+                        service: svc.serviceName,
+                      }))
+                    } else {
+                      setShippingDetails(prev => ({ ...prev, carrierServiceKey: '', carrier: '', service: '' }))
+                    }
+                  }}
+                  className="text-xs px-1.5 py-1 border border-gray-300 rounded bg-white focus:border-blue-500 focus:outline-none max-w-[220px]"
+                >
+                  <option value="">Select carrier...</option>
+                  {allCarrierServices.map(svc => (
+                    <option key={svc.key} value={svc.key}>
+                      {svc.carrier} / {svc.serviceName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Main content: Grid left, Verification right (for non-Bulk) */}
         {isBulkMode ? (
@@ -1429,15 +1918,15 @@ export default function CartScanPage() {
                   if (isEmpty) { bg = 'bg-gray-200'; border = 'border-gray-400'; text = 'text-gray-400' }
                   else if (binShipped) { bg = 'bg-green-100'; border = 'border-green-500'; text = 'text-green-700' }
                   else if (isCurrent) { bg = 'bg-blue-100'; border = 'border-blue-500'; text = 'text-blue-700' }
-
-                  return (
+              
+              return (
                     <div key={bin} className={`flex items-center justify-center rounded-xl border-2 font-bold text-2xl ${bg} ${border} ${text}`}>
                       {isEmpty ? '—' : binShipped ? '✓' : bin}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
 
             {/* Right: Verification content */}
             <div className="lg:w-96 xl:w-[420px] shrink-0 flex flex-col min-w-0 overflow-y-auto">
@@ -1452,10 +1941,10 @@ export default function CartScanPage() {
                 <StandardVerification
                   order={isEmptyBin ? null : binOrders[0] || null}
                   binNumber={currentBin}
-                  isEmpty={isEmptyBin}
-                  onComplete={handleOrderComplete}
+          isEmpty={isEmptyBin}
+          onComplete={handleOrderComplete}
                   onNext={handleNextBin}
-                />
+        />
               )}
             </div>
           </div>

@@ -392,17 +392,17 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
       {/* Orders Table */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
               <th className="px-3 py-3 text-left">
-                <input
-                  type="checkbox"
+                  <input
+                    type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
                   className="rounded border-gray-300"
-                />
-              </th>
+                  />
+                </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
@@ -429,12 +429,12 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                     className={`hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-blue-50' : ''}`}
                   >
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
                         onChange={() => toggleSelection(o.log.orderNumber)}
                         className="rounded border-gray-300"
-                      />
+                        />
                     </td>
                     <td className="px-4 py-2 text-sm font-mono text-gray-900">
                       {o.log.orderNumber}
@@ -473,12 +473,12 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                 )
               })
             )}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
         {filteredOrders.length > 200 && (
           <div className="px-4 py-2 text-xs text-gray-500 bg-gray-50 border-t">
             Showing first 200 of {filteredOrders.length} orders
-          </div>
+        </div>
         )}
       </div>
 
@@ -499,11 +499,11 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
       {/* Order Detail Dialog */}
       {isDialogOpen && selectedOrder && (
-        <OrderDialog
-          isOpen={isDialogOpen}
+      <OrderDialog
+        isOpen={isDialogOpen}
           onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
-          order={selectedOrder}
-          rawPayload={selectedRawPayload}
+        order={selectedOrder}
+        rawPayload={selectedRawPayload}
         />
       )}
     </div>

@@ -140,14 +140,14 @@ function getModeBadge(type?: string, isPersonalized?: boolean) {
 // Cart Visualization Component
 // ============================================================================
 
-function CartVisualization({
-  totalBins,
+function CartVisualization({ 
+  totalBins, 
   highlightedBins,
   completedBins,
   emptyBins,
   binQuantities,
   pickingMode,
-}: {
+}: { 
   totalBins: number
   highlightedBins: Set<number>
   completedBins: Set<number>
@@ -158,9 +158,9 @@ function CartVisualization({
   // Bulk uses 3 rows of 4 (shelves), others use 4x3 grid
   const cols = pickingMode === 'BULK' ? 4 : 4
   const bins = Array.from({ length: totalBins }, (_, i) => i + 1)
-
+  
   return (
-    <div
+    <div 
       className="grid gap-4 w-full h-full"
       style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
     >
@@ -169,11 +169,11 @@ function CartVisualization({
         const isEmpty = emptyBins.has(bin)
         const isHighlighted = highlightedBins.has(bin)
         const quantity = binQuantities?.get(bin)
-
+        
         let bgColor = 'bg-white'
         let borderColor = 'border-gray-300'
         let textColor = 'text-gray-400'
-
+        
         if (isEmpty) {
           bgColor = 'bg-gray-100'
           borderColor = 'border-gray-300'
@@ -187,7 +187,7 @@ function CartVisualization({
           borderColor = 'border-blue-500'
           textColor = 'text-blue-700'
         }
-
+        
         return (
           <div
             key={bin}
@@ -280,18 +280,18 @@ function SlideMenu({
           <h2 className="text-xl font-bold text-gray-900">Menu</h2>
         </div>
         <div className="p-6 space-y-4 border-b">
-          <div>
-            <div className="text-sm text-gray-500">Picker</div>
-            <div className="font-bold text-gray-900">{pickerName}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-500">Cart</div>
-            <div className="font-bold text-gray-900">{cartName}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-500">Cell</div>
-            <div className="font-bold text-gray-900">{cellName}</div>
-          </div>
+            <div>
+              <div className="text-sm text-gray-500">Picker</div>
+              <div className="font-bold text-gray-900">{pickerName}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Cart</div>
+              <div className="font-bold text-gray-900">{cartName}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Cell</div>
+              <div className="font-bold text-gray-900">{cellName}</div>
+            </div>
           <div>
             <div className="text-sm text-gray-500">Mode</div>
             <span className={`inline-flex px-2 py-1 rounded text-xs font-bold text-white ${badge.bg}`}>
@@ -326,13 +326,13 @@ export default function PickerPage() {
   const [selectedCart, setSelectedCart] = useState<PickCart | null>(null)
   const [pickerName, setPickerName] = useState('')
   const [chunk, setChunk] = useState<PickChunk | null>(null)
-
+  
   // Pick state
   const [pickItems, setPickItems] = useState<PickItem[]>([])
   const [currentItemIndex, setCurrentItemIndex] = useState(0)
   const [pickedSkus, setPickedSkus] = useState<Set<string>>(new Set())
   const [emptyBins, setEmptyBins] = useState<Set<number>>(new Set())
-
+  
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [availableOrderCount, setAvailableOrderCount] = useState(0)
@@ -343,7 +343,7 @@ export default function PickerPage() {
   const [personalizedOrderCount, setPersonalizedOrderCount] = useState(0)
   const [releaseCart, setReleaseCart] = useState<PickCart | null>(null)
   const [releasing, setReleasing] = useState(false)
-
+  
   // Timer
   const timer = useTimer()
 
@@ -392,7 +392,7 @@ export default function PickerPage() {
 
   // Fetch available orders for cell
   useEffect(() => {
-    if (!selectedCell) return
+      if (!selectedCell) return
     fetch(`/api/pick?cellId=${selectedCell.id}`)
       .then(res => res.json())
       .then(data => setAvailableOrderCount(data.availableOrderCount || 0))
@@ -414,8 +414,8 @@ export default function PickerPage() {
     const locationMap = new Map<string, string>()
     try {
       const res = await fetch('/api/products')
-      if (res.ok) {
-        const data = await res.json()
+        if (res.ok) {
+          const data = await res.json()
         for (const record of (data.skus || [])) {
           if (record.binLocation) locationMap.set(record.sku.toUpperCase(), record.binLocation)
         }
@@ -504,7 +504,7 @@ export default function PickerPage() {
 
     // SINGLES / OBS / PERSONALIZED: Derive from order payloads
     const skuMap = new Map<string, { name: string; bins: Map<number, number> }>()
-
+    
     for (const order of chunkData.orders) {
       const items = getOrderItems(order.rawPayload)
       for (const item of items) {
@@ -527,7 +527,7 @@ export default function PickerPage() {
         total += qty
       }
       bins.sort((a, b) => a.binNumber - b.binNumber)
-
+      
       const info = extractProductInfo(sku)
       items.push({
         sku,
@@ -587,9 +587,9 @@ export default function PickerPage() {
 
     try {
       const claimBody: any = {
-        action: 'claim-chunk',
-        cartId: selectedCart.id,
-        pickerName: pickerName.trim(),
+          action: 'claim-chunk',
+          cartId: selectedCart.id,
+          pickerName: pickerName.trim(),
       }
       if (pickingPersonalized) {
         claimBody.personalized = true
@@ -645,10 +645,10 @@ export default function PickerPage() {
       }
     } else {
       // Singles/OBS: Use order binNumbers directly
-      for (const order of chunk.orders) {
-        const orderItems = getOrderItems(order.rawPayload)
+    for (const order of chunk.orders) {
+      const orderItems = getOrderItems(order.rawPayload)
         if (orderItems.every(item => pickedSkus.has(item.sku.toUpperCase()))) {
-          completedBins.add(order.binNumber)
+        completedBins.add(order.binNumber)
         }
       }
     }
@@ -875,17 +875,17 @@ export default function PickerPage() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-6">
-                {cells.map((cell) => (
-                  <button
-                    key={cell.id}
-                    onClick={() => handleCellSelect(cell)}
-                    className="bg-white rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-transform active:scale-95"
-                  >
-                    <div className="text-4xl font-bold text-gray-900">{cell.name}</div>
-                  </button>
-                ))}
-              </div>
+            <div className="grid grid-cols-2 gap-6">
+              {cells.map((cell) => (
+                <button
+                  key={cell.id}
+                  onClick={() => handleCellSelect(cell)}
+                  className="bg-white rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-transform active:scale-95"
+                >
+                  <div className="text-4xl font-bold text-gray-900">{cell.name}</div>
+                </button>
+              ))}
+            </div>
 
               {/* Personalized quick-pick button (always shown, grabs from pool) */}
               <div className="mt-8">
@@ -936,25 +936,25 @@ export default function PickerPage() {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                   {carts.filter(c => c.status === 'AVAILABLE').map((cart) => (
-                    <button
-                      key={cart.id}
-                      onClick={() => setSelectedCart(cart)}
+                  <button
+                    key={cart.id}
+                    onClick={() => setSelectedCart(cart)}
                       className={`p-6 rounded-xl text-center transition-all ${
-                        selectedCart?.id === cart.id
-                          ? 'border-green-500 bg-green-50'
-                          : 'border-gray-200 bg-white hover:border-gray-300'
-                      }`}
+                      selectedCart?.id === cart.id
+                        ? 'border-green-500 bg-green-50'
+                        : 'border-gray-200 bg-white hover:border-gray-300'
+                    }`}
                       style={{ borderWidth: '3px', borderStyle: 'solid', borderColor: selectedCart?.id === cart.id ? '#22c55e' : '#e5e7eb' }}
-                    >
-                      <div
-                        className="w-12 h-12 rounded-full mx-auto mb-3"
-                        style={{ backgroundColor: cart.color || '#9ca3af' }}
-                      />
-                      <div className="text-xl font-bold text-gray-900">{cart.name}</div>
-                    </button>
-                  ))}
+                  >
+                    <div
+                      className="w-12 h-12 rounded-full mx-auto mb-3"
+                      style={{ backgroundColor: cart.color || '#9ca3af' }}
+                    />
+                    <div className="text-xl font-bold text-gray-900">{cart.name}</div>
+                  </button>
+                ))}
                 </div>
 
                 {/* PICKING carts — admin only */}
@@ -994,7 +994,7 @@ export default function PickerPage() {
                         )
                       })}
                     </div>
-                  </div>
+              </div>
                 )}
               </>
             )}
@@ -1126,7 +1126,7 @@ export default function PickerPage() {
               <svg className="w-8 h-8 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
-            </button>
+          </button>
             <span className={`px-2 py-1 rounded text-xs font-bold text-white ${badge.bg}`}>{badge.label}</span>
           </div>
 
@@ -1134,13 +1134,13 @@ export default function PickerPage() {
           <div className="text-center">
             <div className="text-lg font-medium text-gray-700">
               {chunk.batch.name} &bull; {chunk.cart.name}
-            </div>
+          </div>
             <div className="text-sm text-gray-500">
               Item {currentItemIndex + 1} of {pickItems.length}
               &nbsp;&bull;&nbsp;
               {completedBins.size}/{chunk.orders.length} bins
-            </div>
           </div>
+        </div>
 
           {/* Timer */}
           <div className="flex items-center gap-2">

@@ -145,27 +145,27 @@ export async function GET(request: NextRequest) {
       orderBy: { priority: 'asc' },
       include: {
         batch: {
-          include: {
-            orders: {
-              where: {
-                chunkId: null, // Orders not yet assigned to a chunk
-                status: 'AWAITING_SHIPMENT',
-              },
-              select: {
-                id: true,
-                orderNumber: true,
-                rawPayload: true,
-              },
-            },
-            chunks: {
-              where: {
-                status: { in: ['AVAILABLE', 'PICKING'] },
-              },
-              include: {
-                cart: true,
-              },
-            },
+      include: {
+        orders: {
+          where: {
+            chunkId: null, // Orders not yet assigned to a chunk
+            status: 'AWAITING_SHIPMENT',
           },
+          select: {
+            id: true,
+            orderNumber: true,
+            rawPayload: true,
+          },
+        },
+        chunks: {
+          where: {
+            status: { in: ['AVAILABLE', 'PICKING'] },
+          },
+          include: {
+            cart: true,
+          },
+        },
+      },
         },
       },
     })
@@ -265,23 +265,23 @@ export async function POST(request: NextRequest) {
         if (personalized) {
           // Find next personalized batch from the pool (no cell assignment)
           batch = await prisma.pickBatch.findFirst({
-            where: {
+          where: {
               isPersonalized: true,
               cellAssignments: { none: {} },
               status: { in: ['ACTIVE', 'IN_PROGRESS', 'RELEASED'] },
-              orders: {
-                some: {
-                  chunkId: null,
-                  status: 'AWAITING_SHIPMENT',
-                },
+            orders: {
+              some: {
+                chunkId: null,
+                status: 'AWAITING_SHIPMENT',
               },
             },
-            include: {
-              orders: {
-                where: {
-                  chunkId: null,
-                  status: 'AWAITING_SHIPMENT',
-                },
+          },
+          include: {
+            orders: {
+              where: {
+                chunkId: null,
+                status: 'AWAITING_SHIPMENT',
+              },
               },
             },
             orderBy: { priority: 'asc' },
@@ -298,10 +298,10 @@ export async function POST(request: NextRequest) {
                     chunkId: null,
                     status: 'AWAITING_SHIPMENT',
                   },
-                },
               },
             },
-            orderBy: { priority: 'asc' },
+          },
+          orderBy: { priority: 'asc' },
             include: {
               batch: {
                 include: {

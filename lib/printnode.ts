@@ -1,4 +1,4 @@
-import { PrismaClient, PrinterConfig as PrismaPrinterConfig } from '@prisma/client'
+import { PrismaClient, PrinterConfig as PrismaPrinterConfig, ScaleConfig as PrismaScaleConfig } from '@prisma/client'
 
 // ============================================================================
 // Types
@@ -22,6 +22,24 @@ export interface MergedPrinter extends PrintNodePrinter {
   enabled: boolean
   isDefault: boolean
   computerFriendlyName: string
+}
+
+/** Scale data from PrintNode API */
+export interface PrintNodeScale {
+  mass: [number | null, number | null]
+  deviceName: string
+  deviceNum: number
+  port: string
+  count: number | null
+  measurement: Record<string, number> // e.g. { g: 779000000000 } or { oz: 10320000000 }
+  clientReportedCreateTimestamp: string
+  ntpOffset: number | null
+  ageOfData: number
+  computerId: number
+  vendor: string
+  product: string
+  vendorId: number
+  productId: number
 }
 
 // ============================================================================
@@ -64,6 +82,68 @@ export async function fetchPrintNodePrinters(): Promise<PrintNodePrinter[]> {
       state: p.computer?.state || 'unknown',
     },
   }))
+}
+
+/**
+ * Fetch all scales for a specific computer from PrintNode API.
+ * Scale data is ephemeral — only available for ~45 seconds after a measurement.
+ * Returns an empty array if no scales are active.
+ */
+export async function fetchScalesForComputer(computerId: number): Promise<PrintNodeScale[]> {
+  const res = await fetch(`https://api.printnode.com/computer/${computerId}/scales`, {
+    headers: { Authorization: getAuthHeader() },
+  })
+
+  if (!res.ok) {
+    // 404 means no scales found — not an error
+    if (res.status === 404) return []
+    const text = await res.text()
+    console.error(`[PrintNode] Failed to fetch scales for computer ${computerId}:`, res.status, text)
+    return []
+  }
+
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
+
+/**
+ * Fetch scales for ALL connected computers. Returns a map of computerId -> scales.
+ */
+export async function fetchAllScales(computerIds: number[]): Promise<Record<number, PrintNodeScale[]>> {
+  const results: Record<number, PrintNodeScale[]> = {}
+  // Fetch in parallel
+  const promises = computerIds.map(async (id) => {
+    const scales = await fetchScalesForComputer(id)
+    if (scales.length > 0) {
+      results[id] = scales
+    }
+  })
+  await Promise.all(promises)
+  return results
+}
+
+/**
+ * Get a single weight reading from a specific scale on a computer.
+ * Returns the scale data or null if no reading available.
+ */
+export async function getScaleWeight(
+  computerId: number,
+  deviceName: string,
+  deviceNum: number = 0
+): Promise<PrintNodeScale | null> {
+  const encodedName = encodeURIComponent(deviceName)
+  const res = await fetch(`https://api.printnode.com/computer/${computerId}/scale/${encodedName}/${deviceNum}`, {
+    headers: { Authorization: getAuthHeader() },
+  })
+
+  if (!res.ok) {
+    if (res.status === 404) return null
+    const text = await res.text()
+    console.error(`[PrintNode] Failed to get weight for ${deviceName} on computer ${computerId}:`, res.status, text)
+    return null
+  }
+
+  return await res.json()
 }
 
 /**
@@ -271,5 +351,41 @@ export async function getMergedPrinters(
       isDefault: saved?.isDefault ?? false,
       computerFriendlyName: saved?.computerFriendlyName || '',
     }
+  })
+}
+
+// ============================================================================
+// Database operations (ScaleConfig table)
+// ============================================================================
+
+/**
+ * Get all saved scale configs as a map keyed by "computerId-deviceName-deviceNum"
+ */
+export async function getScaleConfigMap(prisma: PrismaClient): Promise<Map<string, PrismaScaleConfig>> {
+  const configs = await prisma.scaleConfig.findMany()
+  const map = new Map<string, PrismaScaleConfig>()
+  for (const c of configs) {
+    const key = `${c.computerId}-${c.deviceName}-${c.deviceNum}`
+    map.set(key, c)
+  }
+  return map
+}
+
+/**
+ * Save (upsert) a scale friendly name
+ */
+export async function saveScaleFriendlyName(
+  prisma: PrismaClient,
+  computerId: number,
+  deviceName: string,
+  deviceNum: number,
+  friendlyName: string
+): Promise<PrismaScaleConfig> {
+  return prisma.scaleConfig.upsert({
+    where: {
+      computerId_deviceName_deviceNum: { computerId, deviceName, deviceNum },
+    },
+    update: { friendlyName },
+    create: { computerId, deviceName, deviceNum, friendlyName },
   })
 }

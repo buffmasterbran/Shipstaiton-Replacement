@@ -6,6 +6,11 @@ import {
   isPrintNodeConfigured,
   getPrinterConfigMap,
   savePrinterConfigs,
+  fetchScalesForComputer,
+  fetchAllScales,
+  getScaleWeight,
+  getScaleConfigMap,
+  saveScaleFriendlyName,
   type MergedPrinter,
 } from '@/lib/printnode'
 
@@ -79,7 +84,11 @@ export async function GET(request: NextRequest) {
         friendlyName: string
         state: string
         printers: { id: number; name: string; friendlyName: string; isDefault: boolean }[]
+        scales: { deviceName: string; deviceNum: number; friendlyName: string }[]
       }> = {}
+
+      // Fetch scale friendly names for the computers endpoint
+      const scaleConfigMap = await getScaleConfigMap(prisma)
 
       for (const p of livePrinters) {
         const saved = configMap.get(p.id)
@@ -95,6 +104,7 @@ export async function GET(request: NextRequest) {
             friendlyName: saved?.computerFriendlyName || '',
             state: p.computer.state,
             printers: [],
+            scales: [],
           }
         }
         // Update friendlyName if we find a saved one (any printer on this computer can carry it)
@@ -112,7 +122,62 @@ export async function GET(request: NextRequest) {
       // Only return computers that have at least 1 enabled printer
       const computers = Object.values(computerMap).filter(c => c.printers.length > 0)
 
+      // Fetch scales for all connected computers and attach to the computer objects
+      try {
+        const computerIds = computers.map(c => c.id)
+        const allScales = await fetchAllScales(computerIds)
+        for (const comp of computers) {
+          const compScales = allScales[comp.id]
+          if (compScales) {
+            comp.scales = compScales.map(s => {
+              const key = `${comp.id}:${s.deviceName}:${s.deviceNum}`
+              return {
+                deviceName: s.deviceName,
+                deviceNum: s.deviceNum,
+                friendlyName: scaleConfigMap.get(key)?.friendlyName || '',
+              }
+            })
+          }
+        }
+      } catch (err) {
+        console.error('[PrintNode] Failed to fetch scales for computers endpoint:', err)
+        // Non-fatal: computers still returned without scale info
+      }
+
       return NextResponse.json({ computers })
+    }
+
+    // Fetch scales for a specific computer or all connected computers
+    if (action === 'scales') {
+      if (!isPrintNodeConfigured()) {
+        return NextResponse.json({ scales: {}, scaleConfigs: {} })
+      }
+
+      const scaleConfigMap = await getScaleConfigMap(prisma)
+
+      // Build a friendlyNames map for the frontend
+      const friendlyNames: Record<string, string> = {}
+      scaleConfigMap.forEach((cfg, key) => {
+        if (cfg.friendlyName) friendlyNames[key] = cfg.friendlyName
+      })
+
+      const computerId = searchParams.get('computerId')
+      
+      if (computerId) {
+        // Single computer
+        const id = parseInt(computerId, 10)
+        if (isNaN(id)) {
+          return NextResponse.json({ error: 'Invalid computerId' }, { status: 400 })
+        }
+        const scales = await fetchScalesForComputer(id)
+        return NextResponse.json({ scales: { [id]: scales }, friendlyNames })
+      }
+
+      // All computers: get unique computer IDs from live printers
+      const livePrinters = await fetchPrintNodePrinters()
+      const computerIds = Array.from(new Set(livePrinters.map(p => p.computer.id)))
+      const scales = await fetchAllScales(computerIds)
+      return NextResponse.json({ scales, friendlyNames })
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
@@ -150,6 +215,144 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         saved: results.length,
+      })
+    }
+
+    if (action === 'delete-station') {
+      const { computerName, computerId: bodyComputerId, accessCode } = body
+      if (!computerName) {
+        return NextResponse.json({ error: 'computerName is required' }, { status: 400 })
+      }
+      if (accessCode !== '8989') {
+        return NextResponse.json({ error: 'Invalid access code' }, { status: 403 })
+      }
+
+      // Get computerId: prefer the one sent from frontend, fallback to DB lookup
+      let resolvedComputerId: number | null = typeof bodyComputerId === 'number' ? bodyComputerId : null
+      if (!resolvedComputerId) {
+        const sample = await prisma.printerConfig.findFirst({
+          where: { computerName },
+          select: { computerId: true },
+        })
+        resolvedComputerId = sample?.computerId ?? null
+      }
+
+      let printNodeResponse: any = null
+
+      // Delete the computer from PrintNode cloud via their API
+      if (resolvedComputerId && isPrintNodeConfigured()) {
+        try {
+          const apiKey = process.env.PRINT_NODE || ''
+          const authHeader = 'Basic ' + Buffer.from(apiKey + ':').toString('base64')
+          const pnRes = await fetch(`https://api.printnode.com/computers/${resolvedComputerId}`, {
+            method: 'DELETE',
+            headers: { Authorization: authHeader },
+          })
+          const pnBody = await pnRes.text()
+          printNodeResponse = {
+            status: pnRes.status,
+            statusText: pnRes.statusText,
+            body: pnBody,
+          }
+          console.log(`[PrintNode] DELETE /computers/${resolvedComputerId} response:`, JSON.stringify(printNodeResponse, null, 2))
+        } catch (err: any) {
+          printNodeResponse = { error: err.message }
+          console.error(`[PrintNode] DELETE /computers/${resolvedComputerId} failed:`, err.message)
+        }
+      } else {
+        console.log(`[PrintNode] No computerId found for "${computerName}" or PrintNode not configured — skipping API delete`)
+      }
+
+      // Delete all printer configs for this computer from our DB
+      const result = await prisma.printerConfig.deleteMany({
+        where: { computerName },
+      })
+
+      console.log(`[PrintNode] Deleted station "${computerName}" from local DB (${result.count} printer config(s) removed)`)
+
+      return NextResponse.json({
+        success: true,
+        deleted: result.count,
+        computerName,
+        printNodeResponse,
+      })
+    }
+
+    if (action === 'save-scale-name') {
+      const { computerId, deviceName, deviceNum, friendlyName } = body
+      if (typeof computerId !== 'number' || !deviceName) {
+        return NextResponse.json({ error: 'computerId and deviceName are required' }, { status: 400 })
+      }
+      const result = await saveScaleFriendlyName(
+        prisma,
+        computerId,
+        deviceName,
+        deviceNum ?? 0,
+        friendlyName || ''
+      )
+      return NextResponse.json({ success: true, id: result.id })
+    }
+
+    if (action === 'get-weight') {
+      const { computerId, deviceName, deviceNum } = body
+      if (!computerId || !deviceName) {
+        return NextResponse.json({ error: 'computerId and deviceName are required' }, { status: 400 })
+      }
+
+      if (!isPrintNodeConfigured()) {
+        return NextResponse.json({ error: 'PrintNode not configured' }, { status: 400 })
+      }
+
+      const scaleData = await getScaleWeight(computerId, deviceName, deviceNum ?? 0)
+      if (!scaleData) {
+        return NextResponse.json({
+          success: false,
+          error: 'No weight reading available. Make sure the scale is connected and has an active reading.',
+        }, { status: 404 })
+      }
+
+      // Parse the measurement into a human-readable format
+      const measurement = scaleData.measurement || {}
+      let displayWeight = 'Unknown'
+      let unit = ''
+      let rawValue = 0
+
+      if (measurement.oz !== undefined) {
+        // oz is in billionths
+        rawValue = measurement.oz / 1_000_000_000
+        unit = 'oz'
+        displayWeight = `${rawValue.toFixed(1)}${unit}`
+      } else if (measurement.lb !== undefined) {
+        rawValue = measurement.lb / 1_000_000_000
+        unit = 'lb'
+        displayWeight = `${rawValue.toFixed(2)}${unit}`
+      } else if (measurement.g !== undefined) {
+        rawValue = measurement.g / 1_000_000_000
+        unit = 'g'
+        displayWeight = `${rawValue.toFixed(1)}${unit}`
+      } else if (measurement.kg !== undefined) {
+        rawValue = measurement.kg / 1_000_000_000
+        unit = 'kg'
+        displayWeight = `${rawValue.toFixed(3)}${unit}`
+      }
+
+      // Also compute from mass array (micrograms)
+      const massUg = scaleData.mass?.[0]
+      const massOz = massUg !== null ? (massUg / 28_349_523.125) : null
+
+      console.log(`[PrintNode] Scale "${deviceName}" on computer ${computerId}: ${displayWeight} (mass: ${massUg}µg = ${massOz?.toFixed(1)}oz)`)
+
+      return NextResponse.json({
+        success: true,
+        weight: displayWeight,
+        rawValue,
+        unit,
+        massUg,
+        massOz: massOz !== null ? parseFloat(massOz.toFixed(1)) : null,
+        ageOfData: scaleData.ageOfData,
+        deviceName: scaleData.deviceName,
+        deviceNum: scaleData.deviceNum,
+        measurement: scaleData.measurement,
       })
     }
 

@@ -138,6 +138,24 @@ model PrinterConfig {
 }
 
 // ============================================================================
+// SCALE CONFIG - per-scale friendly names for PrintNode scales
+// ============================================================================
+
+model ScaleConfig {
+  id           String   @id @default(cuid())
+  computerId   Int      @map("computer_id")    // PrintNode computer ID
+  deviceName   String   @map("device_name")    // PrintNode device name
+  deviceNum    Int      @default(0) @map("device_num") // PrintNode device number
+  friendlyName String   @default("") @map("friendly_name") // Admin-assigned display name
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([computerId, deviceName, deviceNum])
+  @@index([computerId])
+  @@map("scale_configs")
+}
+
+// ============================================================================
 // BOX CONFIG TABLES - for box fitting calculations
 // ============================================================================
 

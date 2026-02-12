@@ -350,7 +350,7 @@ export default function GeneralSettingsPage() {
           <p className="text-xs text-gray-400 mt-3">
             To add more mappings, update the SKU_DISPLAY_NAMES constant in SinglesOrdersTable.tsx
           </p>
-        </div>
+            </div>
       </div>
 
       {/* Picking Configuration */}
@@ -368,20 +368,20 @@ export default function GeneralSettingsPage() {
           <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
             <span className="text-gray-700">Bins per cart</span>
             <span className="font-mono font-bold text-gray-900">12 (4 wide x 3 tall)</span>
-          </div>
+                      </div>
           <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
             <span className="text-gray-700">Bulk shelves per cart</span>
             <span className="font-mono font-bold text-gray-900">3 (4 bins per shelf)</span>
-          </div>
+                      </div>
           <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
             <span className="text-gray-700">Singles spot-check rate</span>
             <span className="font-mono font-bold text-gray-900">20%</span>
-          </div>
+                    </div>
           <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
             <span className="text-gray-700">Bulk threshold (min identical orders)</span>
             <span className="font-mono font-bold text-gray-900">4 (configurable via slider)</span>
-          </div>
-        </div>
+              </div>
+            </div>
       </div>
     </div>
   )
