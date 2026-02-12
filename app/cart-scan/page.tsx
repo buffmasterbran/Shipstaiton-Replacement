@@ -74,6 +74,14 @@ interface OrderItem {
   quantity: number
 }
 
+interface PrintNodeComputer {
+  id: number
+  name: string
+  friendlyName: string
+  state: string
+  printers: { id: number; name: string; friendlyName: string; isDefault: boolean }[]
+}
+
 type ShipStep = 'cart-select' | 'shipping' | 'complete'
 type PickingMode = 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE' | 'UNKNOWN'
 
@@ -755,10 +763,98 @@ export default function CartScanPage() {
   const [releaseShipCart, setReleaseShipCart] = useState<any | null>(null)
   const [releasing, setReleasing] = useState(false)
 
-  // Load saved name
+  // PrintNode state
+  const [pnComputers, setPnComputers] = useState<PrintNodeComputer[]>([])
+  const [selectedComputerName, setSelectedComputerName] = useState<string>('')
+  const [selectedPrinterId, setSelectedPrinterId] = useState<number | null>(null)
+  const [pnLoading, setPnLoading] = useState(true)
+
+  // Derived: selected computer and its printers
+  const selectedComputer = useMemo(
+    () => pnComputers.find(c => c.name === selectedComputerName) || null,
+    [pnComputers, selectedComputerName]
+  )
+  const computerDisplayName = useCallback(
+    (c: PrintNodeComputer) => c.friendlyName || c.name,
+    []
+  )
+  const selectedPrinter = useMemo(
+    () => selectedComputer?.printers.find(p => p.id === selectedPrinterId) || null,
+    [selectedComputer, selectedPrinterId]
+  )
+  const printerDisplayName = useCallback(
+    (p: { name: string; friendlyName: string }) => p.friendlyName || p.name,
+    []
+  )
+
+  // Load saved name + saved printer selections from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('shipper-name')
     if (saved) setShipperName(saved)
+    const savedComputer = localStorage.getItem('selected-computer')
+    if (savedComputer) setSelectedComputerName(savedComputer)
+    const savedPrinter = localStorage.getItem('selected-printer-id')
+    if (savedPrinter) setSelectedPrinterId(parseInt(savedPrinter, 10))
+  }, [])
+
+  // Fetch available computers/printers from PrintNode
+  useEffect(() => {
+    setPnLoading(true)
+    fetch('/api/printnode?action=computers')
+      .then(r => r.json())
+      .then((data) => {
+        const computers: PrintNodeComputer[] = data.computers || []
+        setPnComputers(computers)
+
+        // If previously selected computer is still online, keep it; otherwise clear
+        if (selectedComputerName) {
+          const stillOnline = computers.find(c => c.name === selectedComputerName)
+          if (!stillOnline) {
+            setSelectedComputerName('')
+            setSelectedPrinterId(null)
+            localStorage.removeItem('selected-computer')
+            localStorage.removeItem('selected-printer-id')
+          } else if (selectedPrinterId) {
+            // Verify printer still exists on that computer
+            const printerExists = stillOnline.printers.find(p => p.id === selectedPrinterId)
+            if (!printerExists) {
+              // Fall back to default printer
+              const defaultP = stillOnline.printers.find(p => p.isDefault) || stillOnline.printers[0]
+              if (defaultP) {
+                setSelectedPrinterId(defaultP.id)
+                localStorage.setItem('selected-printer-id', String(defaultP.id))
+              }
+            }
+          }
+        }
+      })
+      .catch(() => setPnComputers([]))
+      .finally(() => setPnLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Handle computer selection
+  const handleSelectComputer = useCallback((computerName: string) => {
+    setSelectedComputerName(computerName)
+    localStorage.setItem('selected-computer', computerName)
+    // Auto-select default printer for this computer
+    const computer = pnComputers.find(c => c.name === computerName)
+    if (computer) {
+      const defaultPrinter = computer.printers.find(p => p.isDefault) || computer.printers[0]
+      if (defaultPrinter) {
+        setSelectedPrinterId(defaultPrinter.id)
+        localStorage.setItem('selected-printer-id', String(defaultPrinter.id))
+      } else {
+        setSelectedPrinterId(null)
+        localStorage.removeItem('selected-printer-id')
+      }
+    }
+  }, [pnComputers])
+
+  // Handle printer selection within a computer
+  const handleSelectPrinter = useCallback((printerId: number) => {
+    setSelectedPrinterId(printerId)
+    localStorage.setItem('selected-printer-id', String(printerId))
   }, [])
 
   // Fetch ready carts (and SHIPPING carts for admins)
@@ -848,8 +944,12 @@ export default function CartScanPage() {
   const currentBin = binNumbers[currentBinIndex] || 0
   const currentChunk = cart?.chunks[0]
 
+  // Whether station is selected (has computers available AND one is chosen with a printer)
+  const hasStation = !!(selectedComputerName && selectedPrinterId)
+
   const handleSelectCart = async (cartId?: string) => {
     if (!shipperName.trim()) { setError('Please enter your name'); return }
+    if (pnComputers.length > 0 && !hasStation) { setError('Please select your station (computer) and printer'); return }
     const searchId = cartId || cartInput.trim()
     if (!searchId) { setError('Please enter or select a cart'); return }
 
@@ -947,6 +1047,7 @@ export default function CartScanPage() {
   // Resume a SHIPPING cart — load it and pre-populate shipped orders from DB
   const handleResumeCart = async (cartId: string) => {
     if (!shipperName.trim()) { setError('Please enter your name'); return }
+    if (pnComputers.length > 0 && !hasStation) { setError('Please select your station (computer) and printer'); return }
     localStorage.setItem('shipper-name', shipperName.trim())
     setLoading(true)
     setError(null)
@@ -1029,6 +1130,66 @@ export default function CartScanPage() {
             />
           </div>
 
+          {/* Computer / Printer Selection */}
+          {!pnLoading && pnComputers.length > 0 && (
+            <div className="mb-6 bg-white rounded-xl shadow p-4 border border-gray-200">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Your Station (Computer)
+              </label>
+              <select
+                value={selectedComputerName}
+                onChange={(e) => handleSelectComputer(e.target.value)}
+                className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none bg-white"
+              >
+                <option value="">Select your computer...</option>
+                {pnComputers.map(c => (
+                  <option key={c.name} value={c.name}>
+                    {computerDisplayName(c)}
+                    {c.state === 'connected' ? ' ● Online' : ' ○ Offline'}
+                  </option>
+                ))}
+              </select>
+
+              {/* Printer dropdown (shows when computer is selected) */}
+              {selectedComputer && selectedComputer.printers.length > 0 && (
+                <div className="mt-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Printer</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedPrinterId || ''}
+                      onChange={(e) => handleSelectPrinter(parseInt(e.target.value, 10))}
+                      className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none bg-white text-sm"
+                    >
+                      {selectedComputer.printers.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {printerDisplayName(p)}{p.isDefault ? ' (default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedPrinter && (
+                      <div className="flex items-center gap-1.5 text-xs shrink-0">
+                        <div className="w-2 h-2 rounded-full bg-green-500" />
+                        <span className="text-green-700 font-medium">Ready</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedComputer && selectedComputer.printers.length === 0 && (
+                <div className="mt-3 text-sm text-amber-600 bg-amber-50 p-2 rounded-lg">
+                  No enabled printers on this computer. Enable printers in Settings &gt; Printers.
+                </div>
+              )}
+            </div>
+          )}
+
+          {!pnLoading && pnComputers.length === 0 && (
+            <div className="mb-6 bg-amber-50 text-amber-700 p-3 rounded-xl text-sm text-center">
+              No PrintNode computers online. Labels will open as PDF downloads.
+            </div>
+          )}
+
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Scan or Enter Cart</label>
             <div className="flex gap-2">
@@ -1042,7 +1203,7 @@ export default function CartScanPage() {
               />
               <button
                 onClick={() => handleSelectCart()}
-                disabled={loading}
+                disabled={loading || (pnComputers.length > 0 && !hasStation)}
                 className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50"
               >
                 Go
@@ -1060,7 +1221,7 @@ export default function CartScanPage() {
                   <button
                     key={c.id}
                     onClick={() => handleSelectCart(c.id)}
-                    disabled={loading}
+                    disabled={loading || (pnComputers.length > 0 && !hasStation)}
                     className="p-4 bg-white rounded-xl shadow text-left hover:bg-blue-50 border-2 border-transparent hover:border-blue-500 disabled:opacity-50"
                   >
                     <div className="flex items-center gap-4">
@@ -1114,7 +1275,7 @@ export default function CartScanPage() {
                       <div className="flex gap-2 mt-3">
                         <button
                           onClick={() => handleResumeCart(c.id)}
-                          disabled={loading || !shipperName.trim()}
+                          disabled={loading || !shipperName.trim() || (pnComputers.length > 0 && !hasStation)}
                           className="flex-1 py-2 text-sm font-bold text-blue-600 bg-white border-2 border-blue-300 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
                         >
                           Resume Shipping
@@ -1199,11 +1360,29 @@ export default function CartScanPage() {
               <div className="font-bold text-lg">{cart.name}</div>
               <span className={`px-2 py-1 rounded text-xs font-bold ${badge.bg}`}>{badge.label}</span>
             </div>
-            <div className="text-right">
-              {!isBulkMode && (
-                <div className="text-sm text-gray-600">Bin {currentBinIndex + 1} / {binNumbers.length}</div>
+            <div className="flex items-center gap-4">
+              {/* Printer indicator */}
+              {selectedPrinter && selectedComputer ? (
+                <div className="flex items-center gap-1.5 text-xs bg-green-50 border border-green-200 px-2 py-1 rounded-lg">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  <span className="text-green-700 font-medium">
+                    {printerDisplayName(selectedPrinter)}
+                  </span>
+                  <span className="text-green-500">
+                    @ {computerDisplayName(selectedComputer)}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 text-xs bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
+                  <span className="text-amber-700">No printer selected</span>
+                </div>
               )}
-              <div className="text-sm text-gray-500">{shipperName}</div>
+              <div className="text-right">
+                {!isBulkMode && (
+                  <div className="text-sm text-gray-600">Bin {currentBinIndex + 1} / {binNumbers.length}</div>
+                )}
+                <div className="text-sm text-gray-500">{shipperName}</div>
+              </div>
             </div>
           </div>
         </div>

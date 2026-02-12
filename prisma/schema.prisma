@@ -116,6 +116,28 @@ model AppSetting {
 }
 
 // ============================================================================
+// PRINTER CONFIG - per-printer settings for PrintNode integration
+// ============================================================================
+
+model PrinterConfig {
+  id                   String   @id @default(cuid())
+  printNodeId          Int      @unique @map("printnode_id")
+  name                 String   @default("") // Actual PrintNode printer name (synced from API)
+  friendlyName         String   @default("") @map("friendly_name")
+  computerName         String   @map("computer_name") // Original name from PrintNode/OS
+  computerFriendlyName String   @default("") @map("computer_friendly_name") // Admin-assigned display name
+  computerId           Int      @map("computer_id")
+  enabled              Boolean  @default(true)
+  isDefault            Boolean  @default(false) @map("is_default")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([computerName])
+  @@index([enabled])
+  @@map("printer_configs")
+}
+
+// ============================================================================
 // BOX CONFIG TABLES - for box fitting calculations
 // ============================================================================
 

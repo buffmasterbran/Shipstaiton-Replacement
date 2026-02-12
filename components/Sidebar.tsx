@@ -58,23 +58,23 @@ const navSections: NavSection[] = [
       { name: 'Analytics', href: '/analytics', access: 'operator', externalHref: 'https://paws-analytics.vercel.app/' },
     ],
   },
-  {
-    title: 'Configuration',
-    access: 'admin',
-    items: [
-      { name: 'Products', href: '/products', access: 'admin' },
-      { name: 'Box Config', href: '/box-config', access: 'admin' },
-      { name: 'Carriers', href: '/carriers', access: 'admin' },
-      { name: 'Locations', href: '/locations', access: 'admin' },
-      { name: 'Rate Shopping', href: '/rate-shopping', access: 'admin' },
-      { name: 'Settings', href: '/settings', access: 'admin' },
-      { name: 'ShipEngine Test', href: '/shipengine-test', access: 'admin' },
-    ],
-  },
+]
+
+const settingsNavItems = [
+  { name: 'General', href: '/settings' },
+  { name: 'Printers', href: '/settings/printers' },
+  { name: 'Carts & Cells', href: '/settings/carts-cells' },
+  { name: 'Carriers', href: '/settings/carriers' },
+  { name: 'Locations', href: '/settings/locations' },
+  { name: 'Box Config', href: '/settings/box-config' },
+  { name: 'Rate Shopping', href: '/settings/rate-shopping' },
+  { name: 'Products', href: '/settings/products' },
+  { name: 'Developer', href: '/settings/developer' },
 ]
 
 export default function Sidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
+  const isSettingsMode = pathname.startsWith('/settings')
   const [expeditedCount, setExpeditedCount] = useState(0)
   const [errorCount, setErrorCount] = useState(0)
   const [holdCount, setHoldCount] = useState(0)
@@ -85,6 +85,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
 
   // Load pinned items from localStorage
   useEffect(() => {
+    if (isSettingsMode) return
     const savedPinned = localStorage.getItem('sidebar-pinned-items')
     if (savedPinned) {
       try {
@@ -96,7 +97,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
       // Set defaults if nothing saved
       setPinnedItems(defaultPinnedItems)
     }
-  }, [])
+  }, [isSettingsMode])
 
   // Toggle pin for an item
   const togglePin = (href: string, e: React.MouseEvent) => {
@@ -109,8 +110,10 @@ export default function Sidebar({ role }: { role: UserRole }) {
     localStorage.setItem('sidebar-pinned-items', JSON.stringify(newPinned))
   }
 
-  // Fetch expedited, error, and hold order counts
+  // Fetch expedited, error, and hold order counts (skip in settings mode)
   useEffect(() => {
+    if (isSettingsMode) return
+
     async function fetchCounts() {
       try {
         const [expeditedRes, errorRes, holdRes] = await Promise.all([
@@ -139,7 +142,7 @@ export default function Sidebar({ role }: { role: UserRole }) {
     // Refresh every 30 seconds
     const interval = setInterval(fetchCounts, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [isSettingsMode])
 
   // Filter sections and items based on role
   const visibleSections = navSections
@@ -159,6 +162,67 @@ export default function Sidebar({ role }: { role: UserRole }) {
     })
     .filter((section): section is NavSection => section !== null)
 
+  // Settings mode sidebar
+  if (isSettingsMode) {
+    return (
+      <div className="w-64 bg-gray-900 text-white h-screen flex flex-col">
+        {/* Logo/Title - fixed at top */}
+        <div className="p-6 border-b border-gray-800 flex-shrink-0">
+          <h1 className="text-xl font-bold">E-Com Batch Tool</h1>
+        </div>
+
+        {/* Navigation - scrollable independently */}
+        <nav className="flex-1 p-4 overflow-y-auto min-h-0">
+          {/* Back to Operations */}
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2 px-4 py-2.5 mb-4 text-sm text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to Operations
+          </Link>
+
+          {/* Settings Section */}
+          <h2 className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Settings
+          </h2>
+          <ul className="space-y-1">
+            {settingsNavItems.map((item) => {
+              const isActive = item.href === '/settings'
+                ? pathname === '/settings'
+                : pathname.startsWith(item.href)
+
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    className={`block px-4 py-2.5 rounded-lg transition-colors text-sm ${
+                      isActive
+                        ? 'bg-green-600 text-white'
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                  >
+                    {item.name}
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </nav>
+
+        {/* Logout Button - fixed at bottom */}
+        <div className="p-4 border-t border-gray-800 flex-shrink-0">
+          <button className="w-full px-4 py-2 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-colors">
+            Log out
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Operations mode sidebar
   return (
     <div className="w-64 bg-gray-900 text-white h-screen flex flex-col">
       {/* Logo/Title - fixed at top */}

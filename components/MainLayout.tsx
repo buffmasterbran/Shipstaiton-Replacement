@@ -28,6 +28,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const isSinglesPage = pathname === '/singles'
   const isExpeditedPage = pathname === '/expedited'
   const isFullScreenPage = pathname === '/scan-to-verify'
+  const isSettingsPage = pathname.startsWith('/settings')
 
   useEffect(() => {
     const handleProcessButtonAvailability = (event: CustomEvent) => {
@@ -43,7 +44,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar role={role} />
       <div className="flex-1 flex flex-col">
-        {!isFullScreenPage && (
+        {!isFullScreenPage && !isSettingsPage && (
           <Header
             role={role}
             setRole={setRole}
