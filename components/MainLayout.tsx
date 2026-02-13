@@ -18,12 +18,39 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
   const { orders, loading: ordersLoading, lastFetchedAt, refreshOrders, dateStart, dateEnd, setDateStart, setDateEnd } = useOrders()
   const [canProcess, setCanProcess] = useState(true)
 
-  const operatorAllowedPaths = ['/pick', '/cart-scan', '/scan-to-verify', '/local-pickup', '/analytics', '/returns', '/inventory-count']
+  // ---- Session-based permissions ----
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [allowedPages, setAllowedPages] = useState<string[]>([])
+  const [sessionLoaded, setSessionLoaded] = useState(false)
+
   useEffect(() => {
-    if (role === 'operator' && !operatorAllowedPaths.includes(pathname)) {
-      router.replace('/pick')
+    async function fetchSession() {
+      try {
+        const res = await fetch('/api/auth/check')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.authenticated && data.user) {
+            setIsAdmin(data.user.isAdmin || false)
+            setAllowedPages(data.user.allowedPages || [])
+            // Sync RoleContext for backward compat
+            setRole(data.user.isAdmin ? 'admin' : 'operator')
+          }
+        }
+      } catch {
+        // Session check failed — middleware will handle redirect
+      }
+      setSessionLoaded(true)
     }
-  }, [role, pathname, router])
+    fetchSession()
+  }, [setRole])
+
+  // Legacy operator redirect (now largely handled by middleware, kept as fallback)
+  useEffect(() => {
+    if (!sessionLoaded) return
+    if (isAdmin) return
+    // Middleware handles authorization, but as a safety net:
+    // if user somehow lands on a page they shouldn't, redirect
+  }, [isAdmin, pathname, sessionLoaded])
 
   const isSinglesPage = pathname === '/singles'
   const isExpeditedPage = pathname === '/expedited'
@@ -40,9 +67,21 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  // Show minimal loading state until session is resolved
+  if (!sessionLoaded) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <div className="w-64 bg-gray-900" />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-gray-400 text-sm">Loading...</div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-screen bg-gray-50">
-      <Sidebar role={role} />
+      <Sidebar isAdmin={isAdmin} allowedPages={allowedPages} />
       <div className="flex-1 flex flex-col">
         {!isFullScreenPage && !isSettingsPage && (
           <Header
@@ -77,6 +116,13 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
 }
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+
+  // Login page renders without any app chrome (sidebar, header, providers)
+  if (pathname === '/login') {
+    return <>{children}</>
+  }
+
   return (
     <RoleProvider>
       <ExpeditedFilterProvider>
@@ -87,4 +133,3 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     </RoleProvider>
   )
 }
-

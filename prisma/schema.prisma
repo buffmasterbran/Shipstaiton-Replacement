@@ -318,24 +318,31 @@ model Location {
 }
 
 // ============================================================================
-// USER MANAGEMENT
+// USER MANAGEMENT & PERMISSIONS
 // ============================================================================
 
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?  @unique
-  pin       String?  // Quick login for shared iPads
-  role      UserRole @default(PICKER)
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id             String    @id @default(cuid())
+  name           String
+  email          String?   @unique
+  pin            String?   // Quick login for shared iPads
+  role           UserRole  @default(PICKER)
+  netsuiteEmpId  String?   @unique @map("netsuite_emp_id") // Links to NetSuite employee ID
+  groupId        String?   @map("group_id") // FK to PermissionGroup
+  isAdmin        Boolean   @default(false) @map("is_admin") // Cached from NetSuite
+  lastLoginAt    DateTime? @map("last_login_at")
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  pickedChunks  PickChunk[] @relation("ChunkPicker")
-  shippedChunks PickChunk[] @relation("ChunkShipper")
+  group          PermissionGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  pickedChunks   PickChunk[]      @relation("ChunkPicker")
+  shippedChunks  PickChunk[]      @relation("ChunkShipper")
 
   @@index([active])
   @@index([role])
+  @@index([netsuiteEmpId])
+  @@index([groupId])
   @@map("users")
 }
 
@@ -344,6 +351,35 @@ enum UserRole {
   PICKER
   SHIPPER
   ENGRAVER
+}
+
+// Permission group (e.g., "Pickers", "Packers", "Team Leads")
+model PermissionGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions GroupPageAccess[]
+  users       User[]
+
+  @@index([isDefault])
+  @@map("permission_groups")
+}
+
+// Which pages a group can access (one row per page per group)
+model GroupPageAccess {
+  id      String @id @default(cuid())
+  groupId String @map("group_id")
+  pageKey String @map("page_key") // e.g., "pick", "cart-scan", "dashboard"
+
+  group PermissionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, pageKey])
+  @@index([groupId])
+  @@map("group_page_access")
 }
 
 // ============================================================================
