@@ -197,31 +197,8 @@ export default function Header({
         )}
       </div>
 
-      {/* Right Side: Role + Gear + Process */}
+      {/* Right Side: Process */}
       <div className="flex items-center gap-6">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-gray-600">View as:</span>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="role"
-              checked={role === 'admin'}
-              onChange={() => setRole('admin')}
-              className="w-4 h-4 text-green-600 focus:ring-green-500"
-            />
-            <span className="text-sm text-gray-700">Admin</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="role"
-              checked={role === 'operator'}
-              onChange={() => setRole('operator')}
-              className="w-4 h-4 text-green-600 focus:ring-green-500"
-            />
-            <span className="text-sm text-gray-700">Operator</span>
-          </label>
-        </div>
         {showProcessButton && onProcessClick && (
           <button
             onClick={onProcessClick}
