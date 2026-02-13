@@ -62,7 +62,11 @@ async function netsuiteRequest(
     Authorization: authHeader,
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    prefer: 'respond-async, transient',
+  }
+
+  // Only use async preference for write operations (not GET)
+  if (method !== 'GET') {
+    headers['prefer'] = 'respond-async, transient'
   }
 
   const options: RequestInit = {
@@ -74,7 +78,15 @@ async function netsuiteRequest(
     options.body = JSON.stringify(body)
   }
 
+  console.log(`[NetSuite] ---- REQUEST ----`)
   console.log(`[NetSuite] ${method} ${url}`)
+  console.log(`[NetSuite] Headers:`, JSON.stringify(
+    { ...headers, Authorization: headers.Authorization?.substring(0, 40) + '...' },
+    null, 2
+  ))
+  if (options.body) {
+    console.log(`[NetSuite] Body:`, options.body)
+  }
 
   const res = await fetch(url, options)
   const raw = await res.text()
@@ -86,7 +98,13 @@ async function netsuiteRequest(
     // Response wasn't JSON, keep raw text
   }
 
-  console.log(`[NetSuite] Response: ${res.status} ${res.statusText}`)
+  console.log(`[NetSuite] ---- RESPONSE ----`)
+  console.log(`[NetSuite] Status: ${res.status} ${res.statusText}`)
+  console.log(`[NetSuite] Response Headers:`, JSON.stringify(Object.fromEntries(res.headers.entries()), null, 2))
+  console.log(`[NetSuite] Response Body (first 2000 chars):`, raw.substring(0, 2000))
+  if (raw.length > 2000) {
+    console.log(`[NetSuite] (Response truncated, total length: ${raw.length})`)
+  }
 
   return { status: res.status, data, raw }
 }
