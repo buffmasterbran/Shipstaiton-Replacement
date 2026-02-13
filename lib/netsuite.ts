@@ -141,15 +141,37 @@ export async function getItemFulfillment(internalId: string) {
 
 /**
  * Update an Item Fulfillment record (set tracking, carrier, packages, cost, status)
- * 
- * NetSuite Item Fulfillment record fields:
- * - shipStatus: "A" = Picked, "B" = Packed, "C" = Shipped
- * - shipMethod: Internal ID of the shipping method record
- * - shippingCost: Cost of shipping
- * - memo: Memo field
- * - packageList.package[]: Array of packages with tracking, weight, dims
+ *
+ * Mimics the production SuiteScript logic:
+ * 1. GET the record to see which package sublist has lines (UPS, FedEx, or generic)
+ * 2. Set shipStatus to "C" (Shipped)
+ * 3. Write tracking number to the correct carrier-specific sublist
+ *
+ * NetSuite package sublists:
+ * - packageUpsList    -> packageTrackingNumberUps    (UPS)
+ * - packageFedExList  -> packageTrackingNumberFedEx  (FedEx)
+ * - packageList       -> packageTrackingNumber       (USPS / other)
  */
 export async function updateItemFulfillment(update: FulfillmentUpdate) {
+  // ---- Step 1: GET the record to inspect package sublists ----
+  console.log(`[NetSuite] Step 1: Fetching IF ${update.internalId} to detect package sublist...`)
+  const getResult = await getItemFulfillment(update.internalId)
+
+  if (getResult.status < 200 || getResult.status >= 300) {
+    console.error(`[NetSuite] Failed to GET IF ${update.internalId}: ${getResult.status}`)
+    return getResult
+  }
+
+  const record = getResult.data as Record<string, any>
+
+  // Check which package sublist has items (same as SuiteScript getLineItemCount)
+  const upsCount = record.packageUpsList?.items?.length || 0
+  const fedexCount = record.packageFedExList?.items?.length || 0
+  const genericCount = record.packageList?.items?.length || 0
+
+  console.log(`[NetSuite] Package sublist line counts: UPS=${upsCount}, FedEx=${fedexCount}, Generic=${genericCount}`)
+
+  // ---- Step 2: Build the PATCH body ----
   const body: Record<string, unknown> = {
     shipStatus: 'C', // Mark as Shipped
   }
@@ -162,40 +184,47 @@ export async function updateItemFulfillment(update: FulfillmentUpdate) {
     body.memo = update.memo
   }
 
-  // Build package list
-  if (update.packages && update.packages.length > 0) {
-    body.packageList = {
-      package: {
-        items: update.packages.map(pkg => ({
-          packageWeight: pkg.packageWeight,
-          packageTrackingNumber: pkg.packageTrackingNumber,
-          packageDescr: pkg.packageDescr || '',
-          ...(pkg.packageLength && { packageLength: pkg.packageLength }),
-          ...(pkg.packageWidth && { packageWidth: pkg.packageWidth }),
-          ...(pkg.packageHeight && { packageHeight: pkg.packageHeight }),
-        })),
-      },
+  // ---- Step 3: Write tracking to the correct carrier-specific sublist ----
+  const trackingNumber = update.trackingNumber
+
+  if (trackingNumber && upsCount > 0) {
+    // UPS sublist
+    body.packageUpsList = {
+      items: [{
+        packageTrackingNumberUps: trackingNumber,
+      }],
     }
-  } else if (update.trackingNumber) {
-    // Single package with just tracking
-    body.packageList = {
-      package: {
-        items: [
-          {
-            packageTrackingNumber: update.trackingNumber,
-            packageWeight: 0,
-          },
-        ],
-      },
+    console.log(`[NetSuite] Writing tracking to packageUpsList: ${trackingNumber}`)
+
+  } else if (trackingNumber && fedexCount > 0) {
+    // FedEx sublist
+    body.packageFedExList = {
+      items: [{
+        packageTrackingNumberFedEx: trackingNumber,
+      }],
     }
+    console.log(`[NetSuite] Writing tracking to packageFedExList: ${trackingNumber}`)
+
+  } else if (trackingNumber && genericCount > 0) {
+    // Generic / USPS sublist
+    body.packageList = {
+      items: [{
+        packageTrackingNumber: trackingNumber,
+      }],
+    }
+    console.log(`[NetSuite] Writing tracking to packageList (generic): ${trackingNumber}`)
+
+  } else if (trackingNumber) {
+    // No sublist found — fall back to generic (same as SuiteScript's else case)
+    body.packageList = {
+      items: [{
+        packageTrackingNumber: trackingNumber || 'other',
+      }],
+    }
+    console.log(`[NetSuite] No package sublist found, falling back to packageList: ${trackingNumber}`)
   }
 
-  // If a shipping method internal ID is provided, set it
-  if (update.shippingMethod) {
-    body.shipMethod = { id: update.shippingMethod }
-  }
-
-  console.log(`[NetSuite] Updating Item Fulfillment ${update.internalId}:`, JSON.stringify(body, null, 2))
+  console.log(`[NetSuite] Step 2: PATCHing IF ${update.internalId}:`, JSON.stringify(body, null, 2))
 
   return netsuiteRequest('PATCH', `/itemFulfillment/${update.internalId}`, body)
 }
