@@ -23,6 +23,7 @@
     "@heroicons/react": "^2.2.0",
     "@prisma/client": "^5.7.1",
     "next": "14.0.4",
+    "oauth-1.0a": "^2.2.6",
     "react": "^18.2.0",
     "react-barcode": "^1.6.1",
     "react-dom": "^18.2.0"

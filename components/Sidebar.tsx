@@ -70,6 +70,7 @@ const settingsNavItems = [
   { name: 'Rate Shopping', href: '/settings/rate-shopping' },
   { name: 'Products', href: '/settings/products' },
   { name: 'Developer', href: '/settings/developer' },
+  { name: 'NetSuite Test', href: '/settings/netsuite-test' },
 ]
 
 export default function Sidebar({ role }: { role: UserRole }) {
