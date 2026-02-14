@@ -286,7 +286,8 @@ model RateShopper {
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
-  weightRules WeightRule[]
+  weightRules            WeightRule[]
+  shippingMethodMappings ShippingMethodMapping[]
 
   @@index([active])
   @@index([isDefault])
@@ -328,14 +329,18 @@ model WeightRule {
 model ShippingMethodMapping {
   id           String   @id @default(cuid())
   incomingName String   @unique @map("incoming_name") // e.g. "UPS Next Day Air Saver®"
-  carrierId    String   @map("carrier_id")
-  carrierCode  String   @map("carrier_code")
-  serviceCode  String   @map("service_code")
-  serviceName  String   @map("service_name")
+  targetType   String   @default("service") @map("target_type") // "service" | "weight_rules" | "rate_shopper"
+  carrierId    String?  @map("carrier_id")
+  carrierCode  String?  @map("carrier_code")
+  serviceCode  String?  @map("service_code")
+  serviceName  String?  @map("service_name")
+  rateShopperId String? @map("rate_shopper_id")
   isExpedited  Boolean  @default(false) @map("is_expedited")
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+
+  rateShopper  RateShopper? @relation(fields: [rateShopperId], references: [id], onDelete: SetNull)
 
   @@index([isActive])
   @@map("shipping_method_mappings")

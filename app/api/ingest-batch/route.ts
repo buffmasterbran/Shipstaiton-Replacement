@@ -305,7 +305,10 @@ export async function POST(request: NextRequest) {
       getPackingEfficiency(prisma),
       getDefaultRateShopper(prisma),
       getSinglesCarrier(prisma),
-      prisma.shippingMethodMapping.findMany({ where: { isActive: true } }),
+      prisma.shippingMethodMapping.findMany({
+        where: { isActive: true },
+        include: { rateShopper: true },
+      }),
       prisma.weightRule.findMany({
         where: { isActive: true },
         orderBy: { sortOrder: 'asc' },
@@ -383,30 +386,122 @@ export async function POST(request: NextRequest) {
 
       let orderType: string
 
-      if (matchedMapping) {
-        // Shipping method mapping matched - use mapped carrier/service directly
+      // Helper: determine if this mapping says to fall through to weight rules
+      const mappingUsesWeightRules = matchedMapping?.targetType === 'weight_rules'
+      const mappingUsesRateShopper = matchedMapping?.targetType === 'rate_shopper'
+      const mappingUsesService = matchedMapping?.targetType === 'service' || (matchedMapping && !matchedMapping.targetType)
+
+      if (matchedMapping && mappingUsesService) {
+        // Shipping method mapping matched → use mapped carrier/service directly
         orderType = matchedMapping.isExpedited
           ? 'EXPEDITED'
-          : classifyOrder(order) // SINGLE or BULK based on items (not expedited check)
+          : classifyOrder(order)
 
         preShoppedRate = {
-          carrierId: matchedMapping.carrierId,
-          carrierCode: matchedMapping.carrierCode,
-          carrier: matchedMapping.serviceName.split(' ')[0] || matchedMapping.carrierCode,
-          serviceCode: matchedMapping.serviceCode,
-          serviceName: matchedMapping.serviceName,
+          carrierId: matchedMapping.carrierId || '',
+          carrierCode: matchedMapping.carrierCode || '',
+          carrier: (matchedMapping.serviceName || '').split(' ')[0] || matchedMapping.carrierCode || '',
+          serviceCode: matchedMapping.serviceCode || '',
+          serviceName: matchedMapping.serviceName || '',
           price: 0,
           currency: 'USD',
           deliveryDays: null,
         }
         rateShopStatus = 'MAPPED'
-        console.log(`${logPrefix} Shipping method mapping matched: "${requestedService}" → ${matchedMapping.serviceName}${matchedMapping.isExpedited ? ' (EXPEDITED)' : ''}, orderType=${orderType}`)
+        console.log(`${logPrefix} Mapping matched (service): "${requestedService}" → ${matchedMapping.serviceName}${matchedMapping.isExpedited ? ' (EXPEDITED)' : ''}, orderType=${orderType}`)
+      } else if (matchedMapping && mappingUsesRateShopper && matchedMapping.rateShopperId) {
+        // Shipping method mapping matched → use mapping's rate shopper
+        orderType = matchedMapping.isExpedited
+          ? 'EXPEDITED'
+          : classifyOrder(order)
+
+        console.log(`${logPrefix} Mapping matched (rate_shopper): "${requestedService}" → Rate Shopper "${matchedMapping.rateShopper?.name || matchedMapping.rateShopperId}"${matchedMapping.isExpedited ? ' (EXPEDITED)' : ''}`)
+
+        // Only rate shop for non-expedited, or if explicitly mapped
+        const mappingRateShopper = matchedMapping.rateShopper
+        if (mappingRateShopper && mappingRateShopper.active && suggestedBox.boxId && suggestedBox.lengthInches && suggestedBox.widthInches && suggestedBox.heightInches) {
+          const boxWeight = suggestedBox.weightLbs || 0
+          const calcWeight = await calculateShipmentWeight(prisma, items, boxWeight)
+          shippedWeight = calcWeight
+
+          const rsProfile = {
+            id: mappingRateShopper.id,
+            name: mappingRateShopper.name,
+            services: mappingRateShopper.services as any,
+            transitTimeRestriction: mappingRateShopper.transitTimeRestriction,
+            preferenceEnabled: mappingRateShopper.preferenceEnabled,
+            preferredServiceCode: mappingRateShopper.preferredServiceCode,
+            preferenceType: mappingRateShopper.preferenceType,
+            preferenceValue: mappingRateShopper.preferenceValue,
+          }
+
+          const shipTo = order.shipTo || {}
+          const shipToAddress: ShipToAddress = {
+            name: shipTo.name || order.billTo?.name,
+            company: shipTo.company,
+            street1: shipTo.street1 || shipTo.address1 || '',
+            street2: shipTo.street2 || shipTo.address2,
+            city: shipTo.city || '',
+            state: shipTo.state || '',
+            postalCode: shipTo.postalCode || shipTo.zip || '',
+            country: shipTo.country || 'US',
+            phone: shipTo.phone,
+            residential: shipTo.residential !== false,
+          }
+
+          const rateResult = await shopRates(
+            prisma,
+            shipToAddress,
+            calcWeight,
+            {
+              length: suggestedBox.lengthInches,
+              width: suggestedBox.widthInches,
+              height: suggestedBox.heightInches,
+            },
+            rsProfile
+          )
+
+          if (rateResult.success && rateResult.rate) {
+            preShoppedRate = {
+              carrierId: rateResult.rate.carrierId,
+              carrierCode: rateResult.rate.carrierCode,
+              carrier: rateResult.rate.carrier,
+              serviceCode: rateResult.rate.serviceCode,
+              serviceName: rateResult.rate.serviceName,
+              price: rateResult.rate.price,
+              currency: rateResult.rate.currency,
+              deliveryDays: rateResult.rate.deliveryDays,
+              rateId: rateResult.rate.rateId,
+            }
+            rateShopStatus = 'SUCCESS'
+            console.log(`${logPrefix} Mapping rate shop success: ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
+          } else {
+            rateShopStatus = 'FAILED'
+            rateShopError = rateResult.error || 'Mapping rate shopping failed'
+            console.log(`${logPrefix} Mapping rate shop failed: ${rateShopError}`)
+          }
+        } else if (!mappingRateShopper || !mappingRateShopper.active) {
+          rateShopStatus = 'FAILED'
+          rateShopError = 'Mapped rate shopper is inactive or missing'
+          console.log(`${logPrefix} Mapping rate shopper inactive/missing`)
+        } else {
+          rateShopStatus = 'FAILED'
+          rateShopError = 'No box suggestion available for rate shopping'
+          console.log(`${logPrefix} Mapping rate shop skipped: no box dimensions`)
+        }
       } else {
-        // ======================================================================
-        // STEP 2: No mapping match - classify order normally
-        // ======================================================================
-        orderType = classifyOrder(order)
-        console.log(`${logPrefix} Order type: ${orderType} (no shipping method mapping matched)`)
+        // No mapping, or mapping says "use weight rules" → classify and continue
+        if (matchedMapping && mappingUsesWeightRules) {
+          // Mapping explicitly routes to weight rules
+          orderType = matchedMapping.isExpedited
+            ? 'EXPEDITED'
+            : classifyOrder(order)
+          console.log(`${logPrefix} Mapping matched (weight_rules): "${requestedService}" → falling through to weight rules, orderType=${orderType}`)
+        } else {
+          // No mapping at all
+          orderType = classifyOrder(order)
+          console.log(`${logPrefix} Order type: ${orderType} (no shipping method mapping matched)`)
+        }
 
         // ======================================================================
         // STEP 2b: Check weight rules (only for non-expedited orders)

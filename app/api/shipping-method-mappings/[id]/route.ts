@@ -52,16 +52,54 @@ export async function PATCH(
       updateData.incomingName = trimmed
     }
 
-    if (body.carrierId !== undefined) updateData.carrierId = body.carrierId
-    if (body.carrierCode !== undefined) updateData.carrierCode = body.carrierCode
-    if (body.serviceCode !== undefined) updateData.serviceCode = body.serviceCode
-    if (body.serviceName !== undefined) updateData.serviceName = body.serviceName
+    if (body.targetType !== undefined) {
+      const validTypes = ['service', 'weight_rules', 'rate_shopper']
+      if (!validTypes.includes(body.targetType)) {
+        return NextResponse.json(
+          { error: `Invalid target type. Must be one of: ${validTypes.join(', ')}` },
+          { status: 400 }
+        )
+      }
+      updateData.targetType = body.targetType
+    }
+
+    const effectiveTargetType = (updateData.targetType as string) || existing.targetType
+
+    // Clear/set fields based on effective target type
+    if (effectiveTargetType === 'service') {
+      if (body.carrierId !== undefined) updateData.carrierId = body.carrierId
+      if (body.carrierCode !== undefined) updateData.carrierCode = body.carrierCode
+      if (body.serviceCode !== undefined) updateData.serviceCode = body.serviceCode
+      if (body.serviceName !== undefined) updateData.serviceName = body.serviceName
+      // Clear rate shopper if switching to service
+      if (updateData.targetType === 'service') updateData.rateShopperId = null
+    } else if (effectiveTargetType === 'rate_shopper') {
+      if (body.rateShopperId !== undefined) updateData.rateShopperId = body.rateShopperId
+      // Clear carrier fields if switching to rate_shopper
+      if (updateData.targetType === 'rate_shopper') {
+        updateData.carrierId = null
+        updateData.carrierCode = null
+        updateData.serviceCode = null
+        updateData.serviceName = null
+      }
+    } else if (effectiveTargetType === 'weight_rules') {
+      // Clear both carrier and rate shopper fields
+      if (updateData.targetType === 'weight_rules') {
+        updateData.carrierId = null
+        updateData.carrierCode = null
+        updateData.serviceCode = null
+        updateData.serviceName = null
+        updateData.rateShopperId = null
+      }
+    }
+
     if (body.isExpedited !== undefined) updateData.isExpedited = body.isExpedited
     if (body.isActive !== undefined) updateData.isActive = body.isActive
 
     const mapping = await prisma.shippingMethodMapping.update({
       where: { id },
       data: updateData,
+      include: { rateShopper: true },
     })
 
     return NextResponse.json({ mapping })
