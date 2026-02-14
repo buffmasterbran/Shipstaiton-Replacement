@@ -983,20 +983,26 @@ function WeightRulesTab() {
       const res = await fetch('/api/weight-rules')
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to fetch')
-      setRules((data.rules || []).map((r: any) => ({
-        id: r.id,
-        minOz: r.minOz,
-        maxOz: r.maxOz,
-        targetType: r.targetType,
-        carrierId: r.carrierId,
-        carrierCode: r.carrierCode,
-        serviceCode: r.serviceCode,
-        serviceName: r.serviceName,
-        rateShopperId: r.rateShopperId,
-        rateShopper: r.rateShopper,
-        isActive: r.isActive,
-      })))
-      setHasChanges(false)
+      // Clamp to current MAX_OZ and drop zero-width segments
+      const loaded = (data.rules || [])
+        .map((r: any) => ({
+          id: r.id,
+          minOz: Math.min(r.minOz, MAX_OZ),
+          maxOz: Math.min(r.maxOz, MAX_OZ),
+          targetType: r.targetType,
+          carrierId: r.carrierId,
+          carrierCode: r.carrierCode,
+          serviceCode: r.serviceCode,
+          serviceName: r.serviceName,
+          rateShopperId: r.rateShopperId,
+          rateShopper: r.rateShopper,
+          isActive: r.isActive,
+        }))
+        .filter((r: any) => r.minOz < r.maxOz)
+      setRules(loaded)
+      // If any rule was clamped, mark unsaved so user can save the corrected version
+      const wasClamped = (data.rules || []).some((r: any) => r.maxOz > MAX_OZ || r.minOz > MAX_OZ)
+      setHasChanges(wasClamped)
     } catch (err: any) {
       setError(err.message)
     } finally {
