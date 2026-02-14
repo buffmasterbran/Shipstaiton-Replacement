@@ -57,7 +57,9 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ error: `Rule ${i + 1}: invalid weight range (${rule.minOz} - ${rule.maxOz})` }, { status: 400 })
       }
 
-      if (rule.maxOz > 400) {
+      // Last segment can be a catch-all (maxOz = 99999), others must stay within 400 oz
+      const isLastRule = i === rules.length - 1
+      if (!isLastRule && rule.maxOz > 400) {
         return NextResponse.json({ error: `Rule ${i + 1}: max weight cannot exceed 25 lbs (400 oz)` }, { status: 400 })
       }
 

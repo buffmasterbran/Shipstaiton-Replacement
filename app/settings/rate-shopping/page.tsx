@@ -927,7 +927,8 @@ function ShippingMethodMappingsTab() {
 // Weight Rules Tab - Segmented Range Bar
 // ============================================================================
 
-const MAX_OZ = 400 // 25 lbs
+const MAX_OZ = 400 // 25 lbs (visual bar max)
+const CATCHALL_OZ = 99999 // Last segment catch-all upper bound
 const SEGMENT_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500',
   'bg-teal-500', 'bg-pink-500', 'bg-indigo-500', 'bg-yellow-500',
@@ -949,11 +950,24 @@ interface WeightRuleLocal {
 }
 
 function formatWeight(oz: number): string {
+  if (oz >= CATCHALL_OZ) return '∞'
   if (oz < 16) return `${oz} oz`
   const lbs = Math.floor(oz / 16)
   const remainOz = Math.round(oz % 16)
   if (remainOz === 0) return `${lbs} lb`
   return `${lbs} lb ${remainOz} oz`
+}
+
+// For the last segment, show "X lb+" instead of "X lb – Y lb"
+function formatSegmentRange(rule: WeightRuleLocal, isLast: boolean): string {
+  const min = formatWeight(rule.minOz)
+  if (isLast) return `${min}+`
+  return `${min} – ${formatWeight(rule.maxOz)}`
+}
+
+// Is this the catch-all last segment?
+function isCatchAll(oz: number): boolean {
+  return oz > MAX_OZ
 }
 
 function WeightRulesTab() {
@@ -983,26 +997,32 @@ function WeightRulesTab() {
       const res = await fetch('/api/weight-rules')
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to fetch')
-      // Clamp to current MAX_OZ and drop zero-width segments
-      const loaded = (data.rules || [])
-        .map((r: any) => ({
-          id: r.id,
-          minOz: Math.min(r.minOz, MAX_OZ),
-          maxOz: Math.min(r.maxOz, MAX_OZ),
-          targetType: r.targetType,
-          carrierId: r.carrierId,
-          carrierCode: r.carrierCode,
-          serviceCode: r.serviceCode,
-          serviceName: r.serviceName,
-          rateShopperId: r.rateShopperId,
-          rateShopper: r.rateShopper,
-          isActive: r.isActive,
-        }))
+      // Load rules as-is (last segment may have maxOz = CATCHALL_OZ which is fine)
+      // Clamp non-last segments to MAX_OZ, keep last segment's catch-all value
+      const rawRules = (data.rules || []) as any[]
+      const loaded = rawRules
+        .map((r: any, idx: number) => {
+          const isLast = idx === rawRules.length - 1
+          return {
+            id: r.id,
+            minOz: Math.min(r.minOz, MAX_OZ),
+            maxOz: isLast ? (r.maxOz > MAX_OZ ? r.maxOz : r.maxOz) : Math.min(r.maxOz, MAX_OZ),
+            targetType: r.targetType,
+            carrierId: r.carrierId,
+            carrierCode: r.carrierCode,
+            serviceCode: r.serviceCode,
+            serviceName: r.serviceName,
+            rateShopperId: r.rateShopperId,
+            rateShopper: r.rateShopper,
+            isActive: r.isActive,
+          }
+        })
         .filter((r: any) => r.minOz < r.maxOz)
       setRules(loaded)
-      // If any rule was clamped, mark unsaved so user can save the corrected version
-      const wasClamped = (data.rules || []).some((r: any) => r.maxOz > MAX_OZ || r.minOz > MAX_OZ)
-      setHasChanges(wasClamped)
+      // If the last segment isn't already catch-all, mark unsaved so user can save to fix it
+      const lastRule = rawRules[rawRules.length - 1]
+      const needsCatchAll = lastRule && lastRule.maxOz <= MAX_OZ
+      setHasChanges(needsCatchAll)
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -1030,21 +1050,23 @@ function WeightRulesTab() {
 
   function addBreakpoint() {
     if (rules.length === 0) {
-      // First rule: entire range, unassigned
-      setRules([{ minOz: 0, maxOz: MAX_OZ, targetType: 'service', isActive: true }])
+      // First rule: entire range catch-all
+      setRules([{ minOz: 0, maxOz: CATCHALL_OZ, targetType: 'service', isActive: true }])
     } else {
-      // Split the last segment in half
+      // Split the last segment: put a breakpoint at a sensible spot within the visual range
       const lastIdx = rules.length - 1
       const last = rules[lastIdx]
-      const midpoint = Math.round((last.minOz + last.maxOz) / 2)
+      // For the visual split, use the lesser of maxOz and MAX_OZ
+      const visualMax = Math.min(last.maxOz, MAX_OZ)
+      const midpoint = Math.round((last.minOz + visualMax) / 2)
 
-      if (midpoint <= last.minOz || midpoint >= last.maxOz) return // Can't split further
+      if (midpoint <= last.minOz) return // Can't split further
 
       const newRules = [...rules]
       newRules[lastIdx] = { ...last, maxOz: midpoint }
       newRules.push({
         minOz: midpoint,
-        maxOz: last.maxOz,
+        maxOz: CATCHALL_OZ, // New last segment is always catch-all
         targetType: 'service',
         isActive: true,
       })
@@ -1055,8 +1077,11 @@ function WeightRulesTab() {
 
   function splitSegment(index: number) {
     const seg = rules[index]
-    const midpoint = Math.round((seg.minOz + seg.maxOz) / 2)
-    if (midpoint <= seg.minOz || midpoint >= seg.maxOz) return
+    const isLast = index === rules.length - 1
+    // For catch-all last segment, split within the visual range
+    const visualMax = isLast ? Math.min(seg.maxOz, MAX_OZ) : seg.maxOz
+    const midpoint = Math.round((seg.minOz + visualMax) / 2)
+    if (midpoint <= seg.minOz) return
 
     const newRules = [...rules]
     newRules.splice(index, 1,
@@ -1086,6 +1111,15 @@ function WeightRulesTab() {
     }
 
     newRules.splice(index, 1)
+
+    // Ensure the new last segment is always catch-all
+    if (newRules.length > 0) {
+      const lastIdx = newRules.length - 1
+      if (newRules[lastIdx].maxOz <= MAX_OZ) {
+        newRules[lastIdx] = { ...newRules[lastIdx], maxOz: CATCHALL_OZ }
+      }
+    }
+
     setRules(newRules)
     setHasChanges(true)
     if (editingIndex === index) setEditingIndex(null)
@@ -1102,7 +1136,9 @@ function WeightRulesTab() {
     // index is the segment whose maxOz we're changing
     // This also changes the next segment's minOz
     if (index >= rules.length - 1) return
-    if (newMaxOz <= rules[index].minOz || newMaxOz >= rules[index + 1].maxOz) return
+    // For the boundary before the last (catch-all) segment, cap at MAX_OZ
+    const nextMaxForCheck = isCatchAll(rules[index + 1].maxOz) ? MAX_OZ : rules[index + 1].maxOz
+    if (newMaxOz <= rules[index].minOz || newMaxOz >= nextMaxForCheck) return
 
     const newRules = [...rules]
     newRules[index] = { ...newRules[index], maxOz: newMaxOz }
@@ -1114,19 +1150,19 @@ function WeightRulesTab() {
   async function handleSave() {
     try {
       setSaving(true)
-      const payload = {
-        rules: rules.map((r) => ({
-          minOz: r.minOz,
-          maxOz: r.maxOz,
-          targetType: r.targetType,
-          carrierId: r.carrierId || null,
-          carrierCode: r.carrierCode || null,
-          serviceCode: r.serviceCode || null,
-          serviceName: r.serviceName || null,
-          rateShopperId: r.rateShopperId || null,
-          isActive: r.isActive,
-        })),
-      }
+      // Ensure last segment is always catch-all before saving
+      const rulesToSave = rules.map((r, i) => ({
+        minOz: r.minOz,
+        maxOz: i === rules.length - 1 ? CATCHALL_OZ : r.maxOz,
+        targetType: r.targetType,
+        carrierId: r.carrierId || null,
+        carrierCode: r.carrierCode || null,
+        serviceCode: r.serviceCode || null,
+        serviceName: r.serviceName || null,
+        rateShopperId: r.rateShopperId || null,
+        isActive: r.isActive,
+      }))
+      const payload = { rules: rulesToSave }
 
       const res = await fetch('/api/weight-rules', {
         method: 'PUT',
@@ -1220,55 +1256,33 @@ function WeightRulesTab() {
         </div>
       ) : (
         <>
-          {/* Visual Range Bar */}
+          {/* Visual Range Bar - equal-width segments */}
           {rules.length > 0 && (
             <div className="mb-6">
-              <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                <span>0 oz</span>
-                <span>4 oz</span>
-                <span>8 oz</span>
-                <span>1 lb</span>
-                <span>5 lb</span>
-                <span>10 lb</span>
-                <span>15 lb</span>
-                <span>20 lb</span>
-                <span>25 lb</span>
-              </div>
-              <div className="flex h-10 rounded-lg overflow-hidden border border-gray-300">
+              <div className="flex h-12 rounded-lg overflow-hidden border border-gray-300">
                 {rules.map((rule, i) => {
-                  const widthPct = ((rule.maxOz - rule.minOz) / MAX_OZ) * 100
+                  const isLast = i === rules.length - 1
                   const colorClass = SEGMENT_COLORS[i % SEGMENT_COLORS.length]
                   const isUnassigned = rule.targetType === 'service' && !rule.serviceCode
+                  const rangeLabel = formatSegmentRange(rule, isLast)
 
                   return (
                     <div
                       key={i}
-                      className={`relative flex items-center justify-center cursor-pointer transition-opacity ${
+                      className={`relative flex flex-col items-center justify-center cursor-pointer transition-opacity border-r border-white/30 last:border-r-0 ${
                         isUnassigned ? 'bg-gray-300' : colorClass
-                      } ${!rule.isActive ? 'opacity-40' : ''} ${editingIndex === i ? 'ring-2 ring-offset-1 ring-blue-400' : ''}`}
-                      style={{ width: `${widthPct}%`, minWidth: widthPct > 3 ? undefined : '4px' }}
+                      } ${!rule.isActive ? 'opacity-40' : ''} ${editingIndex === i ? 'ring-2 ring-offset-1 ring-blue-400 z-10' : ''}`}
+                      style={{ width: `${100 / rules.length}%` }}
                       onClick={() => setEditingIndex(editingIndex === i ? null : i)}
-                      title={`${formatWeight(rule.minOz)} - ${formatWeight(rule.maxOz)}: ${getSegmentLabel(rule)}`}
+                      title={`${rangeLabel}: ${getSegmentLabel(rule)}`}
                     >
-                      {widthPct > 8 && (
-                        <span className="text-white text-xs font-medium truncate px-1">
-                          {getSegmentLabel(rule)}
-                        </span>
-                      )}
+                      <span className="text-white text-[11px] font-semibold truncate px-1 leading-tight">
+                        {rangeLabel}
+                      </span>
+                      <span className="text-white/80 text-[10px] truncate px-1 leading-tight">
+                        {isUnassigned ? 'Unassigned' : getSegmentLabel(rule)}
+                      </span>
                     </div>
-                  )
-                })}
-              </div>
-              {/* Tick marks at breakpoints */}
-              <div className="relative h-2">
-                {rules.slice(0, -1).map((rule, i) => {
-                  const leftPct = (rule.maxOz / MAX_OZ) * 100
-                  return (
-                    <div
-                      key={i}
-                      className="absolute top-0 w-0.5 h-2 bg-gray-400"
-                      style={{ left: `${leftPct}%` }}
-                    />
                   )
                 })}
               </div>
@@ -1317,7 +1331,7 @@ function WeightRulesTab() {
                       <div className={`w-3 h-3 rounded-full ${isUnassigned ? 'bg-gray-300' : colorClass}`} />
                       <div className="flex-1">
                         <span className="text-sm font-medium">
-                          {formatWeight(rule.minOz)} &ndash; {formatWeight(rule.maxOz)}
+                          {formatSegmentRange(rule, i === rules.length - 1)}
                         </span>
                         <span className="text-sm text-gray-500 ml-3">
                           {isUnassigned ? (
@@ -1377,20 +1391,27 @@ function WeightRulesTab() {
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-gray-600 mb-1">Max Weight (oz)</label>
-                            <input
-                              type="number"
-                              min={rule.minOz + 1}
-                              max={MAX_OZ}
-                              step={1}
-                              value={rule.maxOz}
-                              disabled={i === rules.length - 1}
-                              className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm disabled:bg-gray-100 disabled:text-gray-500"
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value) || 0
-                                updateBreakpoint(i, val)
-                              }}
-                            />
-                            <span className="text-xs text-gray-400">{formatWeight(rule.maxOz)}</span>
+                            {i === rules.length - 1 ? (
+                              <div className="w-full px-3 py-1.5 border border-gray-200 rounded text-sm bg-gray-100 text-gray-500">
+                                No limit (catch-all)
+                              </div>
+                            ) : (
+                              <>
+                                <input
+                                  type="number"
+                                  min={rule.minOz + 1}
+                                  max={MAX_OZ}
+                                  step={1}
+                                  value={rule.maxOz}
+                                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm"
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value) || 0
+                                    updateBreakpoint(i, val)
+                                  }}
+                                />
+                                <span className="text-xs text-gray-400">{formatWeight(rule.maxOz)}</span>
+                              </>
+                            )}
                           </div>
                         </div>
 
