@@ -90,7 +90,7 @@ const settingsNavItems = [
   { name: 'Carriers', href: '/settings/carriers', adminOnly: true },
   { name: 'Locations', href: '/settings/locations', adminOnly: true },
   { name: 'Box Config', href: '/settings/box-config', adminOnly: true },
-  { name: 'Rate Shopping', href: '/settings/rate-shopping', adminOnly: true },
+  { name: 'Shipping Rules', href: '/settings/rate-shopping', adminOnly: true },
   { name: 'Products', href: '/settings/products', adminOnly: true },
   { name: 'Users & Permissions', href: '/settings/users', adminOnly: true },
   { name: 'Developer', href: '/settings/developer', adminOnly: true },

@@ -7,23 +7,6 @@ import { useExpeditedFilter, isOrderPersonalized } from '@/context/ExpeditedFilt
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
 
-// Expedited shipping methods to filter for
-const EXPEDITED_SHIPPING_METHODS = [
-  'ups next day',
-  'ups next day air',
-  'ups 2nd day',
-  'ups 2nd day air',
-  'ups 2 day',
-  'ups 2 day air',
-  'ups 3 day',
-  'ups 3 day select',
-  'next day',
-  '2nd day',
-  '2 day',
-  '3 day',
-  // Add more variations as needed
-]
-
 type SortKey = 'orderNumber' | 'customer' | 'shippingMethod' | 'amount' | 'orderDate' | 'received' | 'customerReachedOut' | 'status'
 type SortDir = 'asc' | 'desc'
 
@@ -33,6 +16,7 @@ interface OrderLog {
   status: string
   rawPayload: any
   customerReachedOut: boolean
+  orderType?: string | null
   suggestedBox?: {
     boxId: string | null
     boxName: string | null
@@ -90,8 +74,8 @@ function getShippingMethod(log: OrderLog): string {
 }
 
 function isExpeditedShipping(log: OrderLog): boolean {
-  const method = getShippingMethod(log).toLowerCase()
-  return EXPEDITED_SHIPPING_METHODS.some(exp => method.includes(exp))
+  // Use DB-driven orderType (set by shipping method mappings at ingest)
+  return log.orderType === 'EXPEDITED'
 }
 
 export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps) {

@@ -143,7 +143,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       if (order.log.status === 'ON_HOLD') return false
 
       const customerReachedOut = (order.log as any).customerReachedOut || false
-      const isExpedited = isOrderExpedited(order.log.rawPayload, customerReachedOut)
+      const isExpedited = isOrderExpedited(order.log.rawPayload, customerReachedOut, (order.log as any).orderType)
 
       // Expedited filter
       if (expeditedFilter === 'only' && !isExpedited) return false

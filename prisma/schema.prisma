@@ -286,9 +286,59 @@ model RateShopper {
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
+  weightRules WeightRule[]
+
   @@index([active])
   @@index([isDefault])
   @@map("rate_shoppers")
+}
+
+// ============================================================================
+// WEIGHT RULES - Weight-based carrier routing (segmented range bar)
+// ============================================================================
+
+model WeightRule {
+  id           String   @id @default(cuid())
+  minOz        Float    @map("min_oz")      // Start of weight range in ounces (inclusive)
+  maxOz        Float    @map("max_oz")      // End of weight range in ounces (exclusive, except last segment)
+  targetType   String   @map("target_type") // "service" | "rate_shopper"
+  // For targetType = "service":
+  carrierId    String?  @map("carrier_id")
+  carrierCode  String?  @map("carrier_code")
+  serviceCode  String?  @map("service_code")
+  serviceName  String?  @map("service_name")
+  // For targetType = "rate_shopper":
+  rateShopperId String? @map("rate_shopper_id")
+  isActive     Boolean  @default(true) @map("is_active")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  rateShopper  RateShopper? @relation(fields: [rateShopperId], references: [id], onDelete: SetNull)
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("weight_rules")
+}
+
+// ============================================================================
+// SHIPPING METHOD MAPPING - Maps incoming service names to ShipEngine services
+// ============================================================================
+
+model ShippingMethodMapping {
+  id           String   @id @default(cuid())
+  incomingName String   @unique @map("incoming_name") // e.g. "UPS Next Day Air Saver®"
+  carrierId    String   @map("carrier_id")
+  carrierCode  String   @map("carrier_code")
+  serviceCode  String   @map("service_code")
+  serviceName  String   @map("service_name")
+  isExpedited  Boolean  @default(false) @map("is_expedited")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("shipping_method_mappings")
 }
 
 // ============================================================================

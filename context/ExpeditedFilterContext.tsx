@@ -20,29 +20,18 @@ interface ExpeditedFilterContextType {
 
 const ExpeditedFilterContext = createContext<ExpeditedFilterContextType | undefined>(undefined)
 
-// Expedited shipping methods (same list as ExpeditedOrdersTable)
-export const EXPEDITED_SHIPPING_METHODS = [
-  'ups next day',
-  'ups next day air',
-  'ups 2nd day',
-  'ups 2nd day air',
-  'ups 2 day',
-  'ups 2 day air',
-  'ups 3 day',
-  'ups 3 day select',
-  'next day',
-  '2nd day',
-  '2 day',
-  '3 day',
-]
-
-/** Check if an order has expedited shipping based on the raw payload. */
-export function isOrderExpedited(rawPayload: any, customerReachedOut?: boolean): boolean {
+/**
+ * Check if an order is expedited.
+ * Uses the DB-driven orderType field (set during ingest based on shipping method mappings).
+ * Falls back to customerReachedOut flag.
+ */
+export function isOrderExpedited(rawPayload: any, customerReachedOut?: boolean, orderType?: string | null): boolean {
   if (customerReachedOut) return true
 
-  const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
-  const method = (order?.requestedShippingService || order?.shippingMethod || order?.carrierCode || '').toLowerCase()
-  return EXPEDITED_SHIPPING_METHODS.some(exp => method.includes(exp))
+  // Use the DB-driven orderType (set by shipping method mappings at ingest)
+  if (orderType === 'EXPEDITED') return true
+
+  return false
 }
 
 /** Check if an order contains personalized items. Uses the isPersonalized field from the payload if available, otherwise falls back to SKU/name detection. */
@@ -89,10 +78,11 @@ export function shouldShowOrder(
   rawPayload: any,
   personalizedFilter: FilterMode,
   expeditedFilter: FilterMode,
-  customerReachedOut?: boolean
+  customerReachedOut?: boolean,
+  orderType?: string | null
 ): boolean {
   const isPersonalized = isOrderPersonalized(rawPayload)
-  const isExpedited = isOrderExpedited(rawPayload, customerReachedOut)
+  const isExpedited = isOrderExpedited(rawPayload, customerReachedOut, orderType)
 
   // Check personalized filter
   if (personalizedFilter === 'only' && !isPersonalized) return false

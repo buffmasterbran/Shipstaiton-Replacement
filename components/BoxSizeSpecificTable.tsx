@@ -192,12 +192,12 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
     if (expeditedFilter === 'only') {
       result = result.filter(o => {
         const cr = (o.log as any).customerReachedOut || false
-        return isOrderExpedited(o.log.rawPayload, cr)
+        return isOrderExpedited(o.log.rawPayload, cr, (o.log as any).orderType)
       })
     } else if (expeditedFilter === 'hide') {
       result = result.filter(o => {
         const cr = (o.log as any).customerReachedOut || false
-        return !isOrderExpedited(o.log.rawPayload, cr)
+        return !isOrderExpedited(o.log.rawPayload, cr, (o.log as any).orderType)
       })
     }
 

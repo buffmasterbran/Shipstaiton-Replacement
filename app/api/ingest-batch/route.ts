@@ -297,15 +297,28 @@ export async function POST(request: NextRequest) {
       console.log(`[Ingest] Filtered out ${skippedCount} wholesale order(s) (SO prefix)`)
     }
 
-    // Load box config data and rate shopping config once for all orders
-    const [sizes, boxes, feedbackRules, packingEfficiency, rateShopper, singlesCarrier] = await Promise.all([
+    // Load box config data, rate shopping config, shipping method mappings, and weight rules once for all orders
+    const [sizes, boxes, feedbackRules, packingEfficiency, rateShopper, singlesCarrier, shippingMethodMappings, weightRules] = await Promise.all([
       getProductSizes(prisma),
       getBoxes(prisma),
       getFeedbackRules(prisma),
       getPackingEfficiency(prisma),
       getDefaultRateShopper(prisma),
       getSinglesCarrier(prisma),
+      prisma.shippingMethodMapping.findMany({ where: { isActive: true } }),
+      prisma.weightRule.findMany({
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+        include: { rateShopper: { select: { id: true, name: true, active: true } } },
+      }),
     ])
+
+    // Build a lookup map for shipping method mappings (lowercase incoming name -> mapping)
+    const mappingLookup = new Map<string, typeof shippingMethodMappings[0]>()
+    for (const m of shippingMethodMappings) {
+      mappingLookup.set(m.incomingName.toLowerCase(), m)
+    }
+    console.log(`[Ingest] Loaded ${shippingMethodMappings.length} active shipping method mappings, ${weightRules.length} active weight rules`)
 
     // Collect all unmatched SKUs across orders
     const allUnmatchedSkus: Array<{ sku: string; orderNumber: string; itemName: string | null }> = []
@@ -336,10 +349,6 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // Classify the order
-      const orderType = classifyOrder(order)
-      console.log(`${logPrefix} Order type: ${orderType}`)
-
       // Check for personalization flag from NetSuite
       const isPersonalized = !!(
         order.isPersonalized ||
@@ -354,97 +363,247 @@ export async function POST(request: NextRequest) {
       // Initialize rate shopping fields
       let preShoppedRate: PreShoppedRate | null = null
       let shippedWeight: number | null = null
-      let rateShopStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED' = 'SKIPPED'
+      let rateShopStatus: string = 'SKIPPED'
       let rateShopError: string | null = null
 
-      // Handle based on order type
-      if (orderType === 'SINGLE') {
-        // Singles use fixed carrier (USPS First Class Mail by default)
-        if (singlesCarrier && singlesCarrier.carrierId) {
-          preShoppedRate = {
-            carrierId: singlesCarrier.carrierId,
-            carrierCode: singlesCarrier.carrierCode,
-            carrier: singlesCarrier.carrier,
-            serviceCode: singlesCarrier.serviceCode,
-            serviceName: singlesCarrier.serviceName,
-            price: 0, // Price not pre-fetched for singles
-            currency: 'USD',
-            deliveryDays: null,
-          }
-          rateShopStatus = 'SUCCESS'
-          console.log(`${logPrefix} Singles carrier set: ${singlesCarrier.serviceName}`)
-        } else {
-          rateShopStatus = 'FAILED'
-          rateShopError = singlesCarrier
-            ? 'Singles carrier has no carrier ID configured. Go to Settings > Singles Carrier and re-select the carrier.'
-            : 'Singles carrier not configured. Go to Settings to configure.'
-          console.log(`${logPrefix} Singles carrier ${singlesCarrier ? 'missing carrierId' : 'not configured'} - marking as FAILED`)
+      // ======================================================================
+      // STEP 1: Check shipping method mappings BEFORE classification
+      // If the incoming requestedShippingService matches a mapping, use that
+      // mapped carrier/service and bypass weight rules + rate shopping.
+      // ======================================================================
+      const requestedService = (
+        order.requestedShippingService ||
+        order.shippingMethod ||
+        ''
+      ).trim()
+
+      const matchedMapping = requestedService
+        ? mappingLookup.get(requestedService.toLowerCase())
+        : undefined
+
+      let orderType: string
+
+      if (matchedMapping) {
+        // Shipping method mapping matched - use mapped carrier/service directly
+        orderType = matchedMapping.isExpedited
+          ? 'EXPEDITED'
+          : classifyOrder(order) // SINGLE or BULK based on items (not expedited check)
+
+        preShoppedRate = {
+          carrierId: matchedMapping.carrierId,
+          carrierCode: matchedMapping.carrierCode,
+          carrier: matchedMapping.serviceName.split(' ')[0] || matchedMapping.carrierCode,
+          serviceCode: matchedMapping.serviceCode,
+          serviceName: matchedMapping.serviceName,
+          price: 0,
+          currency: 'USD',
+          deliveryDays: null,
         }
-      } else if (orderType === 'EXPEDITED') {
-        // Expedited orders keep their original carrier - don't rate shop
-        rateShopStatus = 'SKIPPED'
-        console.log(`${logPrefix} Expedited order - skipping rate shopping`)
-      } else if (orderType === 'BULK') {
-        // Bulk orders need rate shopping
-        if (!rateShopper) {
-          rateShopStatus = 'SKIPPED'
-          console.log(`${logPrefix} No rate shopper profile configured - skipping rate shopping`)
-        } else if (!suggestedBox.boxId || !suggestedBox.lengthInches || !suggestedBox.widthInches || !suggestedBox.heightInches) {
-          rateShopStatus = 'FAILED'
-          rateShopError = 'No box suggestion available for rate shopping'
-          console.log(`${logPrefix} Rate shopping failed: no box suggestion`)
-        } else {
-          // Calculate shipment weight (box + products)
+        rateShopStatus = 'MAPPED'
+        console.log(`${logPrefix} Shipping method mapping matched: "${requestedService}" → ${matchedMapping.serviceName}${matchedMapping.isExpedited ? ' (EXPEDITED)' : ''}, orderType=${orderType}`)
+      } else {
+        // ======================================================================
+        // STEP 2: No mapping match - classify order normally
+        // ======================================================================
+        orderType = classifyOrder(order)
+        console.log(`${logPrefix} Order type: ${orderType} (no shipping method mapping matched)`)
+
+        // ======================================================================
+        // STEP 2b: Check weight rules (only for non-expedited orders)
+        // If a weight rule matches, use the rule's target carrier/service or rate shopper.
+        // ======================================================================
+        let weightRuleMatched = false
+
+        if (orderType !== 'EXPEDITED' && weightRules.length > 0 && suggestedBox.boxId) {
+          // Calculate weight for weight-rule matching
           const boxWeight = suggestedBox.weightLbs || 0
-          shippedWeight = await calculateShipmentWeight(prisma, items, boxWeight)
-          console.log(`${logPrefix} Calculated weight: ${shippedWeight} lbs (box: ${boxWeight} lbs)`)
+          const calcWeight = await calculateShipmentWeight(prisma, items, boxWeight)
+          const weightOz = calcWeight * 16 // Convert lbs to oz for matching
 
-          // Get ship-to address from order
-          const shipTo = order.shipTo || {}
-          const shipToAddress: ShipToAddress = {
-            name: shipTo.name || order.billTo?.name,
-            company: shipTo.company,
-            street1: shipTo.street1 || shipTo.address1 || '',
-            street2: shipTo.street2 || shipTo.address2,
-            city: shipTo.city || '',
-            state: shipTo.state || '',
-            postalCode: shipTo.postalCode || shipTo.zip || '',
-            country: shipTo.country || 'US',
-            phone: shipTo.phone,
-            residential: shipTo.residential !== false,
-          }
-
-          // Perform rate shopping
-          const rateResult = await shopRates(
-            prisma,
-            shipToAddress,
-            shippedWeight,
-            {
-              length: suggestedBox.lengthInches,
-              width: suggestedBox.widthInches,
-              height: suggestedBox.heightInches,
-            },
-            rateShopper
+          // Find matching weight rule
+          const matchedRule = weightRules.find(
+            (wr) => weightOz >= wr.minOz && weightOz < wr.maxOz
           )
 
-          if (rateResult.success && rateResult.rate) {
+          if (matchedRule) {
+            shippedWeight = calcWeight
+
+            if (matchedRule.targetType === 'service' && matchedRule.serviceCode) {
+              // Direct carrier/service assignment
+              preShoppedRate = {
+                carrierId: matchedRule.carrierId || '',
+                carrierCode: matchedRule.carrierCode || '',
+                carrier: (matchedRule.serviceName || '').split(' ')[0] || matchedRule.carrierCode || '',
+                serviceCode: matchedRule.serviceCode,
+                serviceName: matchedRule.serviceName || '',
+                price: 0,
+                currency: 'USD',
+                deliveryDays: null,
+              }
+              rateShopStatus = 'SUCCESS'
+              weightRuleMatched = true
+              console.log(`${logPrefix} Weight rule matched: ${weightOz.toFixed(1)} oz → ${matchedRule.serviceName} (direct service)`)
+            } else if (matchedRule.targetType === 'rate_shopper' && matchedRule.rateShopperId && matchedRule.rateShopper?.active) {
+              // Rate shop using the rule's rate shopper
+              const ruleRateShopper = await prisma.rateShopper.findUnique({
+                where: { id: matchedRule.rateShopperId },
+              })
+
+              if (ruleRateShopper && ruleRateShopper.active && suggestedBox.lengthInches && suggestedBox.widthInches && suggestedBox.heightInches) {
+                const rsProfile = {
+                  id: ruleRateShopper.id,
+                  name: ruleRateShopper.name,
+                  services: ruleRateShopper.services as any,
+                  transitTimeRestriction: ruleRateShopper.transitTimeRestriction,
+                  preferenceEnabled: ruleRateShopper.preferenceEnabled,
+                  preferredServiceCode: ruleRateShopper.preferredServiceCode,
+                  preferenceType: ruleRateShopper.preferenceType,
+                  preferenceValue: ruleRateShopper.preferenceValue,
+                }
+
+                const shipTo = order.shipTo || {}
+                const shipToAddress: ShipToAddress = {
+                  name: shipTo.name || order.billTo?.name,
+                  company: shipTo.company,
+                  street1: shipTo.street1 || shipTo.address1 || '',
+                  street2: shipTo.street2 || shipTo.address2,
+                  city: shipTo.city || '',
+                  state: shipTo.state || '',
+                  postalCode: shipTo.postalCode || shipTo.zip || '',
+                  country: shipTo.country || 'US',
+                  phone: shipTo.phone,
+                  residential: shipTo.residential !== false,
+                }
+
+                const rateResult = await shopRates(
+                  prisma,
+                  shipToAddress,
+                  calcWeight,
+                  {
+                    length: suggestedBox.lengthInches,
+                    width: suggestedBox.widthInches,
+                    height: suggestedBox.heightInches,
+                  },
+                  rsProfile
+                )
+
+                if (rateResult.success && rateResult.rate) {
+                  preShoppedRate = {
+                    carrierId: rateResult.rate.carrierId,
+                    carrierCode: rateResult.rate.carrierCode,
+                    carrier: rateResult.rate.carrier,
+                    serviceCode: rateResult.rate.serviceCode,
+                    serviceName: rateResult.rate.serviceName,
+                    price: rateResult.rate.price,
+                    currency: rateResult.rate.currency,
+                    deliveryDays: rateResult.rate.deliveryDays,
+                    rateId: rateResult.rate.rateId,
+                  }
+                  rateShopStatus = 'SUCCESS'
+                  weightRuleMatched = true
+                  console.log(`${logPrefix} Weight rule matched: ${weightOz.toFixed(1)} oz → Rate Shopper "${ruleRateShopper.name}" → ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
+                } else {
+                  rateShopStatus = 'FAILED'
+                  rateShopError = rateResult.error || 'Weight rule rate shopping failed'
+                  weightRuleMatched = true
+                  console.log(`${logPrefix} Weight rule rate shop failed: ${rateShopError}`)
+                }
+              }
+            }
+          }
+        }
+
+        // ======================================================================
+        // STEP 3: If no weight rule matched, fall back to normal handling
+        // ======================================================================
+        if (!weightRuleMatched && orderType === 'SINGLE') {
+          // Singles use fixed carrier (USPS First Class Mail by default)
+          if (singlesCarrier && singlesCarrier.carrierId) {
             preShoppedRate = {
-              carrierId: rateResult.rate.carrierId,
-              carrierCode: rateResult.rate.carrierCode,
-              carrier: rateResult.rate.carrier,
-              serviceCode: rateResult.rate.serviceCode,
-              serviceName: rateResult.rate.serviceName,
-              price: rateResult.rate.price,
-              currency: rateResult.rate.currency,
-              deliveryDays: rateResult.rate.deliveryDays,
-              rateId: rateResult.rate.rateId,
+              carrierId: singlesCarrier.carrierId,
+              carrierCode: singlesCarrier.carrierCode,
+              carrier: singlesCarrier.carrier,
+              serviceCode: singlesCarrier.serviceCode,
+              serviceName: singlesCarrier.serviceName,
+              price: 0,
+              currency: 'USD',
+              deliveryDays: null,
             }
             rateShopStatus = 'SUCCESS'
-            console.log(`${logPrefix} Rate shopping success: ${rateResult.rate.carrier} ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
+            console.log(`${logPrefix} Singles carrier set: ${singlesCarrier.serviceName}`)
           } else {
             rateShopStatus = 'FAILED'
-            rateShopError = rateResult.error || 'Unknown rate shopping error'
-            console.log(`${logPrefix} Rate shopping failed: ${rateShopError}`)
+            rateShopError = singlesCarrier
+              ? 'Singles carrier has no carrier ID configured. Go to Settings > Singles Carrier and re-select the carrier.'
+              : 'Singles carrier not configured. Go to Settings to configure.'
+            console.log(`${logPrefix} Singles carrier ${singlesCarrier ? 'missing carrierId' : 'not configured'} - marking as FAILED`)
+          }
+        } else if (!weightRuleMatched && orderType === 'EXPEDITED') {
+          // Expedited orders (matched by keyword in classifyOrder) keep their original carrier
+          rateShopStatus = 'SKIPPED'
+          console.log(`${logPrefix} Expedited order (keyword match) - skipping rate shopping`)
+        } else if (!weightRuleMatched && orderType === 'BULK') {
+          // Bulk orders need rate shopping
+          if (!rateShopper) {
+            rateShopStatus = 'SKIPPED'
+            console.log(`${logPrefix} No rate shopper profile configured - skipping rate shopping`)
+          } else if (!suggestedBox.boxId || !suggestedBox.lengthInches || !suggestedBox.widthInches || !suggestedBox.heightInches) {
+            rateShopStatus = 'FAILED'
+            rateShopError = 'No box suggestion available for rate shopping'
+            console.log(`${logPrefix} Rate shopping failed: no box suggestion`)
+          } else {
+            // Calculate shipment weight (box + products)
+            const boxWeight = suggestedBox.weightLbs || 0
+            shippedWeight = await calculateShipmentWeight(prisma, items, boxWeight)
+            console.log(`${logPrefix} Calculated weight: ${shippedWeight} lbs (box: ${boxWeight} lbs)`)
+
+            // Get ship-to address from order
+            const shipTo = order.shipTo || {}
+            const shipToAddress: ShipToAddress = {
+              name: shipTo.name || order.billTo?.name,
+              company: shipTo.company,
+              street1: shipTo.street1 || shipTo.address1 || '',
+              street2: shipTo.street2 || shipTo.address2,
+              city: shipTo.city || '',
+              state: shipTo.state || '',
+              postalCode: shipTo.postalCode || shipTo.zip || '',
+              country: shipTo.country || 'US',
+              phone: shipTo.phone,
+              residential: shipTo.residential !== false,
+            }
+
+            // Perform rate shopping
+            const rateResult = await shopRates(
+              prisma,
+              shipToAddress,
+              shippedWeight,
+              {
+                length: suggestedBox.lengthInches,
+                width: suggestedBox.widthInches,
+                height: suggestedBox.heightInches,
+              },
+              rateShopper
+            )
+
+            if (rateResult.success && rateResult.rate) {
+              preShoppedRate = {
+                carrierId: rateResult.rate.carrierId,
+                carrierCode: rateResult.rate.carrierCode,
+                carrier: rateResult.rate.carrier,
+                serviceCode: rateResult.rate.serviceCode,
+                serviceName: rateResult.rate.serviceName,
+                price: rateResult.rate.price,
+                currency: rateResult.rate.currency,
+                deliveryDays: rateResult.rate.deliveryDays,
+                rateId: rateResult.rate.rateId,
+              }
+              rateShopStatus = 'SUCCESS'
+              console.log(`${logPrefix} Rate shopping success: ${rateResult.rate.carrier} ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
+            } else {
+              rateShopStatus = 'FAILED'
+              rateShopError = rateResult.error || 'Unknown rate shopping error'
+              console.log(`${logPrefix} Rate shopping failed: ${rateShopError}`)
+            }
           }
         }
       }

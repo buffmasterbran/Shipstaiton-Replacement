@@ -89,7 +89,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
 
       // Check filters
       const customerReachedOut = (log as any).customerReachedOut || false
-      const isExpedited = isOrderExpedited(log.rawPayload, customerReachedOut)
+      const isExpedited = isOrderExpedited(log.rawPayload, customerReachedOut, (log as any).orderType)
       if (expeditedFilter === 'only' && !isExpedited) return
       if (expeditedFilter === 'hide' && isExpedited) return
 

@@ -34,7 +34,7 @@ export interface OrderLog {
     rateId?: string
   } | null
   rateFetchedAt?: string | null
-  rateShopStatus?: 'SUCCESS' | 'FAILED' | 'SKIPPED' | null
+  rateShopStatus?: 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'MAPPED' | null
   rateShopError?: string | null
   // Hold fields
   onHoldReason?: string | null
@@ -135,7 +135,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
             ...order,
             preShoppedRate: update.preShoppedRate,
             shippedWeight: update.shippedWeight,
-            rateShopStatus: update.rateShopStatus as 'SUCCESS' | 'FAILED' | 'SKIPPED' | null,
+            rateShopStatus: update.rateShopStatus as 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'MAPPED' | null,
             rateShopError: update.rateShopError,
           }
         }

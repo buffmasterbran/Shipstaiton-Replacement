@@ -30,6 +30,7 @@ interface OrderLog {
   status: string
   rawPayload: any
   customerReachedOut?: boolean
+  orderType?: string | null
   suggestedBox?: {
     boxId: string | null
     boxName: string | null
@@ -240,9 +241,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
     // Filter by expedited (3-state: all, only, hide)
     if (expeditedFilter === 'only') {
-      list = list.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
+      list = list.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
     } else if (expeditedFilter === 'hide') {
-      list = list.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut))
+      list = list.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
     }
 
     // Filter by type
@@ -311,9 +312,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
     // Filter by expedited (3-state)
     if (expeditedFilter === 'only') {
-      baseList = baseList.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut))
+      baseList = baseList.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
     } else if (expeditedFilter === 'hide') {
-      baseList = baseList.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut))
+      baseList = baseList.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
     }
 
     const counts: Record<OrderTypeFilter, number> = {
