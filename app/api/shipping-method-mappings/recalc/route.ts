@@ -62,7 +62,7 @@ export async function POST() {
     const details: Array<{ orderNumber: string; action: string }> = []
 
     // Helper to build ShipToAddress
-    function buildShipTo(orderData: any): ShipToAddress {
+    const buildShipTo = (orderData: any): ShipToAddress => {
       const shipTo = orderData?.shipTo || {}
       return {
         name: shipTo.name || orderData?.billTo?.name,
@@ -79,12 +79,12 @@ export async function POST() {
     }
 
     // Helper to rate shop with a given rate shopper profile
-    async function doRateShop(
+    const doRateShop = async (
       rsProfile: any,
       orderData: any,
       items: any[],
       box: any
-    ): Promise<{ success: boolean; rate?: any; error?: string; weight?: number }> {
+    ): Promise<{ success: boolean; rate?: any; error?: string; weight?: number }> => {
       if (!box?.lengthInches || !box?.widthInches || !box?.heightInches) {
         return { success: false, error: 'No box dimensions available' }
       }
