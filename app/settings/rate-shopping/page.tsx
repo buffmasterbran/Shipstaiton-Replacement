@@ -927,7 +927,7 @@ function ShippingMethodMappingsTab() {
 // Weight Rules Tab - Segmented Range Bar
 // ============================================================================
 
-const MAX_OZ = 2400 // 150 lbs
+const MAX_OZ = 400 // 25 lbs
 const SEGMENT_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500',
   'bg-teal-500', 'bg-pink-500', 'bg-indigo-500', 'bg-yellow-500',
@@ -1219,12 +1219,14 @@ function WeightRulesTab() {
             <div className="mb-6">
               <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                 <span>0 oz</span>
+                <span>4 oz</span>
+                <span>8 oz</span>
                 <span>1 lb</span>
                 <span>5 lb</span>
+                <span>10 lb</span>
+                <span>15 lb</span>
+                <span>20 lb</span>
                 <span>25 lb</span>
-                <span>50 lb</span>
-                <span>100 lb</span>
-                <span>150 lb</span>
               </div>
               <div className="flex h-10 rounded-lg overflow-hidden border border-gray-300">
                 {rules.map((rule, i) => {

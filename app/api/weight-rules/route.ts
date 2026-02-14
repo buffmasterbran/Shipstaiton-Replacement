@@ -57,8 +57,8 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ error: `Rule ${i + 1}: invalid weight range (${rule.minOz} - ${rule.maxOz})` }, { status: 400 })
       }
 
-      if (rule.maxOz > 2400) {
-        return NextResponse.json({ error: `Rule ${i + 1}: max weight cannot exceed 150 lbs (2400 oz)` }, { status: 400 })
+      if (rule.maxOz > 400) {
+        return NextResponse.json({ error: `Rule ${i + 1}: max weight cannot exceed 25 lbs (400 oz)` }, { status: 400 })
       }
 
       if (!rule.targetType || !['service', 'rate_shopper'].includes(rule.targetType)) {
