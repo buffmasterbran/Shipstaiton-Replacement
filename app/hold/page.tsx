@@ -46,7 +46,7 @@ export default function HoldOrdersPage() {
           orderNumber: order.orderNumber,
           customerName,
           items,
-          holdReason: (order as any).onHoldReason || null,
+          holdReason: order.onHoldReason || null,
           heldAt: order.updatedAt,
         } as HeldOrder
       })
@@ -171,8 +171,13 @@ export default function HoldOrdersPage() {
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`text-sm ${order.holdReason ? 'text-gray-600' : 'text-gray-400 italic'}`}>
-                      {order.holdReason || 'No reason provided'}
+                    <span
+                      className={`text-sm ${order.holdReason ? 'text-gray-600' : 'text-gray-400 italic'}`}
+                      title={order.holdReason || undefined}
+                    >
+                      {order.holdReason
+                        ? (order.holdReason.length > 25 ? order.holdReason.slice(0, 25) + '...' : order.holdReason)
+                        : 'No reason'}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">

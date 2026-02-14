@@ -172,26 +172,41 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   // Hold state
   const [holdingIds, setHoldingIds] = useState<Set<string>>(new Set())
+  const [holdDialogOpen, setHoldDialogOpen] = useState(false)
+  const [holdOrderId, setHoldOrderId] = useState<string | null>(null)
+  const [holdOrderNumber, setHoldOrderNumber] = useState<string>('')
+  const [holdReason, setHoldReason] = useState('')
 
   // Edit dialog state
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [editLog, setEditLog] = useState<OrderLog | null>(null)
 
-  // Handle putting an order on hold
-  const handleHold = async (orderId: string, e: React.MouseEvent) => {
+  // Open hold reason dialog
+  const handleHoldClick = (log: OrderLog, e: React.MouseEvent) => {
     e.stopPropagation()
-    setHoldingIds(prev => new Set(prev).add(orderId))
-    
+    const payload = log.rawPayload as any
+    const order = Array.isArray(payload) ? payload[0] : payload
+    setHoldOrderId(log.id)
+    setHoldOrderNumber(order?.orderNumber || log.orderNumber)
+    setHoldReason('')
+    setHoldDialogOpen(true)
+  }
+
+  // Confirm hold with reason
+  const handleConfirmHold = async () => {
+    if (!holdOrderId) return
+    setHoldDialogOpen(false)
+    setHoldingIds(prev => new Set(prev).add(holdOrderId))
+
     try {
       const res = await fetch('/api/orders/hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
+        body: JSON.stringify({ orderId: holdOrderId, reason: holdReason.trim() || undefined }),
       })
-      
+
       if (res.ok) {
-        // Update order status locally instead of full refresh
-        updateOrderStatus(orderId, 'ON_HOLD')
+        updateOrderStatus(holdOrderId, 'ON_HOLD')
       } else {
         const data = await res.json()
         alert(data.error || 'Failed to put order on hold')
@@ -202,9 +217,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     } finally {
       setHoldingIds(prev => {
         const next = new Set(prev)
-        next.delete(orderId)
+        next.delete(holdOrderId!)
         return next
       })
+      setHoldOrderId(null)
     }
   }
 
@@ -520,6 +536,9 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
             <thead className="bg-gray-50">
               <tr>
                 <Th columnKey="orderNumber">Order #</Th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  IF
+                </th>
                 <Th columnKey="customer">Customer</Th>
                 <Th columnKey="items">Items</Th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -554,6 +573,24 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                       <span className="text-sm font-semibold text-gray-900">
                         {order?.orderNumber || log.orderNumber}
                       </span>
+                    </td>
+                    <td className="px-2 py-3 whitespace-nowrap text-center">
+                      {order?.netsuiteIfId ? (
+                        <a
+                          href={`https://7913744.app.netsuite.com/app/accounting/transactions/itemship.nl?id=${order.netsuiteIfId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-blue-500 hover:text-blue-700"
+                          title={`IF ${order.netsuiteIfId}`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{customerName}</div>
@@ -650,7 +687,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           </svg>
                         </button>
                         <button
-                          onClick={(e) => handleHold(log.id, e)}
+                          onClick={(e) => handleHoldClick(log, e)}
                           disabled={holdingIds.has(log.id) || log.status === 'ON_HOLD'}
                           className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
                             log.status === 'ON_HOLD'
@@ -758,6 +795,58 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           rateShopError={(editLog as any).rateShopError || null}
           onSaved={handleEditSaved}
         />
+      )}
+
+      {/* Hold Reason Dialog */}
+      {holdDialogOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
+            <div className="fixed inset-0 bg-black/50 transition-opacity" onClick={() => setHoldDialogOpen(false)} />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-auto p-6 z-10">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Hold Order {holdOrderNumber}</h3>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason <span className="text-gray-400 text-xs">(optional)</span>
+                </label>
+                <textarea
+                  value={holdReason}
+                  onChange={(e) => setHoldReason(e.target.value)}
+                  placeholder="Why is this order being held?"
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-yellow-500 focus:border-yellow-500 resize-none"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleConfirmHold()
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setHoldDialogOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmHold}
+                  className="px-4 py-2 text-sm font-medium text-white bg-yellow-600 rounded-lg hover:bg-yellow-700"
+                >
+                  Put on Hold
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Delete Confirmation Dialog */}

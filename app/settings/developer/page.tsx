@@ -1,15 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
-const defaultShipFrom = {
-  name: 'Test Sender',
-  company: 'Test Co',
-  street1: '4009 Marathon Blvd',
+const emptyAddress = {
+  name: '',
+  company: '',
+  street1: '',
   street2: '',
-  city: 'Austin',
-  state: 'TX',
-  postalCode: '78756',
+  city: '',
+  state: '',
+  postalCode: '',
   country: 'US',
   phone: '',
 }
@@ -23,12 +23,88 @@ const defaultShipTo = {
   state: 'TX',
   postalCode: '78701',
   country: 'US',
-  phone: '',
+  phone: '5125551234',
+}
+
+interface DbLocation {
+  id: string
+  name: string
+  company: string | null
+  addressLine1: string
+  addressLine2: string | null
+  city: string
+  state: string
+  postalCode: string
+  country: string
+  phone: string
+  email: string | null
+  isDefault: boolean
+}
+
+// Normalize country to 2-letter code (ShipEngine requires this)
+function normalizeCountry(country: string): string {
+  const c = (country || 'US').trim().toUpperCase()
+  const map: Record<string, string> = {
+    'UNITED STATES': 'US', 'USA': 'US', 'U.S.A.': 'US', 'U.S.': 'US',
+    'CANADA': 'CA', 'MEXICO': 'MX', 'UNITED KINGDOM': 'GB', 'UK': 'GB',
+  }
+  return map[c] || (c.length === 2 ? c : 'US')
+}
+
+function locationToAddress(loc: DbLocation) {
+  return {
+    name: loc.name || '',
+    company: loc.company || '',
+    street1: loc.addressLine1 || '',
+    street2: loc.addressLine2 || '',
+    city: loc.city || '',
+    state: loc.state || '',
+    postalCode: loc.postalCode || '',
+    country: normalizeCountry(loc.country),
+    phone: loc.phone || '',
+  }
 }
 
 export default function ShipEngineTestPage() {
-  const [shipFrom, setShipFrom] = useState(defaultShipFrom)
+  const [shipFrom, setShipFrom] = useState(emptyAddress)
   const [shipTo, setShipTo] = useState(defaultShipTo)
+  const [locations, setLocations] = useState<DbLocation[]>([])
+  const [selectedLocationId, setSelectedLocationId] = useState<string>('')
+
+  // Load locations from database
+  useEffect(() => {
+    async function loadLocations() {
+      try {
+        const res = await fetch('/api/locations')
+        if (res.ok) {
+          const data = await res.json()
+          const locs: DbLocation[] = data.locations || []
+          setLocations(locs)
+          // Pre-select default location
+          const defaultLoc = locs.find(l => l.isDefault) || locs[0]
+          if (defaultLoc) {
+            setSelectedLocationId(defaultLoc.id)
+            setShipFrom(locationToAddress(defaultLoc))
+          }
+        }
+      } catch {
+        // Fall back to empty
+      }
+    }
+    loadLocations()
+  }, [])
+
+  const handleLocationChange = (locationId: string) => {
+    setSelectedLocationId(locationId)
+    if (locationId === 'custom') {
+      setShipFrom(emptyAddress)
+      return
+    }
+    const loc = locations.find(l => l.id === locationId)
+    if (loc) {
+      setShipFrom(locationToAddress(loc))
+    }
+  }
   const [weight, setWeight] = useState({ value: 1, unit: 'pound' })
   const [dimensions, setDimensions] = useState({ length: 7, width: 7, height: 7, unit: 'inch' })
   const [serviceCode, setServiceCode] = useState('usps_ground_advantage')
@@ -89,10 +165,19 @@ export default function ShipEngineTestPage() {
     }
   }
 
+  const [labelInfo, setLabelInfo] = useState<{
+    trackingNumber?: string
+    cost?: string
+    labelUrl?: string
+    labelId?: string
+    status?: string
+  } | null>(null)
+
   const createLabel = async () => {
     setLoading('label')
     setError(null)
     setResult(null)
+    setLabelInfo(null)
     try {
       const res = await fetch('/api/shipengine/create-label', {
         method: 'POST',
@@ -101,9 +186,17 @@ export default function ShipEngineTestPage() {
       })
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error || JSON.stringify(data, null, 2))
+        setError(data.error || JSON.stringify(data.details || data, null, 2))
         return
       }
+      // Extract key info
+      setLabelInfo({
+        trackingNumber: data.tracking_number,
+        cost: data.shipment_cost?.amount ? `$${data.shipment_cost.amount}` : undefined,
+        labelUrl: data.label_download?.pdf || data.label_download?.href,
+        labelId: data.label_id,
+        status: data.status,
+      })
       setResult(JSON.stringify(data, null, 2))
     } catch (e: any) {
       setError(e?.message || 'Request failed')
@@ -122,13 +215,32 @@ export default function ShipEngineTestPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <div className="bg-white rounded-lg shadow p-4">
           <h2 className="font-semibold text-gray-800 mb-3">Ship From</h2>
-          {(['name', 'company', 'street1', 'street2', 'city', 'state', 'postalCode', 'country'] as const).map((f) => (
+          {/* Location dropdown */}
+          <div className="mb-3">
+            <label className="block text-xs text-gray-500 mb-1">Location</label>
+            <select
+              value={selectedLocationId}
+              onChange={(e) => handleLocationChange(e.target.value)}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white"
+            >
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}{loc.isDefault ? ' (default)' : ''} — {loc.city}, {loc.state}
+                </option>
+              ))}
+              <option value="custom">Custom address...</option>
+            </select>
+          </div>
+          {(['name', 'company', 'street1', 'street2', 'city', 'state', 'postalCode', 'country', 'phone'] as const).map((f) => (
             <div key={f} className="mb-2">
-              <label className="block text-xs text-gray-500 capitalize">{f}</label>
+              <label className="block text-xs text-gray-500 capitalize">{f === 'postalCode' ? 'Postal Code' : f === 'street1' ? 'Address 1' : f === 'street2' ? 'Address 2' : f}</label>
               <input
                 type="text"
                 value={shipFrom[f]}
-                onChange={(e) => setShipFrom((s) => ({ ...s, [f]: e.target.value }))}
+                onChange={(e) => {
+                  setShipFrom((s) => ({ ...s, [f]: e.target.value }))
+                  if (selectedLocationId !== 'custom') setSelectedLocationId('custom')
+                }}
                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
               />
             </div>
@@ -136,9 +248,9 @@ export default function ShipEngineTestPage() {
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <h2 className="font-semibold text-gray-800 mb-3">Ship To</h2>
-          {(['name', 'company', 'street1', 'street2', 'city', 'state', 'postalCode', 'country'] as const).map((f) => (
+          {(['name', 'company', 'street1', 'street2', 'city', 'state', 'postalCode', 'country', 'phone'] as const).map((f) => (
             <div key={f} className="mb-2">
-              <label className="block text-xs text-gray-500 capitalize">{f}</label>
+              <label className="block text-xs text-gray-500 capitalize">{f === 'postalCode' ? 'Postal Code' : f === 'street1' ? 'Address 1' : f === 'street2' ? 'Address 2' : f}</label>
               <input
                 type="text"
                 value={shipTo[f]}
@@ -237,9 +349,56 @@ export default function ShipEngineTestPage() {
           <pre className="text-sm text-red-700 whitespace-pre-wrap overflow-auto max-h-60">{error}</pre>
         </div>
       )}
+
+      {/* Label summary card */}
+      {labelInfo && (
+        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <p className="text-green-800 font-semibold mb-3">Label Created Successfully</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            {labelInfo.trackingNumber && (
+              <div>
+                <span className="text-gray-500 block text-xs">Tracking #</span>
+                <span className="font-mono text-gray-900">{labelInfo.trackingNumber}</span>
+              </div>
+            )}
+            {labelInfo.cost && (
+              <div>
+                <span className="text-gray-500 block text-xs">Cost</span>
+                <span className="font-semibold text-gray-900">{labelInfo.cost}</span>
+              </div>
+            )}
+            {labelInfo.labelId && (
+              <div>
+                <span className="text-gray-500 block text-xs">Label ID</span>
+                <span className="font-mono text-gray-900 text-xs">{labelInfo.labelId}</span>
+              </div>
+            )}
+            {labelInfo.status && (
+              <div>
+                <span className="text-gray-500 block text-xs">Status</span>
+                <span className="text-gray-900">{labelInfo.status}</span>
+              </div>
+            )}
+          </div>
+          {labelInfo.labelUrl && (
+            <a
+              href={labelInfo.labelUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 mt-3 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Download Label PDF
+            </a>
+          )}
+        </div>
+      )}
+
       {result && (
         <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-          <p className="text-gray-800 font-medium mb-2">Response</p>
+          <p className="text-gray-800 font-medium mb-2">Raw Response</p>
           <pre className="text-sm text-gray-700 whitespace-pre-wrap overflow-auto max-h-96">{result}</pre>
         </div>
       )}

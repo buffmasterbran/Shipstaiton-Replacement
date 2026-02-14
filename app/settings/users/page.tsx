@@ -27,7 +27,6 @@ const ALL_PAGES: PageDef[] = [
   { key: 'pick', label: 'Picker', section: 'Warehouse' },
   { key: 'personalization', label: 'Engraving Station', section: 'Warehouse' },
   { key: 'cart-scan', label: 'Cart Scan', section: 'Warehouse' },
-  { key: 'scan-to-verify', label: 'Scan to Verify', section: 'Warehouse' },
   { key: 'local-pickup', label: 'Local Pickup Orders', section: 'Warehouse' },
   { key: 'returns', label: 'Receive Returns', section: 'Warehouse' },
   { key: 'inventory-count', label: 'Inventory Count', section: 'Warehouse' },

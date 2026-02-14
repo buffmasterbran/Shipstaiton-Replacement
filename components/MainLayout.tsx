@@ -54,7 +54,7 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
 
   const isSinglesPage = pathname === '/singles'
   const isExpeditedPage = pathname === '/expedited'
-  const isFullScreenPage = pathname === '/scan-to-verify'
+  const isFullScreenPage = false // scan-to-verify removed
   const isSettingsPage = pathname.startsWith('/settings')
 
   useEffect(() => {

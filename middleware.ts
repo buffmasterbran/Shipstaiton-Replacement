@@ -33,7 +33,6 @@ const PATH_TO_PAGE_KEY: Record<string, string> = {
   '/pick': 'pick',
   '/personalization': 'personalization',
   '/cart-scan': 'cart-scan',
-  '/scan-to-verify': 'scan-to-verify',
   '/local-pickup': 'local-pickup',
   '/returns': 'returns',
   '/inventory-count': 'inventory-count',
@@ -85,8 +84,11 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
-    // Settings pages are admin-only
+    // Settings pages are admin-only, EXCEPT /settings/account which is for everyone
     if (pathname.startsWith('/settings')) {
+      if (pathname === '/settings/account') {
+        return NextResponse.next()
+      }
       return redirectToFirstAllowed(request, allowedPages)
     }
 

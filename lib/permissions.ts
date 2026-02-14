@@ -34,7 +34,6 @@ export const ALL_PAGES: PageDefinition[] = [
   { key: 'pick',                 label: 'Picker',               path: '/pick',                 section: 'Warehouse' },
   { key: 'personalization',      label: 'Engraving Station',    path: '/personalization',      section: 'Warehouse' },
   { key: 'cart-scan',            label: 'Cart Scan',            path: '/cart-scan',            section: 'Warehouse' },
-  { key: 'scan-to-verify',       label: 'Scan to Verify',       path: '/scan-to-verify',       section: 'Warehouse' },
   { key: 'local-pickup',         label: 'Local Pickup Orders',  path: '/local-pickup',         section: 'Warehouse' },
   { key: 'returns',              label: 'Receive Returns',      path: '/returns',              section: 'Warehouse' },
   { key: 'inventory-count',      label: 'Inventory Count',      path: '/inventory-count',      section: 'Warehouse' },

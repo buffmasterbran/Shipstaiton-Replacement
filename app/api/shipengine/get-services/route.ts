@@ -7,6 +7,7 @@ const SHIPENGINE_CARRIERS_URL = 'https://api.shipengine.com/v1/carriers'
 export async function POST(request: NextRequest) {
   try {
     if (!SHIPENGINE_API_KEY) {
+      console.error('[ShipEngine Services] API key not configured!')
       return NextResponse.json(
         { error: 'ShipEngine API key not configured' },
         { status: 500 }
@@ -14,48 +15,55 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
+    console.log('[ShipEngine Services] ---- FETCHING SERVICES ----')
 
     // First, try to get services from carriers endpoint (more reliable)
     let services: Array<{ service_code: string; service_name: string; carrier: string }> = []
     
     try {
-      // Get carriers first
+      console.log('[ShipEngine Services] Fetching carriers...')
       const carriersResponse = await fetch(SHIPENGINE_CARRIERS_URL, {
-        headers: {
-          'API-Key': SHIPENGINE_API_KEY,
-        },
+        headers: { 'API-Key': SHIPENGINE_API_KEY },
       })
 
       if (carriersResponse.ok) {
         const carriersData = await carriersResponse.json()
-        const uspsCarrier = carriersData.carriers?.find((c: any) => 
-          c.carrier_code === 'stamps_com' || c.carrier_code === 'usps' || c.friendly_name?.toLowerCase().includes('usps')
-        )
+        const allCarriers = carriersData.carriers || []
+        console.log(`[ShipEngine Services] Found ${allCarriers.length} carrier(s):`,
+          allCarriers.map((c: any) => `${c.carrier_code} (${c.friendly_name})`))
 
-        if (uspsCarrier?.carrier_id) {
-          // Get services for USPS carrier
-          const servicesResponse = await fetch(`${SHIPENGINE_CARRIERS_URL}/${uspsCarrier.carrier_id}/services`, {
-            headers: {
-              'API-Key': SHIPENGINE_API_KEY,
-            },
-          })
+        // Get services for ALL carriers
+        for (const carrier of allCarriers) {
+          try {
+            console.log(`[ShipEngine Services] Fetching services for ${carrier.friendly_name}...`)
+            const servicesResponse = await fetch(`${SHIPENGINE_CARRIERS_URL}/${carrier.carrier_id}/services`, {
+              headers: { 'API-Key': SHIPENGINE_API_KEY },
+            })
 
-          if (servicesResponse.ok) {
-            const servicesData = await servicesResponse.json()
-            if (servicesData.services) {
-              services = servicesData.services
-                .filter((s: any) => s.domestic === true) // Only domestic services
-                .map((s: any) => ({
-                  service_code: s.service_code,
-                  service_name: s.name,
-                  carrier: uspsCarrier.friendly_name || 'USPS',
-                }))
+            if (servicesResponse.ok) {
+              const servicesData = await servicesResponse.json()
+              if (servicesData.services) {
+                const carrierServices = servicesData.services
+                  .filter((s: any) => s.domestic === true)
+                  .map((s: any) => ({
+                    service_code: s.service_code,
+                    service_name: s.name,
+                    carrier: carrier.friendly_name || carrier.carrier_code,
+                  }))
+                console.log(`[ShipEngine Services]   -> ${carrierServices.length} domestic service(s)`)
+                services.push(...carrierServices)
+              }
             }
+          } catch (err: any) {
+            console.warn(`[ShipEngine Services] Could not fetch services for ${carrier.friendly_name}: ${err.message}`)
           }
         }
+        console.log(`[ShipEngine Services] Total services found: ${services.length}`)
+      } else {
+        console.error(`[ShipEngine Services] Carriers fetch failed: ${carriersResponse.status}`)
       }
-    } catch (err) {
-      console.log('Could not fetch services from carriers endpoint, trying rate shopping')
+    } catch (err: any) {
+      console.error(`[ShipEngine Services] Carrier lookup error: ${err.message}`)
     }
 
     // If we got services from carriers endpoint, return them

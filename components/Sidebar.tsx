@@ -23,7 +23,6 @@ const PATH_TO_KEY: Record<string, string> = {
   '/pick': 'pick',
   '/personalization': 'personalization',
   '/cart-scan': 'cart-scan',
-  '/scan-to-verify': 'scan-to-verify',
   '/local-pickup': 'local-pickup',
   '/returns': 'returns',
   '/inventory-count': 'inventory-count',
@@ -69,7 +68,6 @@ const navSections: NavSection[] = [
       { name: 'Picker', href: '/pick' },
       { name: 'Engraving Station', href: '/personalization' },
       { name: 'Cart Scan', href: '/cart-scan' },
-      { name: 'Scan to Verify', href: '/scan-to-verify' },
       { name: 'Local Pickup Orders', href: '/local-pickup' },
       { name: 'Receive Returns', href: '/returns' },
       { name: 'Inventory Count', href: '/inventory-count', externalHref: 'https://inventory-count.vercel.app/' },
@@ -83,18 +81,20 @@ const navSections: NavSection[] = [
   },
 ]
 
+// Account page is visible to ALL users; the rest are admin-only
 const settingsNavItems = [
-  { name: 'General', href: '/settings' },
-  { name: 'Printers', href: '/settings/printers' },
-  { name: 'Carts & Cells', href: '/settings/carts-cells' },
-  { name: 'Carriers', href: '/settings/carriers' },
-  { name: 'Locations', href: '/settings/locations' },
-  { name: 'Box Config', href: '/settings/box-config' },
-  { name: 'Rate Shopping', href: '/settings/rate-shopping' },
-  { name: 'Products', href: '/settings/products' },
-  { name: 'Users & Permissions', href: '/settings/users' },
-  { name: 'Developer', href: '/settings/developer' },
-  { name: 'NetSuite Test', href: '/settings/netsuite-test' },
+  { name: 'My Account', href: '/settings/account', adminOnly: false },
+  { name: 'General', href: '/settings', adminOnly: true },
+  { name: 'Printers', href: '/settings/printers', adminOnly: true },
+  { name: 'Carts & Cells', href: '/settings/carts-cells', adminOnly: true },
+  { name: 'Carriers', href: '/settings/carriers', adminOnly: true },
+  { name: 'Locations', href: '/settings/locations', adminOnly: true },
+  { name: 'Box Config', href: '/settings/box-config', adminOnly: true },
+  { name: 'Rate Shopping', href: '/settings/rate-shopping', adminOnly: true },
+  { name: 'Products', href: '/settings/products', adminOnly: true },
+  { name: 'Users & Permissions', href: '/settings/users', adminOnly: true },
+  { name: 'Developer', href: '/settings/developer', adminOnly: true },
+  { name: 'NetSuite Test', href: '/settings/netsuite-test', adminOnly: true },
 ]
 
 // ============================================================================
@@ -115,8 +115,14 @@ export default function Sidebar({ isAdmin, allowedPages }: SidebarProps) {
   const [holdCount, setHoldCount] = useState(0)
   const [pinnedItems, setPinnedItems] = useState<string[]>([])
 
-  // Default pinned items
-  const defaultPinnedItems = ['/', '/singles', '/bulk', '/box-size']
+  // Admin "Preview as group" state
+  const [previewGroupId, setPreviewGroupId] = useState<string | null>(null)
+  const [previewPages, setPreviewPages] = useState<string[] | null>(null)
+  const [groups, setGroups] = useState<Array<{ id: string; name: string; pageKeys: string[] }>>([])
+  const [groupsLoaded, setGroupsLoaded] = useState(false)
+
+  // No default pins — users pin their own
+  const defaultPinnedItems: string[] = []
 
   const handleLogout = async () => {
     setLoggingOut(true)
@@ -151,6 +157,37 @@ export default function Sidebar({ isAdmin, allowedPages }: SidebarProps) {
       : [...pinnedItems, href]
     setPinnedItems(newPinned)
     localStorage.setItem('sidebar-pinned-items', JSON.stringify(newPinned))
+  }
+
+  // Fetch permission groups for admin preview (once)
+  useEffect(() => {
+    if (!isAdmin || isSettingsMode || groupsLoaded) return
+    async function fetchGroups() {
+      try {
+        const res = await fetch('/api/permission-groups')
+        if (res.ok) {
+          const data = await res.json()
+          setGroups(data.groups || [])
+        }
+      } catch {
+        // non-critical
+      }
+      setGroupsLoaded(true)
+    }
+    fetchGroups()
+  }, [isAdmin, isSettingsMode, groupsLoaded])
+
+  const handlePreviewChange = (groupId: string) => {
+    if (groupId === '') {
+      setPreviewGroupId(null)
+      setPreviewPages(null)
+      return
+    }
+    const group = groups.find(g => g.id === groupId)
+    if (group) {
+      setPreviewGroupId(group.id)
+      setPreviewPages(group.pageKeys)
+    }
   }
 
   // Fetch expedited, error, and hold order counts (skip in settings mode)
@@ -189,6 +226,12 @@ export default function Sidebar({ isAdmin, allowedPages }: SidebarProps) {
   // ---- Permission-based filtering ----
 
   function canAccessPage(href: string): boolean {
+    // If admin is previewing a group, use that group's pages
+    if (isAdmin && previewPages) {
+      const pageKey = PATH_TO_KEY[href]
+      if (!pageKey) return false
+      return previewPages.includes(pageKey)
+    }
     if (isAdmin) return true
     const pageKey = PATH_TO_KEY[href]
     if (!pageKey) return false
@@ -207,7 +250,10 @@ export default function Sidebar({ isAdmin, allowedPages }: SidebarProps) {
     })
     .filter((section): section is NavSection => section !== null)
 
-  // Settings mode sidebar (admin-only pages — middleware already blocks non-admins)
+  // Filter settings items based on role
+  const visibleSettingsItems = settingsNavItems.filter(item => !item.adminOnly || isAdmin)
+
+  // Settings mode sidebar
   if (isSettingsMode) {
     return (
       <div className="w-64 bg-gray-900 text-white h-screen flex flex-col">
@@ -230,10 +276,12 @@ export default function Sidebar({ isAdmin, allowedPages }: SidebarProps) {
             Settings
           </h2>
           <ul className="space-y-1">
-            {settingsNavItems.map((item) => {
-              const isActive = item.href === '/settings'
-                ? pathname === '/settings'
-                : pathname.startsWith(item.href)
+            {visibleSettingsItems.map((item) => {
+              const isActive = item.href === '/settings/account'
+                ? pathname === '/settings/account'
+                : item.href === '/settings'
+                  ? pathname === '/settings'
+                  : pathname.startsWith(item.href)
 
               return (
                 <li key={item.href}>
@@ -453,24 +501,51 @@ export default function Sidebar({ isAdmin, allowedPages }: SidebarProps) {
           </div>
         ))}
 
-        {/* Settings link for admins */}
-        {isAdmin && (
-          <div className="mt-4 pt-4 border-t border-gray-700">
-            <Link
-              href="/settings"
-              className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Settings
-            </Link>
-          </div>
-        )}
       </nav>
 
-      <div className="p-4 border-t border-gray-800 flex-shrink-0">
+      <div className="p-4 border-t border-gray-800 flex-shrink-0 space-y-3">
+        {/* Settings link for all users */}
+        <Link
+          href={isAdmin ? '/settings' : '/settings/account'}
+          className="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Settings
+        </Link>
+
+        {/* Admin: Preview as group */}
+        {isAdmin && groups.length > 0 && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Preview as group</label>
+            <select
+              value={previewGroupId || ''}
+              onChange={(e) => handlePreviewChange(e.target.value)}
+              className="w-full px-2 py-1.5 text-xs bg-gray-800 text-gray-300 border border-gray-700 rounded-lg focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">Admin (full access)</option>
+              {groups.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Preview mode indicator */}
+        {previewPages && (
+          <div className="flex items-center justify-between bg-blue-900/40 border border-blue-700 rounded-lg px-3 py-1.5">
+            <span className="text-xs text-blue-300 font-medium">Preview mode</span>
+            <button
+              onClick={() => { setPreviewGroupId(null); setPreviewPages(null) }}
+              className="text-xs text-blue-400 hover:text-white font-medium"
+            >
+              Exit
+            </button>
+          </div>
+        )}
+
         <button
           onClick={handleLogout}
           disabled={loggingOut}
