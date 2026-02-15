@@ -53,29 +53,6 @@ for (const page of ALL_PAGES) {
 }
 
 /**
- * Convert a URL pathname to a page key.
- * Returns null if the path doesn't map to any permissionable page
- * (e.g., /settings/*, /login, /api/*).
- */
-export function pathToPageKey(pathname: string): string | null {
-  return pathToKeyMap.get(pathname) ?? null
-}
-
-/**
- * Get the full page definition for a page key.
- */
-export function getPageDefinition(key: string): PageDefinition | undefined {
-  return keyToPageMap.get(key)
-}
-
-/**
- * Get the URL path for a page key.
- */
-export function pageKeyToPath(key: string): string {
-  return keyToPageMap.get(key)?.path ?? '/pick'
-}
-
-/**
  * Get all page definitions grouped by section.
  */
 export function getPagesBySection(): Record<string, PageDefinition[]> {

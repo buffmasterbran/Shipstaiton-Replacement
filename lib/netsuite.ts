@@ -75,16 +75,6 @@ async function netsuiteRequest(
     options.body = JSON.stringify(body)
   }
 
-  console.log(`[NetSuite] ---- REQUEST ----`)
-  console.log(`[NetSuite] ${method} ${url}`)
-  console.log(`[NetSuite] Headers:`, JSON.stringify(
-    { ...headers, Authorization: headers.Authorization?.substring(0, 40) + '...' },
-    null, 2
-  ))
-  if (options.body) {
-    console.log(`[NetSuite] Body:`, options.body)
-  }
-
   const res = await fetch(url, options)
   const raw = await res.text()
 
@@ -93,14 +83,6 @@ async function netsuiteRequest(
     data = JSON.parse(raw)
   } catch {
     // Response wasn't JSON, keep raw text
-  }
-
-  console.log(`[NetSuite] ---- RESPONSE ----`)
-  console.log(`[NetSuite] Status: ${res.status} ${res.statusText}`)
-  console.log(`[NetSuite] Response Headers:`, JSON.stringify(Object.fromEntries(res.headers.entries()), null, 2))
-  console.log(`[NetSuite] Response Body (first 2000 chars):`, raw.substring(0, 2000))
-  if (raw.length > 2000) {
-    console.log(`[NetSuite] (Response truncated, total length: ${raw.length})`)
   }
 
   return { status: res.status, data, raw }
@@ -172,8 +154,6 @@ export async function updateItemFulfillment(update: FulfillmentUpdate) {
       items: pkgItems,
     }
   }
-
-  console.log(`[NetSuite] PATCHing IF ${update.internalId}:`, JSON.stringify(body, null, 2))
 
   // replace=package tells NetSuite to REPLACE existing package lines instead of appending
   return netsuiteRequest('PATCH', `/itemFulfillment/${update.internalId}?replace=package`, body)

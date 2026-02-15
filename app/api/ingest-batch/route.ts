@@ -55,10 +55,8 @@ async function calculateBoxSuggestion(
   orderNumber?: string // For logging
 ): Promise<BoxSuggestionResult> {
   const unmatchedSkus: Array<{ sku: string; itemName: string | null }> = []
-  const logPrefix = `[BoxSelect ${orderNumber || 'unknown'}]`
 
   if (!items || items.length === 0) {
-    console.log(`${logPrefix} No items in order`)
     return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
   }
 
@@ -70,7 +68,6 @@ async function calculateBoxSuggestion(
   })
 
   if (nonInsuranceItems.length === 0) {
-    console.log(`${logPrefix} All items filtered (insurance/shipping)`)
     return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
   }
 
@@ -83,10 +80,8 @@ async function calculateBoxSuggestion(
 
     const size = await matchSkuToSize(prisma, sku)
     if (size) {
-      console.log(`${logPrefix} SKU "${sku}" → Size "${size.name}" (singleBoxId: ${size.singleBoxId || 'none'})`)
       mappedItems.push({ productId: size.id, quantity: qty, size })
     } else if (sku) {
-      console.log(`${logPrefix} SKU "${sku}" → NO MATCH`)
       unmatchedSkus.push({ sku, itemName: item.name || null })
     }
   }
@@ -99,11 +94,9 @@ async function calculateBoxSuggestion(
     })
 
     if (allStickers && nonInsuranceItems.length > 0) {
-      console.log(`${logPrefix} STICKER-ONLY ORDER: All ${nonInsuranceItems.length} item(s) are stickers`)
       // Find a box named "Stickers" (case-insensitive)
       const stickerBox = boxes.find(b => b.name.toLowerCase() === 'stickers' && b.active)
       if (stickerBox) {
-        console.log(`${logPrefix} ✓ STICKER BOX FOUND: "${stickerBox.name}"`)
         return {
           suggestedBox: {
             boxId: stickerBox.id,
@@ -117,29 +110,22 @@ async function calculateBoxSuggestion(
           },
           unmatchedSkus,
         }
-      } else {
-        console.log(`${logPrefix} WARNING: No "Stickers" box found in database. Available boxes: ${boxes.map(b => b.name).join(', ')}`)
       }
     }
 
-    console.log(`${logPrefix} No items matched to product sizes`)
     return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
   }
 
   // CHECK 1: Single item with dedicated box (singleBoxId)
   const totalQty = mappedItems.reduce((sum, i) => sum + i.quantity, 0)
-  console.log(`${logPrefix} Mapped ${mappedItems.length} item type(s), totalQty=${totalQty}`)
 
   if (mappedItems.length === 1 && totalQty === 1) {
     const singleSize = mappedItems[0].size
-    console.log(`${logPrefix} PATH A CHECK: Single item order. Size="${singleSize.name}", singleBoxId="${singleSize.singleBoxId || 'NOT SET'}"`)
 
     if (singleSize.singleBoxId) {
       const dedicatedBox = boxes.find(b => b.id === singleSize.singleBoxId && b.active)
-      console.log(`${logPrefix} PATH A: Looking for box id="${singleSize.singleBoxId}". Found: ${dedicatedBox ? `"${dedicatedBox.name}" (active=${dedicatedBox.active})` : 'NOT FOUND'}`)
 
       if (dedicatedBox) {
-        console.log(`${logPrefix} ✓ PATH A SUCCESS: Using dedicated box "${dedicatedBox.name}"`)
         return {
           suggestedBox: {
             boxId: dedicatedBox.id,
@@ -153,21 +139,13 @@ async function calculateBoxSuggestion(
           },
           unmatchedSkus,
         }
-      } else {
-        console.log(`${logPrefix} PATH A FAILED: Dedicated box not found or not active. Available boxes: ${boxes.map(b => `${b.id}(active=${b.active})`).join(', ')}`)
       }
-    } else {
-      console.log(`${logPrefix} PATH A SKIPPED: No singleBoxId set on product size`)
     }
-  } else {
-    console.log(`${logPrefix} PATH A SKIPPED: Not single item (types=${mappedItems.length}, qty=${totalQty})`)
   }
 
   // CHECK 2: Use standard box fitting algorithm
-  console.log(`${logPrefix} PATH B: Using findBestBox algorithm`)
   const productItems = mappedItems.map(i => ({ productId: i.productId, quantity: i.quantity }))
   const result = findBestBox(productItems, sizes, boxes, feedbackRules, packingEfficiency)
-  console.log(`${logPrefix} PATH B RESULT: box="${result.box?.name || 'none'}", confidence="${result.confidence}"`)
 
   return {
     suggestedBox: {
@@ -286,16 +264,12 @@ export async function POST(request: NextRequest) {
       )
       // Skip orders that start with "SO" (NetSuite Sales Orders = wholesale)
       if (orderNumber.toUpperCase().startsWith('SO')) {
-        console.log(`[Ingest] Skipping wholesale order: ${orderNumber}`)
         return false
       }
       return true
     })
     
     const skippedCount = originalCount - orders.length
-    if (skippedCount > 0) {
-      console.log(`[Ingest] Filtered out ${skippedCount} wholesale order(s) (SO prefix)`)
-    }
 
     // Load box config data, rate shopping config, shipping method mappings, and weight rules once for all orders
     const [sizes, boxes, feedbackRules, packingEfficiency, rateShopper, singlesCarrier, shippingMethodMappings, weightRules] = await Promise.all([
@@ -321,7 +295,6 @@ export async function POST(request: NextRequest) {
     for (const m of shippingMethodMappings) {
       mappingLookup.set(m.incomingName.toLowerCase(), m)
     }
-    console.log(`[Ingest] Loaded ${shippingMethodMappings.length} active shipping method mappings, ${weightRules.length} active weight rules`)
 
     // Collect all unmatched SKUs across orders
     const allUnmatchedSkus: Array<{ sku: string; orderNumber: string; itemName: string | null }> = []
@@ -408,14 +381,11 @@ export async function POST(request: NextRequest) {
           deliveryDays: null,
         }
         rateShopStatus = 'MAPPED'
-        console.log(`${logPrefix} Mapping matched (service): "${requestedService}" → ${matchedMapping.serviceName}${matchedMapping.isExpedited ? ' (EXPEDITED)' : ''}, orderType=${orderType}`)
       } else if (matchedMapping && mappingUsesRateShopper && matchedMapping.rateShopperId) {
         // Shipping method mapping matched → use mapping's rate shopper
         orderType = matchedMapping.isExpedited
           ? 'EXPEDITED'
           : classifyOrder(order)
-
-        console.log(`${logPrefix} Mapping matched (rate_shopper): "${requestedService}" → Rate Shopper "${matchedMapping.rateShopper?.name || matchedMapping.rateShopperId}"${matchedMapping.isExpedited ? ' (EXPEDITED)' : ''}`)
 
         // Only rate shop for non-expedited, or if explicitly mapped
         const mappingRateShopper = matchedMapping.rateShopper
@@ -474,20 +444,16 @@ export async function POST(request: NextRequest) {
               rateId: rateResult.rate.rateId,
             }
             rateShopStatus = 'SUCCESS'
-            console.log(`${logPrefix} Mapping rate shop success: ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
           } else {
             rateShopStatus = 'FAILED'
             rateShopError = rateResult.error || 'Mapping rate shopping failed'
-            console.log(`${logPrefix} Mapping rate shop failed: ${rateShopError}`)
           }
         } else if (!mappingRateShopper || !mappingRateShopper.active) {
           rateShopStatus = 'FAILED'
           rateShopError = 'Mapped rate shopper is inactive or missing'
-          console.log(`${logPrefix} Mapping rate shopper inactive/missing`)
         } else {
           rateShopStatus = 'FAILED'
           rateShopError = 'No box suggestion available for rate shopping'
-          console.log(`${logPrefix} Mapping rate shop skipped: no box dimensions`)
         }
       } else {
         // No mapping, or mapping says "use weight rules" → classify and continue
@@ -496,11 +462,9 @@ export async function POST(request: NextRequest) {
           orderType = matchedMapping.isExpedited
             ? 'EXPEDITED'
             : classifyOrder(order)
-          console.log(`${logPrefix} Mapping matched (weight_rules): "${requestedService}" → falling through to weight rules, orderType=${orderType}`)
         } else {
           // No mapping at all
           orderType = classifyOrder(order)
-          console.log(`${logPrefix} Order type: ${orderType} (no shipping method mapping matched)`)
         }
 
         // ======================================================================
@@ -537,7 +501,6 @@ export async function POST(request: NextRequest) {
               }
               rateShopStatus = 'SUCCESS'
               weightRuleMatched = true
-              console.log(`${logPrefix} Weight rule matched: ${weightOz.toFixed(1)} oz → ${matchedRule.serviceName} (direct service)`)
             } else if (matchedRule.targetType === 'rate_shopper' && matchedRule.rateShopperId && matchedRule.rateShopper?.active) {
               // Rate shop using the rule's rate shopper
               const ruleRateShopper = await prisma.rateShopper.findUnique({
@@ -596,12 +559,10 @@ export async function POST(request: NextRequest) {
                   }
                   rateShopStatus = 'SUCCESS'
                   weightRuleMatched = true
-                  console.log(`${logPrefix} Weight rule matched: ${weightOz.toFixed(1)} oz → Rate Shopper "${ruleRateShopper.name}" → ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
                 } else {
                   rateShopStatus = 'FAILED'
                   rateShopError = rateResult.error || 'Weight rule rate shopping failed'
                   weightRuleMatched = true
-                  console.log(`${logPrefix} Weight rule rate shop failed: ${rateShopError}`)
                 }
               }
             }
@@ -625,32 +586,26 @@ export async function POST(request: NextRequest) {
               deliveryDays: null,
             }
             rateShopStatus = 'SUCCESS'
-            console.log(`${logPrefix} Singles carrier set: ${singlesCarrier.serviceName}`)
           } else {
             rateShopStatus = 'FAILED'
             rateShopError = singlesCarrier
               ? 'Singles carrier has no carrier ID configured. Go to Settings > Singles Carrier and re-select the carrier.'
               : 'Singles carrier not configured. Go to Settings to configure.'
-            console.log(`${logPrefix} Singles carrier ${singlesCarrier ? 'missing carrierId' : 'not configured'} - marking as FAILED`)
           }
         } else if (!weightRuleMatched && orderType === 'EXPEDITED') {
           // Expedited orders (matched by keyword in classifyOrder) keep their original carrier
           rateShopStatus = 'SKIPPED'
-          console.log(`${logPrefix} Expedited order (keyword match) - skipping rate shopping`)
         } else if (!weightRuleMatched && orderType === 'BULK') {
           // Bulk orders need rate shopping
           if (!rateShopper) {
             rateShopStatus = 'SKIPPED'
-            console.log(`${logPrefix} No rate shopper profile configured - skipping rate shopping`)
           } else if (!suggestedBox.boxId || !suggestedBox.lengthInches || !suggestedBox.widthInches || !suggestedBox.heightInches) {
             rateShopStatus = 'FAILED'
             rateShopError = 'No box suggestion available for rate shopping'
-            console.log(`${logPrefix} Rate shopping failed: no box suggestion`)
           } else {
             // Calculate shipment weight (box + products)
             const boxWeight = suggestedBox.weightLbs || 0
             shippedWeight = await calculateShipmentWeight(prisma, items, boxWeight)
-            console.log(`${logPrefix} Calculated weight: ${shippedWeight} lbs (box: ${boxWeight} lbs)`)
 
             // Get ship-to address from order
             const shipTo = order.shipTo || {}
@@ -693,11 +648,9 @@ export async function POST(request: NextRequest) {
                 rateId: rateResult.rate.rateId,
               }
               rateShopStatus = 'SUCCESS'
-              console.log(`${logPrefix} Rate shopping success: ${rateResult.rate.carrier} ${rateResult.rate.serviceName} $${rateResult.rate.price}`)
             } else {
               rateShopStatus = 'FAILED'
               rateShopError = rateResult.error || 'Unknown rate shopping error'
-              console.log(`${logPrefix} Rate shopping failed: ${rateShopError}`)
             }
           }
         }
@@ -804,5 +757,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-
-

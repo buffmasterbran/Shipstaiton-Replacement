@@ -2,8 +2,8 @@
 
 import { useState, useMemo } from 'react'
 import { useOrders, type OrderLog } from '@/context/OrdersContext'
-import OrderDialog from '@/components/OrderDialog'
-import EditOrderDialog from '@/components/EditOrderDialog'
+import OrderDialog from '@/components/dialogs/OrderDialog'
+import EditOrderDialog from '@/components/dialogs/EditOrderDialog'
 
 function getErrorHint(error: string | null | undefined): string | null {
   if (!error) return null

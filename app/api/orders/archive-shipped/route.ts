@@ -15,8 +15,6 @@ export async function POST() {
       where: { status: 'SHIPPED' },
     })
 
-    console.log(`[CLEAR SHIPPED] Found ${shippedCount} shipped orders to reset`)
-
     if (shippedCount === 0) {
       return NextResponse.json({ cleared: 0, message: 'No shipped orders to clear' })
     }
@@ -39,7 +37,6 @@ export async function POST() {
     })
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-    console.log(`[CLEAR SHIPPED] Reset ${result.count} orders back to AWAITING_SHIPMENT in ${elapsed}s`)
 
     return NextResponse.json({
       cleared: result.count,

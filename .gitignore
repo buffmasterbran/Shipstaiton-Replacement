@@ -38,8 +38,6 @@ next-env.d.ts
 # prisma
 /prisma/migrations
 
-
-
-
-
-nul
+# IDE settings
+.claude/
+.cursor/

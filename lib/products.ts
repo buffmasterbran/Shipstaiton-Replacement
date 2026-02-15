@@ -76,7 +76,7 @@ export async function getProductSizes(prisma: PrismaClient): Promise<ProductSize
 }
 
 /** Get active product sizes only */
-export async function getActiveProductSizes(prisma: PrismaClient): Promise<ProductSize[]> {
+async function getActiveProductSizes(prisma: PrismaClient): Promise<ProductSize[]> {
   const sizes = await prisma.productSize.findMany({
     where: { active: true },
     orderBy: { name: 'asc' },
@@ -85,7 +85,7 @@ export async function getActiveProductSizes(prisma: PrismaClient): Promise<Produ
 }
 
 /** Get all SKUs */
-export async function getProductSkus(prisma: PrismaClient): Promise<ProductSku[]> {
+async function getProductSkus(prisma: PrismaClient): Promise<ProductSku[]> {
   return prisma.productSku.findMany({
     orderBy: { sku: 'asc' },
   })
@@ -100,7 +100,7 @@ export async function getSkusForSize(prisma: PrismaClient, sizeId: string): Prom
 }
 
 /** Get all SKU patterns */
-export async function getProductSkuPatterns(prisma: PrismaClient): Promise<ProductSkuPattern[]> {
+async function getProductSkuPatterns(prisma: PrismaClient): Promise<ProductSkuPattern[]> {
   return prisma.productSkuPattern.findMany({
     orderBy: { productSizeId: 'asc' },
   })
@@ -173,36 +173,6 @@ export async function matchSkuToSize(
     } catch {
       // Invalid regex, skip
       continue
-    }
-  }
-
-  return null
-}
-
-/**
- * Backward-compatible wrapper that takes products array.
- * Uses in-memory matching (for box-config integration).
- */
-export function matchSkuToProduct(
-  sku: string,
-  products: Product[],
-  patterns?: ProductSkuPattern[]
-): Product | null {
-  if (!sku) return null
-
-  // If we have patterns, use them for regex matching
-  if (patterns) {
-    for (const patternRecord of patterns) {
-      const product = products.find(p => p.id === patternRecord.productSizeId)
-      if (!product?.active) continue
-      try {
-        const regex = new RegExp(patternRecord.pattern, 'i')
-        if (regex.test(sku)) {
-          return product
-        }
-      } catch {
-        continue
-      }
     }
   }
 
@@ -364,21 +334,6 @@ export async function deleteProductSku(
 // SKU Pattern CRUD Functions
 // ============================================================================
 
-export async function addProductSkuPattern(
-  prisma: PrismaClient,
-  data: {
-    productSizeId: string
-    pattern: string
-  }
-): Promise<ProductSkuPattern> {
-  return prisma.productSkuPattern.create({
-    data: {
-      productSizeId: data.productSizeId,
-      pattern: data.pattern,
-    },
-  })
-}
-
 export async function deleteProductSkuPattern(
   prisma: PrismaClient,
   id: number
@@ -394,26 +349,6 @@ export async function deleteProductSkuPattern(
 // ============================================================================
 // Bulk Operations
 // ============================================================================
-
-export async function addPatternsToSize(
-  prisma: PrismaClient,
-  sizeId: string,
-  patterns: string[]
-): Promise<ProductSkuPattern[]> {
-  const created = await prisma.productSkuPattern.createMany({
-    data: patterns.map(pattern => ({
-      productSizeId: sizeId,
-      pattern,
-    })),
-  })
-
-  // Return the created patterns
-  return prisma.productSkuPattern.findMany({
-    where: { productSizeId: sizeId },
-    orderBy: { id: 'desc' },
-    take: created.count,
-  })
-}
 
 export async function replacePatternsForSize(
   prisma: PrismaClient,

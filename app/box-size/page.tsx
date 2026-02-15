@@ -1,6 +1,6 @@
 'use client'
 
-import BoxSizeSpecificTable from '@/components/BoxSizeSpecificTable'
+import BoxSizeSpecificTable from '@/components/orders/BoxSizeSpecificTable'
 import { useOrders } from '@/context/OrdersContext'
 
 export default function BoxSizePage() {

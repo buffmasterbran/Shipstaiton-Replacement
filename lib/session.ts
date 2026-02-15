@@ -30,7 +30,7 @@ export interface SessionData {
 /**
  * Encrypt session data into a JWT
  */
-export async function encrypt(payload: SessionData): Promise<string> {
+async function encrypt(payload: SessionData): Promise<string> {
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -41,7 +41,7 @@ export async function encrypt(payload: SessionData): Promise<string> {
 /**
  * Decrypt and verify a JWT session token
  */
-export async function decrypt(session: string): Promise<SessionData | null> {
+async function decrypt(session: string): Promise<SessionData | null> {
   try {
     const { payload } = await jwtVerify(session, getKey(), {
       algorithms: ['HS256'],

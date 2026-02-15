@@ -55,7 +55,7 @@ export interface OrderSignature {
  * For BULK classification, you must use classifyWithDuplicates() which
  * compares against other orders.
  */
-export function classifyOrderBasic(order: ClassifiableOrder): OrderClassification {
+function classifyOrderBasic(order: ClassifiableOrder): OrderClassification {
   // Personalized always wins
   if (order.isPersonalized) {
     return 'PERSONALIZED'
@@ -111,7 +111,7 @@ export function computeOrderSignature(items: ClassifiableItem[]): OrderSignature
  * - Total items (sum of quantities) must be 2-4
  * - This is a physical constraint: cart rows are 4 bins wide, 1 bin per SKU instance
  */
-export function canBeBulk(sig: OrderSignature): boolean {
+function canBeBulk(sig: OrderSignature): boolean {
   return sig.itemCount >= 2 && sig.itemCount <= 4
 }
 
@@ -236,75 +236,3 @@ export function buildBulkSkuLayout(
   return layout
 }
 
-// ============================================================================
-// Helper: Extract items from raw NetSuite payload
-// ============================================================================
-
-/**
- * Extract ClassifiableOrder data from a raw NetSuite order payload.
- */
-export function extractClassifiableOrder(orderNumber: string, rawPayload: any): ClassifiableOrder {
-  const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
-  const items: ClassifiableItem[] = (order?.items || []).map((item: any) => ({
-    sku: item.sku || '',
-    name: item.name || '',
-    quantity: item.quantity || 1,
-  }))
-
-  // Check for personalization flag
-  // NetSuite may send this as a field on the order or items
-  const isPersonalized = !!(
-    order?.isPersonalized ||
-    order?.personalized ||
-    order?.customization ||
-    order?.engravingText ||
-    (order?.items || []).some((item: any) =>
-      item.isPersonalized || item.personalized || item.customization || item.engravingText
-    )
-  )
-
-  return {
-    orderNumber,
-    items,
-    isPersonalized,
-    isExpedited: false, // Expedited detection handled separately
-  }
-}
-
-// ============================================================================
-// Re-classification: Check if new orders push groups over bulk threshold
-// ============================================================================
-
-/**
- * Given existing unprocessed orders and newly ingested orders,
- * determine which orders need reclassification.
- * 
- * Returns the order numbers that should change from ORDER_BY_SIZE to BULK
- * (or vice versa if threshold changes).
- */
-export function findReclassifications(
-  existingOrders: ClassifiableOrder[],
-  newOrders: ClassifiableOrder[],
-  bulkThreshold: number = 4
-): { toBulk: string[]; toOrderBySize: string[] } {
-  const allOrders = [...existingOrders, ...newOrders]
-  const newClassifications = classifyOrders(allOrders, bulkThreshold)
-  const oldClassifications = classifyOrders(existingOrders, bulkThreshold)
-
-  const toBulk: string[] = []
-  const toOrderBySize: string[] = []
-
-  // Check existing orders that might change classification
-  for (const order of existingOrders) {
-    const oldClass = oldClassifications.get(order.orderNumber)
-    const newClass = newClassifications.get(order.orderNumber)
-
-    if (oldClass === 'ORDER_BY_SIZE' && newClass === 'BULK') {
-      toBulk.push(order.orderNumber)
-    } else if (oldClass === 'BULK' && newClass === 'ORDER_BY_SIZE') {
-      toOrderBySize.push(order.orderNumber)
-    }
-  }
-
-  return { toBulk, toOrderBySize }
-}

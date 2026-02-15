@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import OrdersTable from '@/components/OrdersTable'
+import OrdersTable from '@/components/orders/OrdersTable'
 import { useOrders } from '@/context/OrdersContext'
 
 interface OrderHighlightSettings {

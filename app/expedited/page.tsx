@@ -1,6 +1,6 @@
 'use client'
 
-import ExpeditedOrdersTable from '@/components/ExpeditedOrdersTable'
+import ExpeditedOrdersTable from '@/components/orders/ExpeditedOrdersTable'
 import { useOrders } from '@/context/OrdersContext'
 
 export default function ExpeditedOrdersPage() {

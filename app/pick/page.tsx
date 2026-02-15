@@ -1,316 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRole } from '@/context/RoleContext'
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface PickCell {
-  id: string
-  name: string
-  active: boolean
-}
-
-interface PickCart {
-  id: string
-  name: string
-  color: string | null
-  status: string
-  active: boolean
-  activeChunk?: {
-    pickerName: string
-    claimedAt: string
-    ordersInChunk: number
-  } | null
-}
-
-interface OrderItem {
-  sku: string
-  name: string
-  quantity: number
-}
-
-interface ChunkOrder {
-  id: string
-  orderNumber: string
-  binNumber: number
-  rawPayload: any
-}
-
-interface BulkSkuLayoutEntry {
-  sku: string
-  binQty: number
-  masterUnitIndex: number
-}
-
-interface PickChunk {
-  id: string
-  batchId: string
-  chunkNumber: number
-  status: string
-  pickingMode?: 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE'
-  isPersonalized?: boolean
-  cartId: string
-  pickerName: string
-  ordersInChunk: number
-  batch: {
-    id: string
-    name: string
-    type?: 'SINGLES' | 'BULK' | 'ORDER_BY_SIZE'
-    isPersonalized?: boolean
-  }
-  cart: PickCart
-  orders: ChunkOrder[]
-  bulkBatchAssignments?: Array<{
-    shelfNumber: number
-    bulkBatch: {
-      id: string
-      skuLayout: BulkSkuLayoutEntry[]
-      orderCount: number
-      groupSignature: string
-    }
-  }>
-}
-
-// Item grouped by SKU with bin distribution
-interface PickItem {
-  sku: string
-  name: string
-  binLocation: string
-  productSize: string
-  productColor: string
-  bins: Array<{ binNumber: number; quantity: number }>
-  totalQuantity: number
-}
-
-type PickerStep = 'login' | 'cell-select' | 'cart-select' | 'picking' | 'complete'
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function getOrderItems(rawPayload: any): OrderItem[] {
-  const order = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
-  const items = order?.items || []
-  return items
-    .filter((item: any) => {
-      const sku = (item.sku || '').toUpperCase()
-      const name = (item.name || '').toUpperCase()
-      return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
-    })
-    .map((item: any) => ({
-      sku: item.sku || 'N/A',
-      name: item.name || 'Unknown',
-      quantity: item.quantity || 1,
-    }))
-}
-
-function extractProductInfo(sku: string): { size: string; color: string } {
-  const parts = sku.split('-')
-  // Common pattern: BRAND-SIZE-COLOR or BRAND-COLOR-SIZE
-  let size = ''
-  let color = ''
-  for (const part of parts) {
-    if (/^\d+oz$/i.test(part)) size = part
-    else if (/^\d+$/.test(part)) size = part + 'oz'
-    else if (part.length > 2 && !/^[A-Z]{2,4}$/.test(part)) color = part
-  }
-  return { size: size || 'N/A', color: color || 'N/A' }
-}
-
-function formatTimer(seconds: number): string {
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-}
-
-function getModeBadge(type?: string, isPersonalized?: boolean) {
-  if (isPersonalized) return { label: 'PERSONALIZED', bg: 'bg-purple-600' }
-  switch (type) {
-    case 'SINGLES': return { label: 'SINGLES', bg: 'bg-blue-600' }
-    case 'BULK': return { label: 'BULK', bg: 'bg-orange-600' }
-    case 'ORDER_BY_SIZE': return { label: 'ORDER BY SIZE', bg: 'bg-teal-600' }
-    default: return { label: 'PICK', bg: 'bg-gray-600' }
-  }
-}
-
-// ============================================================================
-// Cart Visualization Component
-// ============================================================================
-
-function CartVisualization({ 
-  totalBins, 
-  highlightedBins,
-  completedBins,
-  emptyBins,
-  binQuantities,
-  pickingMode,
-}: { 
-  totalBins: number
-  highlightedBins: Set<number>
-  completedBins: Set<number>
-  emptyBins: Set<number>
-  binQuantities?: Map<number, number>
-  pickingMode?: string
-}) {
-  // Bulk uses 3 rows of 4 (shelves), others use 4x3 grid
-  const cols = pickingMode === 'BULK' ? 4 : 4
-  const bins = Array.from({ length: totalBins }, (_, i) => i + 1)
-  
-  return (
-    <div 
-      className="grid gap-4 w-full h-full"
-      style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
-    >
-      {bins.map((bin) => {
-        const isCompleted = completedBins.has(bin)
-        const isEmpty = emptyBins.has(bin)
-        const isHighlighted = highlightedBins.has(bin)
-        const quantity = binQuantities?.get(bin)
-        
-        let bgColor = 'bg-white'
-        let borderColor = 'border-gray-300'
-        let textColor = 'text-gray-400'
-        
-        if (isEmpty) {
-          bgColor = 'bg-gray-100'
-          borderColor = 'border-gray-300'
-          textColor = 'text-gray-300'
-        } else if (isCompleted) {
-          bgColor = 'bg-green-100'
-          borderColor = 'border-green-500'
-          textColor = 'text-green-700'
-        } else if (isHighlighted) {
-          bgColor = 'bg-blue-100'
-          borderColor = 'border-blue-500'
-          textColor = 'text-blue-700'
-        }
-        
-        return (
-          <div
-            key={bin}
-            className={`flex flex-col items-center justify-center rounded-2xl ${bgColor} ${borderColor} ${textColor}`}
-            style={{ borderWidth: '4px' }}
-          >
-            {isEmpty ? (
-              <span className="text-5xl font-bold">&mdash;</span>
-            ) : isCompleted ? (
-              <span className="text-5xl font-bold">&#10003;</span>
-            ) : isHighlighted && quantity ? (
-              <>
-                <span className="text-2xl font-medium text-gray-500">{bin}</span>
-                <span className="text-5xl font-bold">&times;{quantity}</span>
-              </>
-            ) : (
-              <span className="text-5xl font-bold">{bin}</span>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ============================================================================
-// Timer Hook
-// ============================================================================
-
-function useTimer() {
-  const [elapsed, setElapsed] = useState(0)
-  const [running, setRunning] = useState(false)
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
-
-  const start = useCallback(() => {
-    setRunning(true)
-    setElapsed(0)
-  }, [])
-
-  const pause = useCallback(() => setRunning(false), [])
-  const resume = useCallback(() => setRunning(true), [])
-  const reset = useCallback(() => { setRunning(false); setElapsed(0) }, [])
-
-  useEffect(() => {
-    if (running) {
-      intervalRef.current = setInterval(() => setElapsed(prev => prev + 1), 1000)
-    } else if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-    }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
-  }, [running])
-
-  return { elapsed, running, start, pause, resume, reset }
-}
-
-// ============================================================================
-// Slide Menu
-// ============================================================================
-
-function SlideMenu({
-  isOpen,
-  onClose,
-  pickerName,
-  cartName,
-  cellName,
-  batchType,
-  isPersonalized,
-  onCancelPick,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  pickerName: string
-  cartName: string
-  cellName: string
-  batchType?: string
-  isPersonalized?: boolean
-  onCancelPick: () => void
-}) {
-  if (!isOpen) return null
-  const badge = getModeBadge(batchType, isPersonalized)
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
-      <div className="fixed left-0 top-0 bottom-0 w-72 bg-white shadow-2xl z-50 flex flex-col">
-        <div className="p-6 border-b bg-gray-50">
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 mb-4">
-            Close
-          </button>
-          <h2 className="text-xl font-bold text-gray-900">Menu</h2>
-        </div>
-        <div className="p-6 space-y-4 border-b">
-            <div>
-              <div className="text-sm text-gray-500">Picker</div>
-              <div className="font-bold text-gray-900">{pickerName}</div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-500">Cart</div>
-              <div className="font-bold text-gray-900">{cartName}</div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-500">Cell</div>
-              <div className="font-bold text-gray-900">{cellName}</div>
-            </div>
-          <div>
-            <div className="text-sm text-gray-500">Mode</div>
-            <span className={`inline-flex px-2 py-1 rounded text-xs font-bold text-white ${badge.bg}`}>
-              {badge.label}
-            </span>
-          </div>
-        </div>
-        <div className="flex-1 p-4">
-          <button
-            onClick={() => { onClose(); onCancelPick() }}
-            className="w-full py-4 px-4 text-left text-red-600 hover:bg-red-50 rounded-xl font-medium"
-          >
-            Cancel Pick
-          </button>
-        </div>
-      </div>
-    </>
-  )
-}
+import { PickCell, PickCart, PickChunk, PickItem, PickerStep, BulkSkuLayoutEntry } from './types'
+import { getOrderItems, extractProductInfo, formatTimer, getModeBadge } from './helpers'
+import { useTimer } from './hooks/useTimer'
+import { CartVisualization } from './CartVisualization'
+import { SlideMenu } from './SlideMenu'
 
 // ============================================================================
 // Main Page
@@ -428,30 +124,13 @@ export default function PickerPage() {
 
     if (isBulkMode) {
       // BULK MODE: Consolidate skuLayouts across ALL shelves (up to 3)
-      // Shelf 1 = bins 1-4, Shelf 2 = bins 5-8, Shelf 3 = bins 9-12
-      // Group by SKU across all shelves so picker makes ONE trip per SKU
       const assignments = [...chunkData.bulkBatchAssignments!].sort((a, b) => a.shelfNumber - b.shelfNumber)
-
-      console.log('[BULK picker] Processing chunk for picking. Assignments:', assignments.length)
-      console.log('[BULK picker] Raw assignments:', JSON.stringify(assignments.map(a => ({
-        shelfNumber: a.shelfNumber,
-        bulkBatchId: a.bulkBatch?.id,
-        skuLayout: a.bulkBatch?.skuLayout,
-        orderCount: a.bulkBatch?.orderCount,
-      })), null, 2))
-      console.log('[BULK picker] Chunk orders:', chunkData.orders.length, chunkData.orders.map(o => ({
-        orderNumber: o.orderNumber,
-        binNumber: o.binNumber,
-        bulkBatchId: (o as any).bulkBatchId,
-      })))
 
       const skuGroups = new Map<string, { bins: Array<{ binNumber: number; quantity: number }>; totalQty: number }>()
 
       for (const assignment of assignments) {
         const layout = (assignment.bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
-        const binOffset = (assignment.shelfNumber - 1) * 4 // shelf 1=0, shelf 2=4, shelf 3=8
-
-        console.log(`[BULK picker] Shelf ${assignment.shelfNumber}: layout has ${layout.length} entries, binOffset=${binOffset}`)
+        const binOffset = (assignment.shelfNumber - 1) * 4
 
         for (const entry of layout) {
           const skuKey = entry.sku.toUpperCase()
@@ -460,7 +139,6 @@ export default function PickerPage() {
           }
           const group = skuGroups.get(skuKey)!
           const physicalBin = entry.masterUnitIndex + 1 + binOffset
-          console.log(`[BULK picker]   SKU ${skuKey}: masterUnitIndex=${entry.masterUnitIndex}, physicalBin=${physicalBin}, qty=${entry.binQty}`)
           group.bins.push({ binNumber: physicalBin, quantity: entry.binQty })
           group.totalQty += entry.binQty
         }
@@ -470,7 +148,6 @@ export default function PickerPage() {
       const items: PickItem[] = []
       for (const [sku, data] of Array.from(skuGroups.entries())) {
         data.bins.sort((a, b) => a.binNumber - b.binNumber)
-        // Try to get a friendly name from the first order's payload
         let friendlyName = sku
         if (chunkData.orders.length > 0) {
           const orderItems = getOrderItems(chunkData.orders[0].rawPayload)
@@ -490,12 +167,6 @@ export default function PickerPage() {
       }
 
       items.sort((a, b) => a.binLocation.localeCompare(b.binLocation))
-      console.log('[BULK picker] Final pick items:', JSON.stringify(items.map(i => ({
-        sku: i.sku,
-        totalQuantity: i.totalQuantity,
-        bins: i.bins,
-        binLocation: i.binLocation,
-      })), null, 2))
       setPickItems(items)
       setCurrentItemIndex(0)
       setPickedSkus(new Set())
@@ -564,7 +235,6 @@ export default function PickerPage() {
   const [pickingPersonalized, setPickingPersonalized] = useState(false)
 
   const handlePickPersonalized = () => {
-    // Remember the current cell to return to after the personalized pick
     if (selectedCell) {
       setReturnToCell(selectedCell)
     }
@@ -622,7 +292,6 @@ export default function PickerPage() {
   const currentItem = pickItems[currentItemIndex] || null
   const batchType = chunk?.batch.type || chunk?.pickingMode
   const isPersonalized = chunk?.batch.isPersonalized || chunk?.isPersonalized || false
-  // All modes use 12 bins (Bulk = 3 shelves x 4 bins, others = 4x3 grid)
   const totalBins = 12
 
   // Calculate completed and highlighted bins
@@ -630,8 +299,6 @@ export default function PickerPage() {
   if (chunk) {
     const isBulkPicking = batchType === 'BULK' && chunk.bulkBatchAssignments && chunk.bulkBatchAssignments.length > 0
     if (isBulkPicking) {
-      // BULK: Physical bins are determined by skuLayout, not order binNumbers
-      // A physical bin is "complete" when its SKU has been picked
       const assignments = [...chunk.bulkBatchAssignments!].sort((a, b) => a.shelfNumber - b.shelfNumber)
       for (const assignment of assignments) {
         const layout = (assignment.bulkBatch.skuLayout || []) as BulkSkuLayoutEntry[]
@@ -644,11 +311,10 @@ export default function PickerPage() {
         }
       }
     } else {
-      // Singles/OBS: Use order binNumbers directly
-    for (const order of chunk.orders) {
-      const orderItems = getOrderItems(order.rawPayload)
+      for (const order of chunk.orders) {
+        const orderItems = getOrderItems(order.rawPayload)
         if (orderItems.every(item => pickedSkus.has(item.sku.toUpperCase()))) {
-        completedBins.add(order.binNumber)
+          completedBins.add(order.binNumber)
         }
       }
     }
@@ -671,7 +337,6 @@ export default function PickerPage() {
     setPickedSkus(prev => new Set([...Array.from(prev), currentItem.sku]))
 
     if (currentItemIndex >= pickItems.length - 1) {
-      // All done
       setLoading(true)
       try {
         await fetch('/api/pick', {
@@ -774,7 +439,6 @@ export default function PickerPage() {
     timer.reset()
     setPickingPersonalized(false)
 
-    // If we were on a personalized detour, return to the original cell
     if (returnToCell) {
       setSelectedCell(returnToCell)
       setReturnToCell(null)
@@ -808,7 +472,6 @@ export default function PickerPage() {
       })
       if (!res.ok) throw new Error('Failed to release cart')
       setReleaseCart(null)
-      // Re-fetch carts to reflect the change
       const params = isAdmin ? '&includeActive=true' : ''
       const cartsRes = await fetch(`/api/pick?action=available-carts${params}`)
       const cartsData = await cartsRes.json()
@@ -887,7 +550,7 @@ export default function PickerPage() {
               ))}
             </div>
 
-              {/* Personalized quick-pick button (always shown, grabs from pool) */}
+              {/* Personalized quick-pick button */}
               <div className="mt-8">
                 <button
                   onClick={handlePickPersonalized}
@@ -1056,7 +719,7 @@ export default function PickerPage() {
             {loading ? 'Starting...' : 'Start Picking →'}
           </button>
 
-          {/* Personalized detour button (only show if not already picking personalized) */}
+          {/* Personalized detour button */}
           {!pickingPersonalized && (
             <button
               onClick={handlePickPersonalized}

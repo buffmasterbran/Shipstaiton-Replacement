@@ -193,13 +193,6 @@ export function isPrintNodeConfigured(): boolean {
 // ============================================================================
 
 /**
- * Get all saved printer configurations from the database
- */
-export async function getPrinterConfigs(prisma: PrismaClient): Promise<PrismaPrinterConfig[]> {
-  return prisma.printerConfig.findMany()
-}
-
-/**
  * Get printer configs indexed by printNodeId for quick lookup
  */
 export async function getPrinterConfigMap(prisma: PrismaClient): Promise<Map<number, PrismaPrinterConfig>> {
@@ -285,72 +278,6 @@ export async function savePrinterConfigs(
     })
 
     return results
-  })
-}
-
-/**
- * Set a specific printer as the default for its computer,
- * clearing the previous default for that computer.
- */
-export async function setDefaultPrinter(
-  prisma: PrismaClient,
-  printNodeId: number,
-  computerName: string
-): Promise<void> {
-  await prisma.$transaction([
-    // Clear existing default for this computer
-    prisma.printerConfig.updateMany({
-      where: { computerName, isDefault: true },
-      data: { isDefault: false },
-    }),
-    // Set the new default
-    prisma.printerConfig.update({
-      where: { printNodeId },
-      data: { isDefault: true },
-    }),
-  ])
-}
-
-/**
- * Delete printer configs that no longer exist in PrintNode.
- * Call after fetching live printers to clean up stale records.
- */
-export async function cleanupStalePrinterConfigs(
-  prisma: PrismaClient,
-  livePrintNodeIds: number[]
-): Promise<number> {
-  const result = await prisma.printerConfig.deleteMany({
-    where: {
-      printNodeId: { notIn: livePrintNodeIds },
-    },
-  })
-  if (result.count > 0) {
-    console.log(`[PrintNode] Cleaned up ${result.count} stale printer config(s)`)
-  }
-  return result.count
-}
-
-/**
- * Merge live PrintNode printers with saved DB configs.
- * New printers (not yet in DB) default to enabled=true, isDefault=false.
- */
-export async function getMergedPrinters(
-  prisma: PrismaClient
-): Promise<MergedPrinter[]> {
-  const [livePrinters, configMap] = await Promise.all([
-    fetchPrintNodePrinters(),
-    getPrinterConfigMap(prisma),
-  ])
-
-  return livePrinters.map((p) => {
-    const saved = configMap.get(p.id)
-    return {
-      ...p,
-      friendlyName: saved?.friendlyName || '',
-      enabled: saved?.enabled ?? true,
-      isDefault: saved?.isDefault ?? false,
-      computerFriendlyName: saved?.computerFriendlyName || '',
-    }
   })
 }
 

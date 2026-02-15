@@ -39,12 +39,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    console.log('[ShipEngine Label] ---- INCOMING REQUEST ----')
-    console.log('[ShipEngine Label] Body:', JSON.stringify(body, null, 2))
 
     // Step 0: If shipFrom is missing or incomplete, load default location from DB
     if (!body.shipFrom || !body.shipFrom.street1) {
-      console.log('[ShipEngine Label] No shipFrom provided, loading default location from DB...')
       try {
         const defaultLocation = await prisma.location.findFirst({
           where: { isDefault: true, active: true },
@@ -64,7 +61,6 @@ export async function POST(request: NextRequest) {
             country: defaultLocation.country,
             phone: defaultLocation.phone,
           }
-          console.log(`[ShipEngine Label] Using location: ${defaultLocation.name} (${defaultLocation.city}, ${defaultLocation.state})`)
         } else {
           console.error('[ShipEngine Label] No locations configured in database!')
           return NextResponse.json(
@@ -81,7 +77,6 @@ export async function POST(request: NextRequest) {
     let carrierId: string | undefined = body.carrierId
     
     if (!carrierId) {
-      console.log('[ShipEngine Label] No carrierId provided, looking up carriers...')
       try {
         const carriersResponse = await fetch(SHIPENGINE_CARRIERS_URL, {
           headers: { 'API-Key': SHIPENGINE_API_KEY },
@@ -90,7 +85,6 @@ export async function POST(request: NextRequest) {
         if (carriersResponse.ok) {
           const carriersData = await carriersResponse.json()
           const allCarriers = carriersData.carriers || []
-          console.log(`[ShipEngine Label] Found ${allCarriers.length} carrier(s):`, allCarriers.map((c: any) => `${c.carrier_code} (${c.friendly_name}) [${c.carrier_id}]`))
 
           // Try to match the carrier from the request, or fall back to USPS
           const requestedCarrier = (body.serviceCode || '').split('_')[0]?.toLowerCase()
@@ -113,7 +107,6 @@ export async function POST(request: NextRequest) {
 
           if (matchedCarrier) {
             carrierId = matchedCarrier.carrier_id
-            console.log(`[ShipEngine Label] Using carrier: ${matchedCarrier.friendly_name} (${matchedCarrier.carrier_id})`)
           } else {
             console.warn('[ShipEngine Label] No matching carrier found!')
           }
@@ -123,13 +116,10 @@ export async function POST(request: NextRequest) {
       } catch (err: any) {
         console.error('[ShipEngine Label] Carrier lookup error:', err.message)
       }
-    } else {
-      console.log(`[ShipEngine Label] Using provided carrierId: ${carrierId}`)
     }
 
     // Step 2: Map service code
     const mappedServiceCode = serviceCodeMap[body.serviceCode] || body.serviceCode || 'usps_ground_advantage'
-    console.log(`[ShipEngine Label] Service code: ${body.serviceCode} -> ${mappedServiceCode}`)
 
     // Step 3: Build ShipEngine request
     const shipEngineRequest: any = {
@@ -190,10 +180,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 4: Send to ShipEngine
-    console.log('[ShipEngine Label] ---- SENDING TO SHIPENGINE ----')
-    console.log('[ShipEngine Label] POST', SHIPENGINE_API_URL)
-    console.log('[ShipEngine Label] Request body:', JSON.stringify(shipEngineRequest, null, 2))
-
     const response = await fetch(SHIPENGINE_API_URL, {
       method: 'POST',
       headers: {
@@ -204,10 +190,6 @@ export async function POST(request: NextRequest) {
     })
 
     const data = await response.json()
-
-    // Step 5: Log response
-    console.log('[ShipEngine Label] ---- RESPONSE ----')
-    console.log(`[ShipEngine Label] Status: ${response.status} ${response.statusText}`)
 
     if (!response.ok) {
       const errorDetail = data.errors
@@ -221,14 +203,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Success — log key info
-    console.log(`[ShipEngine Label] SUCCESS!`)
-    console.log(`[ShipEngine Label]   Label ID: ${data.label_id}`)
-    console.log(`[ShipEngine Label]   Tracking: ${data.tracking_number}`)
-    console.log(`[ShipEngine Label]   Cost: $${data.shipment_cost?.amount || data.insurance_cost?.amount || '?'}`)
-    console.log(`[ShipEngine Label]   Label URL: ${data.label_download?.pdf || data.label_download?.href || 'N/A'}`)
-    console.log(`[ShipEngine Label]   Status: ${data.status}`)
-
     return NextResponse.json(data)
   } catch (error: any) {
     console.error('[ShipEngine Label] EXCEPTION:', error.message)
@@ -239,4 +213,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-

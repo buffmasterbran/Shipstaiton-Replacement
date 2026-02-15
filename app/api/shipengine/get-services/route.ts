@@ -15,13 +15,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    console.log('[ShipEngine Services] ---- FETCHING SERVICES ----')
 
     // First, try to get services from carriers endpoint (more reliable)
     let services: Array<{ service_code: string; service_name: string; carrier: string }> = []
     
     try {
-      console.log('[ShipEngine Services] Fetching carriers...')
       const carriersResponse = await fetch(SHIPENGINE_CARRIERS_URL, {
         headers: { 'API-Key': SHIPENGINE_API_KEY },
       })
@@ -29,13 +27,10 @@ export async function POST(request: NextRequest) {
       if (carriersResponse.ok) {
         const carriersData = await carriersResponse.json()
         const allCarriers = carriersData.carriers || []
-        console.log(`[ShipEngine Services] Found ${allCarriers.length} carrier(s):`,
-          allCarriers.map((c: any) => `${c.carrier_code} (${c.friendly_name})`))
 
         // Get services for ALL carriers
         for (const carrier of allCarriers) {
           try {
-            console.log(`[ShipEngine Services] Fetching services for ${carrier.friendly_name}...`)
             const servicesResponse = await fetch(`${SHIPENGINE_CARRIERS_URL}/${carrier.carrier_id}/services`, {
               headers: { 'API-Key': SHIPENGINE_API_KEY },
             })
@@ -50,7 +45,6 @@ export async function POST(request: NextRequest) {
                     service_name: s.name,
                     carrier: carrier.friendly_name || carrier.carrier_code,
                   }))
-                console.log(`[ShipEngine Services]   -> ${carrierServices.length} domestic service(s)`)
                 services.push(...carrierServices)
               }
             }
@@ -58,7 +52,6 @@ export async function POST(request: NextRequest) {
             console.warn(`[ShipEngine Services] Could not fetch services for ${carrier.friendly_name}: ${err.message}`)
           }
         }
-        console.log(`[ShipEngine Services] Total services found: ${services.length}`)
       } else {
         console.error(`[ShipEngine Services] Carriers fetch failed: ${carriersResponse.status}`)
       }

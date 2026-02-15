@@ -1,34 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-
-interface PrintNodePrinter {
-  id: number
-  name: string
-  state: string
-  friendlyName: string
-  enabled: boolean
-  isDefault: boolean
-  computerFriendlyName: string
-  computer: { id: number; name: string; state: string }
-}
-
-interface ScaleInfo {
-  deviceName: string
-  deviceNum: number
-  computerId: number
-  vendor: string
-  product: string
-  measurement: Record<string, number>
-}
-
-interface WeightReading {
-  weight: string
-  rawValue: number
-  unit: string
-  massOz: number | null
-  ageOfData: number
-}
+import { PrintNodePrinter, ScaleInfo, WeightReading } from './types'
 
 export default function PrintersSettingsPage() {
   const [pnConfigured, setPnConfigured] = useState(false)
@@ -319,11 +292,6 @@ export default function PrintersSettingsPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Delete failed')
-
-      // Log the PrintNode API response for confirmation
-      if (data.printNodeResponse) {
-        console.log('[Delete Station] PrintNode API response:', data.printNodeResponse)
-      }
 
       // Remove printers for this computer from local state
       setPnPrinters(prev => {

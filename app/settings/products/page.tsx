@@ -2,62 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { formatWeight, lbsToLbOz, lbOzToLbs } from '@/lib/weight-utils'
-
-interface ProductSize {
-  id: string
-  name: string
-  lengthInches: number
-  widthInches: number
-  heightInches: number
-  volume?: number
-  weightLbs: number
-  category: string
-  active: boolean
-  singleBoxId?: string | null
-}
-
-interface Box {
-  id: string
-  name: string
-  lengthInches: number
-  widthInches: number
-  heightInches: number
-  active: boolean
-}
-
-interface ProductSku {
-  sku: string
-  productSizeId: string
-  name: string | null
-  barcode: string | null
-  binLocation: string | null
-  active: boolean
-}
-
-interface ProductSkuPattern {
-  id: number
-  productSizeId: string
-  pattern: string
-}
-
-interface UnmatchedSku {
-  sku: string
-  firstSeen: string
-  lastSeen: string
-  occurrences: number
-  exampleOrder: string | null
-  itemName: string | null
-  dismissed: boolean
-}
-
-interface ProductsConfig {
-  sizes: ProductSize[]
-  skus: ProductSku[]
-  patterns: ProductSkuPattern[]
-  unmatchedSkus: UnmatchedSku[]
-}
-
-const CATEGORIES = ['tumbler', 'bottle', 'accessory', 'other']
+import { ProductSize, Box, ProductSku, ProductSkuPattern, UnmatchedSku, ProductsConfig, CATEGORIES } from './types'
 
 export default function ProductsPage() {
   const [config, setConfig] = useState<ProductsConfig | null>(null)

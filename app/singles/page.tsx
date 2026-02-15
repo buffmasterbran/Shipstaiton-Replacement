@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import SinglesOrdersTable from '@/components/SinglesOrdersTable'
+import SinglesOrdersTable from '@/components/orders/SinglesOrdersTable'
 import { useOrders, isSingleItemOrder } from '@/context/OrdersContext'
 
 export default function SinglesOrdersPage() {

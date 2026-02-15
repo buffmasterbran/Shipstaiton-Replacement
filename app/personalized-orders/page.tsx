@@ -1,6 +1,6 @@
 'use client'
 
-import PersonalizedOrdersTable from '@/components/PersonalizedOrdersTable'
+import PersonalizedOrdersTable from '@/components/orders/PersonalizedOrdersTable'
 import { useOrders } from '@/context/OrdersContext'
 
 export default function PersonalizedOrdersPage() {

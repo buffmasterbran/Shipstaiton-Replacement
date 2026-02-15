@@ -18,7 +18,7 @@ const DEFAULT_ORDER_HIGHLIGHT: OrderHighlightSettings = {
   redMinDays: 6,
 }
 
-export function getDefaultOrderHighlight(): OrderHighlightSettings {
+function getDefaultOrderHighlight(): OrderHighlightSettings {
   return { ...DEFAULT_ORDER_HIGHLIGHT }
 }
 

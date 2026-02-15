@@ -1,6 +1,6 @@
 'use client'
 
-import BulkOrdersTable from '@/components/BulkOrdersTable'
+import BulkOrdersTable from '@/components/orders/BulkOrdersTable'
 import { useOrders } from '@/context/OrdersContext'
 
 export default function BulkOrdersPage() {

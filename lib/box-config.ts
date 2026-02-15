@@ -50,7 +50,7 @@ const DEFAULT_PACKING_EFFICIENCY = 1.0  // 100% - box dimensions are internal me
 // ============================================================================
 
 /** Calculate volume from dimensions */
-export function calculateBoxVolume(length: number, width: number, height: number): number {
+function calculateBoxVolume(length: number, width: number, height: number): number {
   return length * width * height
 }
 
@@ -223,7 +223,7 @@ export async function setPackingEfficiency(prisma: PrismaClient, value: number):
 // ============================================================================
 
 /** Check feedback rules for this combo + box */
-export function checkFeedback(
+function checkFeedback(
   signature: string,
   boxId: string,
   feedbackRules: BoxFeedbackRule[]
@@ -442,16 +442,6 @@ export async function deleteFeedbackRule(
   } catch {
     return false
   }
-}
-
-export async function clearFeedbackRulesForBox(
-  prisma: PrismaClient,
-  boxId: string
-): Promise<number> {
-  const result = await prisma.boxFeedbackRule.deleteMany({
-    where: { boxId },
-  })
-  return result.count
 }
 
 // ============================================================================
