@@ -8,6 +8,7 @@ import {
   getBillingLabel,
   getCarrierIcon,
 } from './helpers'
+import ConnectCarrierModal from './ConnectCarrierModal'
 
 interface SelectedService {
   carrierId: string
@@ -27,6 +28,8 @@ export default function CarriersPage() {
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([])
   const [savedServices, setSavedServices] = useState<SelectedService[]>([])
   const [saving, setSaving] = useState(false)
+  const [showConnectModal, setShowConnectModal] = useState(false)
+  const [disconnecting, setDisconnecting] = useState<string | null>(null)
 
   const hasChanges = JSON.stringify(selectedServices) !== JSON.stringify(savedServices)
 
@@ -86,6 +89,28 @@ export default function CarriersPage() {
       alert('Failed to save service selection')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const disconnectCarrier = async (carrierId: string, carrierCode: string) => {
+    if (!confirm('Are you sure you want to disconnect this carrier? This cannot be undone.')) return
+    try {
+      setDisconnecting(carrierId)
+      const response = await fetch(
+        `/api/shipengine/carriers/connect?carrier_name=${carrierCode}&carrier_id=${carrierId}`,
+        { method: 'DELETE' }
+      )
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to disconnect')
+      // Remove from selected services and refresh
+      setSelectedServices((prev) => prev.filter((s) => s.carrierId !== carrierId))
+      setSavedServices((prev) => prev.filter((s) => s.carrierId !== carrierId))
+      await fetchCarriers()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to disconnect'
+      alert(message)
+    } finally {
+      setDisconnecting(null)
     }
   }
 
@@ -160,14 +185,12 @@ export default function CarriersPage() {
           >
             {loading ? 'Refreshing...' : 'Refresh'}
           </button>
-          <a
-            href="https://app.shipengine.com/#/connections"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => setShowConnectModal(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium text-sm"
           >
             + Add Carrier Account
-          </a>
+          </button>
         </div>
       </div>
 
@@ -256,14 +279,12 @@ export default function CarriersPage() {
               : 'No ShipEngine-managed carriers found'}
           </p>
           {activeTab === 'our-accounts' && (
-            <a
-              href="https://app.shipengine.com/#/connections"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
+            <button
+              onClick={() => setShowConnectModal(true)}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
             >
               Connect a Carrier Account
-            </a>
+            </button>
           )}
         </div>
       ) : (
@@ -283,10 +304,22 @@ export default function CarriersPage() {
               onToggleService={toggleService}
               onSelectAll={selectAllForCarrier}
               onDeselectAll={deselectAllForCarrier}
+              onDisconnect={disconnectCarrier}
+              isDisconnecting={disconnecting === carrier.carrier_id}
             />
           ))}
         </div>
       )}
+
+      {/* Connect Carrier Modal */}
+      <ConnectCarrierModal
+        open={showConnectModal}
+        onClose={() => setShowConnectModal(false)}
+        onSuccess={() => {
+          fetchCarriers()
+          fetchSelectedServices()
+        }}
+      />
 
       {/* Sticky save bar */}
       {hasChanges && (
@@ -330,6 +363,8 @@ const CarrierCard = ({
   onToggleService,
   onSelectAll,
   onDeselectAll,
+  onDisconnect,
+  isDisconnecting,
 }: {
   carrier: ShipEngineCarrier
   expanded: boolean
@@ -339,6 +374,8 @@ const CarrierCard = ({
   onToggleService: (carrier: ShipEngineCarrier, service: CarrierService) => void
   onSelectAll: (carrier: ShipEngineCarrier) => void
   onDeselectAll: (carrierId: string) => void
+  onDisconnect: (carrierId: string, carrierCode: string) => void
+  isDisconnecting: boolean
 }) => {
   const breakdown = getServiceBreakdown(carrier.services)
   const billing = getBillingLabel(carrier)
@@ -393,7 +430,7 @@ const CarrierCard = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
             <div className="text-right">
               <div className="text-sm font-medium text-gray-900">
                 {breakdown.total} services
@@ -402,6 +439,17 @@ const CarrierCard = ({
                 {breakdown.domestic} domestic · {breakdown.international} intl
               </div>
             </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDisconnect(carrier.carrier_id, carrier.carrier_code)
+              }}
+              disabled={isDisconnecting}
+              className="px-2.5 py-1 text-xs text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+              title="Disconnect this carrier"
+            >
+              {isDisconnecting ? '...' : 'Disconnect'}
+            </button>
             <svg
               className={`w-5 h-5 text-gray-400 transition-transform ${
                 expanded ? 'rotate-180' : ''
