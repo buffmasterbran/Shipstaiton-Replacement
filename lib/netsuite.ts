@@ -158,3 +158,11 @@ export async function updateItemFulfillment(update: FulfillmentUpdate) {
   // replace=package tells NetSuite to REPLACE existing package lines instead of appending
   return netsuiteRequest('PATCH', `/itemFulfillment/${update.internalId}?replace=package`, body)
 }
+
+/**
+ * Revert an Item Fulfillment to Picked status (shipStatus "B")
+ * Used when voiding a shipping label.
+ */
+export async function revertItemFulfillment(internalId: string) {
+  return netsuiteRequest('PATCH', `/itemFulfillment/${internalId}`, { shipStatus: 'B' })
+}

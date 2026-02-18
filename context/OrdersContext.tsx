@@ -56,6 +56,7 @@ interface OrdersContextType {
   updateOrdersInPlace: (updates: Array<{ id: string; preShoppedRate: any; shippedWeight: number; rateShopStatus: string; rateShopError: string | null }>) => void
   updateOrderStatus: (orderId: string, status: string) => void
   updateOrderInPlace: (orderId: string, updates: Partial<OrderLog>) => void
+  removeOrders: (orderIds: string[]) => void
   dateStart: string
   dateEnd: string
   setDateStart: (d: string) => void
@@ -111,20 +112,6 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
   }, [fetchOrders])
 
   const refreshOrders = useCallback(async () => {
-    // Set loading immediately so user sees feedback
-    setLoading(true)
-    
-    // Recalculate all box suggestions first (handles signature changes, new feedback rules, etc.)
-    try {
-      await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'recalculate-boxes', force: true }),
-      })
-    } catch (err) {
-      console.error('Error recalculating boxes:', err)
-    }
-    // Then fetch fresh data (this will also set loading to false when done)
     await fetchOrders()
   }, [fetchOrders])
 
@@ -171,8 +158,14 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Remove orders from local state instantly (no full refresh needed)
+  const removeOrders = useCallback((orderIds: string[]) => {
+    const idSet = new Set(orderIds)
+    setAllOrders(prevOrders => prevOrders.filter(o => !idSet.has(o.id)))
+  }, [])
+
   return (
-    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus, updateOrderInPlace, dateStart, dateEnd, setDateStart, setDateEnd }}>
+    <OrdersContext.Provider value={{ orders, loading, error, lastFetchedAt, refreshOrders, updateOrdersInPlace, updateOrderStatus, updateOrderInPlace, removeOrders, dateStart, dateEnd, setDateStart, setDateEnd }}>
       {children}
     </OrdersContext.Provider>
   )

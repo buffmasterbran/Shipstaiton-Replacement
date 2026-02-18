@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     const result = await authenticateUser(username, password)
 
     if (result.success) {
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, userId: result.userId, fullName: result.fullName })
     }
 
     return NextResponse.json(

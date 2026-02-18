@@ -46,7 +46,8 @@ export default function LoginPage() {
       const data = await res.json()
 
       if (data.success) {
-        // Force a full navigation to pick up the new session cookie
+        if (data.userId) localStorage.setItem('current-user-id', data.userId)
+        if (data.fullName) localStorage.setItem('current-user-name', data.fullName)
         window.location.href = '/'
       } else {
         setError(data.error || 'Login failed')

@@ -29,6 +29,8 @@ interface NetSuiteEmployee {
 interface AuthResult {
   success: boolean
   error?: string
+  userId?: string
+  fullName?: string
 }
 
 /**
@@ -206,7 +208,7 @@ export async function authenticateUser(username: string, password: string): Prom
       allowedPages,
     })
 
-    return { success: true }
+    return { success: true, userId: employee.empid, fullName: employee.name }
   } catch (err: any) {
     console.error('[NetSuite Auth] Authentication error:', err.message)
     return { success: false, error: 'Authentication service unavailable. Please try again.' }

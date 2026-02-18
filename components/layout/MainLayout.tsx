@@ -32,8 +32,9 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
           if (data.authenticated && data.user) {
             setIsAdmin(data.user.isAdmin || false)
             setAllowedPages(data.user.allowedPages || [])
-            // Sync RoleContext for backward compat
             setRole(data.user.isAdmin ? 'admin' : 'operator')
+            if (data.user.userId) localStorage.setItem('current-user-id', data.user.userId)
+            if (data.user.fullName) localStorage.setItem('current-user-name', data.user.fullName)
           }
         }
       } catch {

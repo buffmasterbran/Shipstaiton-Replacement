@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import OrderDialog from '../dialogs/OrderDialog'
 import BoxConfirmDialog from '../dialogs/BoxConfirmDialog'
 import ColumnSettingsDialog from './ColumnSettingsDialog'
@@ -18,58 +19,98 @@ interface ColumnDef {
   sortKey?: SortKey
   className?: string
   headerClassName?: string
+  defaultWidth?: number
 }
 
-const STORAGE_KEY = 'orders-table-columns'
+function getStorageKey(view: 'awaiting' | 'shipped') {
+  const userId = typeof window !== 'undefined' ? localStorage.getItem('current-user-id') : null
+  const base = view === 'shipped' ? 'orders-table-columns-shipped' : 'orders-table-columns'
+  return userId ? `${base}-${userId}` : base
+}
 const PINNED_COLUMNS = new Set(['orderNumber', 'actions'])
 
-const ALL_COLUMNS: ColumnDef[] = [
-  { id: 'orderNumber', label: 'Order #', sortKey: 'orderNumber' },
-  { id: 'if', label: 'IF' },
-  { id: 'customer', label: 'Customer', sortKey: 'customer' },
-  { id: 'items', label: 'Items', sortKey: 'items' },
-  { id: 'box', label: 'Box' },
-  { id: 'weight', label: 'Weight', sortKey: 'weight', className: 'whitespace-nowrap' },
-  { id: 'carrier', label: 'Carrier', sortKey: 'carrier', className: 'whitespace-nowrap' },
-  { id: 'service', label: 'Service', sortKey: 'service', className: 'whitespace-nowrap max-w-[150px]' },
-  { id: 'rate', label: 'Rate', sortKey: 'rate', className: 'whitespace-nowrap text-right font-mono' },
-  { id: 'amount', label: 'Amount', sortKey: 'amount' },
-  { id: 'orderDate', label: 'Order Date', sortKey: 'orderDate' },
-  { id: 'received', label: 'Received', sortKey: 'received' },
-  { id: 'status', label: 'Status', sortKey: 'status' },
-  { id: 'actions', label: 'Actions' },
+const AWAITING_COLUMNS: ColumnDef[] = [
+  { id: 'orderNumber', label: 'Order #', sortKey: 'orderNumber', defaultWidth: 100 },
+  { id: 'if', label: 'IF', defaultWidth: 45 },
+  { id: 'customer', label: 'Customer', sortKey: 'customer', defaultWidth: 160 },
+  { id: 'items', label: 'Items', sortKey: 'items', defaultWidth: 55 },
+  { id: 'box', label: 'Box', defaultWidth: 100 },
+  { id: 'weight', label: 'Weight', sortKey: 'weight', className: 'whitespace-nowrap', defaultWidth: 85 },
+  { id: 'carrier', label: 'Carrier', sortKey: 'carrier', className: 'whitespace-nowrap', defaultWidth: 80 },
+  { id: 'service', label: 'Service', sortKey: 'service', className: 'whitespace-nowrap', defaultWidth: 150 },
+  { id: 'rate', label: 'Rate', sortKey: 'rate', className: 'whitespace-nowrap text-right font-mono', defaultWidth: 80 },
+  { id: 'amount', label: 'Amount', sortKey: 'amount', defaultWidth: 85 },
+  { id: 'orderDate', label: 'Order Date', sortKey: 'orderDate', defaultWidth: 95 },
+  { id: 'received', label: 'Received', sortKey: 'received', defaultWidth: 95 },
+  { id: 'status', label: 'Status', sortKey: 'status', defaultWidth: 110 },
+  { id: 'actions', label: 'Actions', defaultWidth: 80 },
 ]
 
-const DEFAULT_ORDER = ALL_COLUMNS.map((c) => c.id)
+const SHIPPED_COLUMNS: ColumnDef[] = [
+  { id: 'orderNumber', label: 'Order #', sortKey: 'orderNumber', defaultWidth: 100 },
+  { id: 'if', label: 'IF', defaultWidth: 45 },
+  { id: 'customer', label: 'Customer', sortKey: 'customer', defaultWidth: 160 },
+  { id: 'carrier', label: 'Carrier', sortKey: 'carrier', className: 'whitespace-nowrap', defaultWidth: 80 },
+  { id: 'service', label: 'Service', sortKey: 'service', className: 'whitespace-nowrap', defaultWidth: 150 },
+  { id: 'tracking', label: 'Tracking', defaultWidth: 180 },
+  { id: 'rate', label: 'Cost', sortKey: 'rate', className: 'whitespace-nowrap text-right font-mono', defaultWidth: 80 },
+  { id: 'printed', label: 'Printed', defaultWidth: 70 },
+  { id: 'nsUpdated', label: 'NS Updated', defaultWidth: 90 },
+  { id: 'shippedDate', label: 'Shipped Date', defaultWidth: 100 },
+  { id: 'amount', label: 'Amount', sortKey: 'amount', defaultWidth: 85 },
+  { id: 'orderDate', label: 'Order Date', sortKey: 'orderDate', defaultWidth: 95 },
+  { id: 'items', label: 'Items', sortKey: 'items', defaultWidth: 55 },
+  { id: 'weight', label: 'Weight', sortKey: 'weight', className: 'whitespace-nowrap', defaultWidth: 85 },
+  { id: 'box', label: 'Box', defaultWidth: 100 },
+  { id: 'actions', label: 'Actions', defaultWidth: 80 },
+]
 
-function loadColumnPrefs(): { order: string[]; hidden: Set<string> } {
-  if (typeof window === 'undefined') return { order: DEFAULT_ORDER, hidden: new Set() }
+function getColumnsForView(shipped: boolean) {
+  return shipped ? SHIPPED_COLUMNS : AWAITING_COLUMNS
+}
+
+function getDefaultWidths(cols: ColumnDef[]): Record<string, number> {
+  const w: Record<string, number> = {}
+  for (const c of cols) if (c.defaultWidth) w[c.id] = c.defaultWidth
+  return w
+}
+
+function loadColumnPrefs(view: 'awaiting' | 'shipped'): { order: string[]; hidden: Set<string>; widths: Record<string, number> } {
+  const cols = view === 'shipped' ? SHIPPED_COLUMNS : AWAITING_COLUMNS
+  const defaultOrder = cols.map(c => c.id)
+  const defaultWidths = getDefaultWidths(cols)
+  if (typeof window === 'undefined') return { order: defaultOrder, hidden: new Set(), widths: defaultWidths }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { order: DEFAULT_ORDER, hidden: new Set() }
+    const raw = localStorage.getItem(getStorageKey(view))
+    if (!raw) return { order: defaultOrder, hidden: new Set(), widths: defaultWidths }
     const parsed = JSON.parse(raw)
-    const knownIds = new Set(ALL_COLUMNS.map((c) => c.id))
+    const knownIds = new Set(cols.map((c) => c.id))
     const order = (parsed.order as string[]).filter((id: string) => knownIds.has(id))
-    // Add any new columns that weren't in saved prefs
-    for (const col of ALL_COLUMNS) {
+    for (const col of cols) {
       if (!order.includes(col.id)) order.push(col.id)
     }
-    return { order, hidden: new Set((parsed.hidden as string[]) || []) }
+    const savedWidths = (parsed.widths as Record<string, number>) || {}
+    const widths = { ...defaultWidths, ...savedWidths }
+    return { order, hidden: new Set((parsed.hidden as string[]) || []), widths }
   } catch {
-    return { order: DEFAULT_ORDER, hidden: new Set() }
+    return { order: defaultOrder, hidden: new Set(), widths: defaultWidths }
   }
 }
 
-function saveColumnPrefs(order: string[], hidden: Set<string>) {
+function saveColumnPrefs(view: 'awaiting' | 'shipped', order: string[], hidden: Set<string>, widths?: Record<string, number>) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ order, hidden: Array.from(hidden) }))
+    const data: any = { order, hidden: Array.from(hidden) }
+    if (widths) data.widths = widths
+    localStorage.setItem(getStorageKey(view), JSON.stringify(data))
   } catch { /* ignore */ }
 }
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
-  const { refreshOrders, updateOrderStatus, updateOrderInPlace } = useOrders()
+  const { refreshOrders, updateOrderStatus, updateOrderInPlace, removeOrders } = useOrders()
   const { boxes: refBoxes, carrierServices, loaded: refDataLoaded } = useReferenceData()
+  const searchParams = useSearchParams()
+  const router = useRouter()
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -78,6 +119,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [showShipped, setShowShipped] = useState(false)
   const [typeFilter, setTypeFilter] = useState<OrderTypeFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('orderDate')
 
@@ -101,27 +143,89 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [holdReason, setHoldReason] = useState('')
 
   // Column settings
-  const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_ORDER)
+  const currentView = showShipped ? 'shipped' : 'awaiting' as const
+  const activeColumns = getColumnsForView(showShipped)
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => activeColumns.map(c => c.id))
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set())
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => getDefaultWidths(activeColumns))
   const [showColumnSettings, setShowColumnSettings] = useState(false)
   const [showManualOrder, setShowManualOrder] = useState(false)
 
   useEffect(() => {
-    const prefs = loadColumnPrefs()
+    const prefs = loadColumnPrefs(showShipped ? 'shipped' : 'awaiting')
     setColumnOrder(prefs.order)
     setHiddenColumns(prefs.hidden)
-  }, [])
+    setColumnWidths(prefs.widths)
+  }, [showShipped])
+
+  // Auto-open dialog when ?order=<number> is in the URL
+  const urlOrderParam = searchParams.get('order')
+  const autoOpenDoneRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!urlOrderParam || logs.length === 0) return
+    if (autoOpenDoneRef.current === urlOrderParam) return
+    const needle = urlOrderParam.replace(/^#/, '')
+    const match = logs.find(l => {
+      const num = l.orderNumber?.replace(/^#/, '')
+      return num === needle
+    })
+    if (match) {
+      autoOpenDoneRef.current = urlOrderParam
+      if (match.status === 'SHIPPED' && !showShipped) {
+        setShowShipped(true)
+      }
+      const payload = match.rawPayload as any
+      const order = Array.isArray(payload) ? payload[0] : payload
+      setSelectedOrder(order)
+      setSelectedRawPayload(payload)
+      setViewedLog(match)
+      setIsDialogOpen(true)
+    }
+  }, [urlOrderParam, logs, showShipped])
 
   const handleColumnSave = useCallback((order: string[], hidden: Set<string>) => {
     setColumnOrder(order)
     setHiddenColumns(hidden)
-    saveColumnPrefs(order, hidden)
-  }, [])
+    saveColumnPrefs(currentView, order, hidden, columnWidths)
+  }, [currentView, columnWidths])
+
+  // Resize handling
+  const resizingRef = useRef<{ colId: string; startX: number; startW: number } | null>(null)
+
+  const handleResizeStart = useCallback((colId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = columnWidths[colId] || 100
+    resizingRef.current = { colId, startX, startW }
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return
+      const delta = ev.clientX - resizingRef.current.startX
+      const newW = Math.max(40, resizingRef.current.startW + delta)
+      setColumnWidths(prev => ({ ...prev, [resizingRef.current!.colId]: newW }))
+    }
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setColumnWidths(prev => {
+        saveColumnPrefs(currentView, columnOrder, hiddenColumns, prev)
+        return prev
+      })
+      resizingRef.current = null
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [columnWidths, currentView, columnOrder, hiddenColumns])
 
   const visibleColumns = useMemo(() => {
-    const lookup = new Map(ALL_COLUMNS.map((c) => [c.id, c]))
+    const lookup = new Map(activeColumns.map((c) => [c.id, c]))
     return columnOrder.filter((id) => !hiddenColumns.has(id)).map((id) => lookup.get(id)!).filter(Boolean)
-  }, [columnOrder, hiddenColumns])
+  }, [columnOrder, hiddenColumns, activeColumns])
 
   // Open hold reason dialog
   const handleHoldClick = (log: OrderLog, e: React.MouseEvent) => {
@@ -172,6 +276,13 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
     // Hide orders on hold (they appear in the Hold tab)
     list = list.filter((log) => log.status !== 'ON_HOLD')
+
+    // Shipped toggle
+    if (showShipped) {
+      list = list.filter((log) => log.status === 'SHIPPED')
+    } else {
+      list = list.filter((log) => log.status !== 'SHIPPED')
+    }
 
     // Filter by personalized (3-state: all, only, hide)
     if (personalizedFilter === 'only') {
@@ -249,40 +360,43 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [logs, personalizedFilter, expeditedFilter, searchQuery, typeFilter, sortKey, sortDir])
+  }, [logs, personalizedFilter, expeditedFilter, searchQuery, showShipped, typeFilter, sortKey, sortDir])
   
-  // Count orders by type for tab badges
-  const typeCounts = useMemo(() => {
-    // Apply global filters first
-    let baseList = logs
+  // Count orders by type for tab badges + shipped count
+  const { typeCounts, shippedCount, notShippedCount } = useMemo(() => {
+    let baseList = logs.filter(log => log.status !== 'ON_HOLD')
 
-    // Filter by personalized (3-state)
+    const shipped = baseList.filter(log => log.status === 'SHIPPED').length
+    const notShipped = baseList.filter(log => log.status !== 'SHIPPED').length
+
+    // For type counts, only count non-shipped orders
+    let countList = baseList.filter(log => log.status !== 'SHIPPED')
+
     if (personalizedFilter === 'only') {
-      baseList = baseList.filter((log) => isOrderPersonalized(log.rawPayload))
+      countList = countList.filter((log) => isOrderPersonalized(log.rawPayload))
     } else if (personalizedFilter === 'hide') {
-      baseList = baseList.filter((log) => !isOrderPersonalized(log.rawPayload))
+      countList = countList.filter((log) => !isOrderPersonalized(log.rawPayload))
     }
 
-    // Filter by expedited (3-state)
     if (expeditedFilter === 'only') {
-      baseList = baseList.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
+      countList = countList.filter((log) => isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
     } else if (expeditedFilter === 'hide') {
-      baseList = baseList.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
+      countList = countList.filter((log) => !isOrderExpedited(log.rawPayload, log.customerReachedOut, log.orderType))
     }
 
     const counts: Record<OrderTypeFilter, number> = {
-      all: baseList.length,
+      all: countList.length,
       single: 0,
       bulk: 0,
       box: 0,
       batched: 0,
       uncategorized: 0,
     }
-    baseList.forEach((log) => {
+    countList.forEach((log) => {
       const t = getOrderType(log)
       counts[t]++
     })
-    return counts
+    return { typeCounts: counts, shippedCount: shipped, notShippedCount: notShipped }
   }, [logs, personalizedFilter, expeditedFilter])
 
   const totalFiltered = filteredAndSortedLogs.length
@@ -294,7 +408,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
 
   useEffect(() => {
     setPage(1)
-  }, [personalizedFilter, expeditedFilter, searchQuery, typeFilter, sortKey, sortDir])
+  }, [personalizedFilter, expeditedFilter, searchQuery, showShipped, typeFilter, sortKey, sortDir])
 
   useEffect(() => {
     if (page > totalPages) setPage(1)
@@ -313,20 +427,31 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   // Track currently viewed log for the edit-from-view flow
   const [viewedLog, setViewedLog] = useState<OrderLog | null>(null)
 
-  const handleRowClick = (log: OrderLog) => {
+  const handleRowClick = useCallback((log: OrderLog) => {
     const payload = log.rawPayload as any
     const order = Array.isArray(payload) ? payload[0] : payload
     setSelectedOrder(order)
     setSelectedRawPayload(payload)
     setViewedLog(log)
     setIsDialogOpen(true)
-  }
+    const num = log.orderNumber?.replace(/^#/, '')
+    if (num) {
+      const params = new URLSearchParams(window.location.search)
+      params.set('order', num)
+      router.replace(`?${params.toString()}`, { scroll: false })
+    }
+  }, [router])
 
-  const handleCloseDialog = () => {
+  const handleCloseDialog = useCallback(() => {
     setIsDialogOpen(false)
     setSelectedOrder(null)
     setSelectedRawPayload(null)
-  }
+    autoOpenDoneRef.current = null
+    const params = new URLSearchParams(window.location.search)
+    params.delete('order')
+    const qs = params.toString()
+    router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false })
+  }, [router])
 
   const handleBoxClick = (log: OrderLog, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent row click from opening order dialog
@@ -481,11 +606,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         body: JSON.stringify({ orderIds: ids }),
       })
       if (res.ok) {
+        removeOrders(ids)
         setSelectedIds(new Set())
-        refreshOrders()
       }
     } catch (e) { console.error('Bulk delete error:', e) }
-  }, [selectedIds, refreshOrders])
+  }, [selectedIds, removeOrders])
 
   const handleDeleteClick = (log: OrderLog, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent row click
@@ -506,9 +631,8 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       
       if (res.ok) {
         setDeleteConfirmOpen(false)
+        removeOrders([orderToDelete.id])
         setOrderToDelete(null)
-        // Refresh the orders list
-        refreshOrders()
       } else {
         const data = await res.json()
         alert(data.error || 'Failed to delete order')
@@ -535,43 +659,91 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     )
   }
 
-  const Th = ({ columnKey, children }: { columnKey: SortKey; children: React.ReactNode }) => (
-    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+  const handleResizeReset = useCallback((colId: string) => {
+    const col = activeColumns.find(c => c.id === colId)
+    if (!col?.defaultWidth) return
+    setColumnWidths(prev => {
+      const next = { ...prev, [colId]: col.defaultWidth! }
+      saveColumnPrefs(currentView, columnOrder, hiddenColumns, next)
+      return next
+    })
+  }, [activeColumns, currentView, columnOrder, hiddenColumns])
+
+  const ResizeHandle = ({ colId }: { colId: string }) => (
+    <div
+      onMouseDown={e => handleResizeStart(colId, e)}
+      onDoubleClick={e => { e.stopPropagation(); handleResizeReset(colId) }}
+      className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize group z-10 flex items-center justify-center"
+      title="Drag to resize, double-click to reset"
+    >
+      <div className="w-px h-3/5 bg-gray-300 group-hover:bg-blue-400 group-active:bg-blue-500 transition-colors" />
+    </div>
+  )
+
+  const Th = ({ columnKey, colId, children }: { columnKey: SortKey; colId: string; children: React.ReactNode }) => (
+    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider relative overflow-hidden" style={{ width: columnWidths[colId] }}>
       <button
         type="button"
         onClick={() => handleSort(columnKey)}
-        className="inline-flex items-center gap-0.5 hover:text-gray-700 focus:outline-none"
+        className="inline-flex items-center gap-0.5 hover:text-gray-700 focus:outline-none truncate"
       >
         {children}
         {sortKey === columnKey && (
           <span className="text-gray-400">{sortDir === 'asc' ? '↑' : '↓'}</span>
         )}
       </button>
+      <ResizeHandle colId={colId} />
     </th>
   )
 
   return (
     <>
-      {/* Type filter tabs */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {ORDER_TYPE_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setTypeFilter(tab.key)}
-            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-              typeFilter === tab.key
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            {tab.label}
-            <span className={`ml-1.5 text-xs ${typeFilter === tab.key ? 'text-green-100' : 'text-gray-500'}`}>
-              {typeCounts[tab.key]}
-            </span>
-          </button>
-        ))}
+      {/* Shipped / Not Shipped toggle */}
+      <div className="mb-3 flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+        <button
+          type="button"
+          onClick={() => { setShowShipped(false); setTypeFilter('all') }}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            !showShipped ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Awaiting Shipment
+          <span className={`ml-1.5 text-xs ${!showShipped ? 'text-gray-500' : 'text-gray-400'}`}>{notShippedCount}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => { setShowShipped(true); setTypeFilter('all') }}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            showShipped ? 'bg-green-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Shipped
+          <span className={`ml-1.5 text-xs ${showShipped ? 'text-green-200' : 'text-gray-400'}`}>{shippedCount}</span>
+        </button>
       </div>
+
+      {/* Type filter tabs — hidden when viewing shipped */}
+      {!showShipped && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {ORDER_TYPE_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setTypeFilter(tab.key)}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                typeFilter === tab.key
+                  ? 'bg-green-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {tab.label}
+              <span className={`ml-1.5 text-xs ${typeFilter === tab.key ? 'text-green-100' : 'text-gray-500'}`}>
+                {typeCounts[tab.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Compact toolbar: search + pagination in one row */}
       <div className="mb-2 flex flex-wrap items-center gap-3">
@@ -642,10 +814,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           />
         )}
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <table className="divide-y divide-gray-200 text-sm" style={{ tableLayout: 'fixed', width: 40 + visibleColumns.reduce((sum, c) => sum + (columnWidths[c.id] || c.defaultWidth || 100), 0) }}>
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-3 w-10">
+                <th className="px-3 py-3" style={{ width: 40 }}>
                   <input
                     type="checkbox"
                     checked={allPageSelected}
@@ -655,10 +827,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                 </th>
                 {visibleColumns.map((col) =>
                   col.sortKey ? (
-                    <Th key={col.id} columnKey={col.sortKey}>{col.label}</Th>
+                    <Th key={col.id} colId={col.id} columnKey={col.sortKey}>{col.label}</Th>
                   ) : (
-                    <th key={col.id} className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${col.headerClassName || ''}`}>
-                      {col.label}
+                    <th key={col.id} className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider relative overflow-hidden ${col.headerClassName || ''}`} style={{ width: columnWidths[col.id] || col.defaultWidth }}>
+                      <span className="truncate block">{col.label}</span>
+                      <ResizeHandle colId={col.id} />
                     </th>
                   )
                 )}
@@ -687,10 +860,11 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                       />
                     </td>
                     {visibleColumns.map((col) => {
+                      const tdCls = 'px-4 py-3 whitespace-nowrap overflow-hidden text-ellipsis'
                       switch (col.id) {
                         case 'orderNumber':
                           return (
-                            <td key={col.id} className={`px-4 py-3 whitespace-nowrap border-l-4 ${
+                            <td key={col.id} className={`${tdCls} border-l-4 ${
                               highlightType === 'red' ? 'border-l-red-500' : highlightType === 'orange' ? 'border-l-yellow-400' : 'border-l-transparent'
                             }`}>
                               <span className="text-sm font-semibold text-gray-900">
@@ -700,7 +874,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           )
                         case 'if':
                           return (
-                            <td key={col.id} className="px-2 py-3 whitespace-nowrap text-center">
+                            <td key={col.id} className={`${tdCls} px-2 text-center`}>
                               {order?.netsuiteIfId ? (
                                 <a
                                   href={`https://7913744.app.netsuite.com/app/accounting/transactions/itemship.nl?id=${order.netsuiteIfId}`}
@@ -721,10 +895,10 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           )
                         case 'customer':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
-                              <div className="text-sm text-gray-900">{order?.shipTo?.name || order?.billTo?.name || 'N/A'}</div>
+                            <td key={col.id} className={`${tdCls} !whitespace-normal`}>
+                              <div className="text-sm text-gray-900 truncate">{order?.shipTo?.name || order?.billTo?.name || 'N/A'}</div>
                               {order?.shipTo?.city && order?.shipTo?.state && (
-                                <div className="text-xs text-gray-500">
+                                <div className="text-xs text-gray-500 truncate">
                                   {order.shipTo.city}, {order.shipTo.state}
                                 </div>
                               )}
@@ -732,13 +906,13 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           )
                         case 'items':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-900`}>
                               {order?.items?.length || 0}
                             </td>
                           )
                         case 'box':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                            <td key={col.id} className={tdCls}>
                               {(() => {
                                 const suggestion = log.suggestedBox
                                 if (!suggestion) {
@@ -759,7 +933,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                                       className="text-sm text-red-600 font-medium hover:text-red-800 hover:underline"
                                       title="Click to set box"
                                     >
-                                      No fit →
+                                      No fit
                                     </button>
                                   )
                                 }
@@ -779,7 +953,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                                     className={`text-sm font-medium ${colorClass} hover:underline`}
                                     title="Click to confirm or change box"
                                   >
-                                    {suggestion.boxName} →
+                                    {suggestion.boxName}
                                   </button>
                                 )
                               })()}
@@ -787,25 +961,25 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           )
                         case 'weight':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-600`}>
                               {shippedWeight != null ? `${shippedWeight.toFixed(2)} lbs` : <span className="text-gray-300">—</span>}
                             </td>
                           )
                         case 'carrier':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-600`}>
                               {preShoppedRate?.carrier || <span className="text-gray-300">—</span>}
                             </td>
                           )
                         case 'service':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 max-w-[150px] truncate" title={preShoppedRate?.serviceName || ''}>
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-600`} title={preShoppedRate?.serviceName || ''}>
                               {preShoppedRate?.serviceName || <span className="text-gray-300">—</span>}
                             </td>
                           )
                         case 'rate':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-right font-mono">
+                            <td key={col.id} className={`${tdCls} text-sm text-right font-mono`}>
                               {preShoppedRate?.price != null ? (
                                 <span className="text-green-700 font-medium">{formatCurrency(preShoppedRate.price)}</span>
                               ) : (
@@ -815,25 +989,70 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                           )
                         case 'amount':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                            <td key={col.id} className={`${tdCls} text-sm font-medium text-gray-900`}>
                               {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}
                             </td>
                           )
                         case 'orderDate':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-500`}>
                               {order?.orderDate ? new Date(order.orderDate).toLocaleDateString() : '—'}
                             </td>
                           )
                         case 'received':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-500`}>
                               {new Date(log.createdAt).toLocaleDateString()}
                             </td>
                           )
-                        case 'status':
+                        case 'tracking':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                            <td key={col.id} className={`${tdCls} text-xs font-mono text-gray-600`}>
+                              {(log as any).trackingNumber || '—'}
+                            </td>
+                          )
+                        case 'printed':
+                          return (
+                            <td key={col.id} className={tdCls}>
+                              {log.status === 'SHIPPED' ? (
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                                  (log as any).printStatus === 'sent' || (log as any).printStatus === 'opened_pdf' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {(log as any).printStatus === 'sent' || (log as any).printStatus === 'opened_pdf' ? '✓' : '✗'}
+                                </span>
+                              ) : <span className="text-gray-300">—</span>}
+                            </td>
+                          )
+                        case 'nsUpdated':
+                          return (
+                            <td key={col.id} className={tdCls}>
+                              {log.status === 'SHIPPED' ? (
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                                  (log as any).netsuiteUpdated ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {(log as any).netsuiteUpdated ? '✓' : '✗'}
+                                </span>
+                              ) : <span className="text-gray-300">—</span>}
+                            </td>
+                          )
+                        case 'shippedDate':
+                          return (
+                            <td key={col.id} className={`${tdCls} text-sm text-gray-500`}>
+                              {(log as any).shippedAt ? new Date((log as any).shippedAt).toLocaleDateString() : '—'}
+                            </td>
+                          )
+                        case 'status': {
+                          const statusLabel: Record<string, string> = {
+                            AWAITING_SHIPMENT: 'Awaiting',
+                            SHIPPED: 'Shipped',
+                            ON_HOLD: 'On Hold',
+                            CANCELLED: 'Cancelled',
+                            DELIVERED: 'Delivered',
+                            RETURNED: 'Returned',
+                            RECEIVED: 'Received',
+                          }
+                          return (
+                            <td key={col.id} className={tdCls}>
                               <span
                                 className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                                   highlightType === 'red'
@@ -845,13 +1064,14 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                                         : 'bg-blue-100 text-blue-800'
                                 }`}
                               >
-                                {log.status}
+                                {statusLabel[log.status] || log.status}
                               </span>
                             </td>
                           )
+                        }
                         case 'actions':
                           return (
-                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                            <td key={col.id} className={tdCls}>
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleRowClick(log) }}
@@ -887,7 +1107,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                             </td>
                           )
                         default:
-                          return <td key={col.id} className="px-4 py-3">—</td>
+                          return <td key={col.id} className={tdCls}>—</td>
                       }
                     })}
                   </tr>
@@ -1015,7 +1235,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
       <ColumnSettingsDialog
         open={showColumnSettings}
         onClose={() => setShowColumnSettings(false)}
-        columns={ALL_COLUMNS.map((c) => ({ id: c.id, label: c.label }))}
+        columns={activeColumns.map((c) => ({ id: c.id, label: c.label }))}
         columnOrder={columnOrder}
         hiddenColumns={hiddenColumns}
         pinnedColumns={PINNED_COLUMNS}

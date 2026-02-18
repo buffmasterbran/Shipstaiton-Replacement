@@ -8,6 +8,17 @@ import {
   type ShipToAddress,
 } from '@/lib/rate-shop'
 import { validateAddress, type AddressValidationResult } from '@/lib/address-validation'
+import { updateItemFulfillment, isNetSuiteConfigured } from '@/lib/netsuite'
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const order = await prisma.orderLog.findUnique({ where: { id: params.id } })
+    if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+    return NextResponse.json(order)
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
 
 /**
  * PATCH /api/orders/[id] - Update an order's address, carrier, weight, box, or retry rate shopping
@@ -144,6 +155,81 @@ export async function PATCH(
       updateData.rateShopStatus = 'SUCCESS'
       updateData.rateShopError = null
       updateData.rateFetchedAt = new Date()
+    }
+
+    // --- Retry NetSuite push ---
+    if (body.retryNetsuite === true) {
+      if (order.status !== 'SHIPPED') {
+        return NextResponse.json({ error: 'Order is not shipped — cannot retry NetSuite' }, { status: 400 })
+      }
+
+      const netsuiteIfId = orderData?.netsuiteIfId
+      if (!netsuiteIfId) {
+        return NextResponse.json({
+          error: 'No netsuiteIfId in order payload — cannot push to NetSuite',
+          netsuiteResponse: { skipReason: 'No netsuiteIfId found in order payload' },
+        }, { status: 400 })
+      }
+
+      if (!isNetSuiteConfigured()) {
+        return NextResponse.json({
+          error: 'NetSuite credentials not configured',
+          netsuiteResponse: { skipReason: 'NetSuite credentials not configured' },
+        }, { status: 400 })
+      }
+
+      let nsResponse: any = null
+      let nsUpdated = false
+      let nsError: string | undefined
+
+      try {
+        const nsResult = await updateItemFulfillment({
+          internalId: netsuiteIfId,
+          trackingNumber: order.trackingNumber || '',
+          carrier: order.carrier || '',
+          shippingCost: order.labelCost || 0,
+          packages: [{
+            packageTrackingNumber: order.trackingNumber || '',
+            packageWeight: order.shippedWeight || 0,
+          }],
+        })
+        nsResponse = { status: nsResult.status, data: nsResult.data }
+        if (nsResult.status >= 200 && nsResult.status < 300) {
+          nsUpdated = true
+        } else {
+          nsError = `NetSuite returned ${nsResult.status}: ${typeof nsResult.data === 'string' ? nsResult.data : JSON.stringify(nsResult.data)}`
+        }
+      } catch (e: any) {
+        nsError = e.message || 'NetSuite update failed'
+        nsResponse = { error: nsError }
+      }
+
+      updateData.netsuiteUpdated = nsUpdated
+
+      await prisma.shipmentLog.create({
+        data: {
+          orderLogId: id,
+          action: 'LABEL_CREATED',
+          trackingNumber: order.trackingNumber,
+          carrier: order.carrier,
+          netsuiteUpdated: nsUpdated,
+          netsuiteError: nsError || (nsResponse ? JSON.stringify(nsResponse) : null),
+          createdByName: body.userName || 'System',
+        },
+      })
+
+      const updated = await prisma.orderLog.update({
+        where: { id },
+        data: updateData,
+      })
+
+      return NextResponse.json({
+        success: nsUpdated,
+        order: updated,
+        netsuiteUpdated: nsUpdated,
+        netsuiteError: nsError,
+        netsuiteResponse: nsResponse,
+      })
     }
 
     // --- Retry rate shopping ---

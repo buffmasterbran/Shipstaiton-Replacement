@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import OrdersTable from '@/components/orders/OrdersTable'
 import { useOrders } from '@/context/OrdersContext'
 
@@ -63,7 +63,9 @@ export default function AllOrdersPage() {
         <h1 className="text-xl font-bold text-gray-900 whitespace-nowrap">All Orders</h1>
       </div>
 
-      <OrdersTable logs={orders} orderHighlightSettings={orderHighlightSettings} />
+      <Suspense fallback={null}>
+        <OrdersTable logs={orders} orderHighlightSettings={orderHighlightSettings} />
+      </Suspense>
     </div>
   )
 }

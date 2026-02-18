@@ -19,11 +19,14 @@ interface PrintLabelDialogProps {
   onLabelCreated?: (data: { trackingNumber: string; labelUrl: string; cost: number }) => void
 }
 
-const STORAGE_KEY = 'print-label-station-prefs'
+function getStationStorageKey() {
+  const userId = typeof window !== 'undefined' ? localStorage.getItem('current-user-id') : null
+  return userId ? `print-label-station-prefs-${userId}` : 'print-label-station-prefs'
+}
 
 function loadStationPrefs() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(getStationStorageKey())
     if (!raw) return { computer: '', printer: 0, scale: '' }
     return JSON.parse(raw)
   } catch {
@@ -33,7 +36,7 @@ function loadStationPrefs() {
 
 function saveStationPrefs(computer: string, printer: number, scale: string) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ computer, printer, scale }))
+    localStorage.setItem(getStationStorageKey(), JSON.stringify({ computer, printer, scale }))
   } catch { /* ignore */ }
 }
 

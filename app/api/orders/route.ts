@@ -16,53 +16,29 @@ export async function GET() {
         rawPayload: true,
         customerReachedOut: true,
         suggestedBox: true,
-        // Rate shopping fields
         orderType: true,
         shippedWeight: true,
         preShoppedRate: true,
         rateFetchedAt: true,
         rateShopStatus: true,
         rateShopError: true,
-        // Hold fields
         onHoldReason: true,
-        // Address validation
         addressValidated: true,
         addressOverridden: true,
-        // Picking workflow fields
         batchId: true,
+        trackingNumber: true,
+        carrier: true,
+        labelCost: true,
+        labelUrl: true,
+        shippedAt: true,
+        printStatus: true,
+        netsuiteUpdated: true,
         createdAt: true,
         updatedAt: true,
       },
     })
 
-    // Load box config data for calculating suggestions
-    const [sizes, boxes, feedbackRules, packingEfficiency] = await Promise.all([
-      getProductSizes(prisma),
-      getBoxes(prisma),
-      getFeedbackRules(prisma),
-      getPackingEfficiency(prisma),
-    ])
-
-    // Calculate box suggestions for orders that don't have one
-    const ordersWithBoxes = await Promise.all(
-      orders.map(async (order) => {
-        // If already has a valid suggestedBox, keep it
-        if (order.suggestedBox && typeof order.suggestedBox === 'object') {
-          const box = order.suggestedBox as { boxId?: string; boxName?: string; confidence?: string }
-          if (box.confidence) {
-            return order
-          }
-        }
-
-        // Calculate box suggestion on the fly
-        const items = (order.rawPayload as any)?.items || []
-        const suggestedBox = await calculateBoxSuggestionForItems(items, sizes, boxes, feedbackRules, packingEfficiency)
-
-        return { ...order, suggestedBox }
-      })
-    )
-
-    return NextResponse.json({ orders: ordersWithBoxes })
+    return NextResponse.json({ orders })
   } catch (error: unknown) {
     console.error('Error fetching orders:', error)
     return NextResponse.json(

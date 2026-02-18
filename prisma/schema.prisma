@@ -29,7 +29,11 @@ model OrderLog {
   carrier        String?
   labelUrl       String?   @map("label_url")
   labelCost      Float?    @map("label_cost")
+  labelId        String?   @map("label_id")      // ShipEngine label_id (for voiding)
+  shipmentId     String?   @map("shipment_id")    // ShipEngine shipment_id
   shippedAt      DateTime? @map("shipped_at")
+  printStatus    String?   @map("print_status")    // sent | opened_pdf | failed | not_printed
+  netsuiteUpdated Boolean  @default(false) @map("netsuite_updated")
 
   // Hold order fields
   onHoldReason String?   @map("on_hold_reason")
@@ -59,9 +63,10 @@ model OrderLog {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  batch     PickBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  chunk     PickChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
-  bulkBatch BulkBatch? @relation(fields: [bulkBatchId], references: [id], onDelete: SetNull)
+  batch        PickBatch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  chunk        PickChunk?     @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  bulkBatch    BulkBatch?     @relation(fields: [bulkBatchId], references: [id], onDelete: SetNull)
+  shipmentLogs ShipmentLog[]
 
   @@index([createdAt])
   @@index([orderNumber])
@@ -76,6 +81,38 @@ model OrderLog {
   @@index([bulkBatchId])
   @@index([isPersonalized])
   @@map("order_logs")
+}
+
+model ShipmentLog {
+  id           String   @id @default(cuid())
+  orderLogId   String   @map("order_log_id")
+  action       String   // LABEL_CREATED | LABEL_VOIDED | LABEL_REPRINTED
+
+  labelId      String?  @map("label_id")
+  shipmentId   String?  @map("shipment_id")
+  trackingNumber String? @map("tracking_number")
+  carrier      String?
+  serviceCode  String?  @map("service_code")
+  serviceName  String?  @map("service_name")
+  labelCost    Float?   @map("label_cost")
+  labelUrl     String?  @map("label_url")
+  labelFormat  String?  @default("pdf") @map("label_format")
+
+  printJobId   BigInt?  @map("print_job_id")
+  printStatus  String?  @map("print_status") // sent | opened_pdf | failed | not_printed
+
+  netsuiteUpdated Boolean @default(false) @map("netsuite_updated")
+  netsuiteError   String? @map("netsuite_error")
+
+  createdByName String  @map("created_by_name")
+  voidReason    String? @map("void_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  orderLog OrderLog @relation(fields: [orderLogId], references: [id], onDelete: Cascade)
+
+  @@index([orderLogId])
+  @@map("shipment_logs")
 }
 
 enum OrderStatus {
