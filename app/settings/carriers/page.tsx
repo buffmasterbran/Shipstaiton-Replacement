@@ -388,10 +388,17 @@ const CarrierCard = ({
   isDisconnecting: boolean
   onOpenSettings: () => void
 }) => {
+  const [serviceFilter, setServiceFilter] = useState<'all' | 'domestic' | 'international'>('all')
   const breakdown = getServiceBreakdown(carrier.services)
   const billing = getBillingLabel(carrier)
   const icon = getCarrierIcon(carrier.carrier_code)
   const allSelected = breakdown.total > 0 && selectedCount === breakdown.total
+
+  const filteredServices = (carrier.services || []).filter((s) => {
+    if (serviceFilter === 'domestic') return s.domestic
+    if (serviceFilter === 'international') return s.international
+    return true
+  })
 
   return (
     <div className={`bg-white border-2 rounded-lg shadow-sm overflow-hidden transition-colors ${
@@ -499,15 +506,25 @@ const CarrierCard = ({
                   Select Services ({selectedCount}/{breakdown.total})
                 </h3>
                 <div className="flex items-center gap-3">
-                  <div className="flex gap-4 text-xs text-gray-500 mr-4">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-green-400" />
-                      Domestic
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-blue-400" />
-                      International
-                    </span>
+                  {/* Filter toggle */}
+                  <div className="inline-flex rounded-md border border-gray-300 bg-white text-xs">
+                    {([
+                      { key: 'all' as const, label: 'All', count: breakdown.total },
+                      { key: 'domestic' as const, label: 'Domestic', count: breakdown.domestic },
+                      { key: 'international' as const, label: 'Intl', count: breakdown.international },
+                    ]).map((f) => (
+                      <button
+                        key={f.key}
+                        onClick={(e) => { e.stopPropagation(); setServiceFilter(f.key) }}
+                        className={`px-2.5 py-1 font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
+                          serviceFilter === f.key
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        {f.label} ({f.count})
+                      </button>
+                    ))}
                   </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); allSelected ? onDeselectAll(carrier.carrier_id) : onSelectAll(carrier) }}
@@ -517,45 +534,51 @@ const CarrierCard = ({
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                {carrier.services.map((service) => {
-                  const checked = isServiceSelected(carrier.carrier_id, service.service_code)
-                  return (
-                    <div
-                      key={service.service_code}
-                      onClick={() => onToggleService(carrier, service)}
-                      className={`flex items-center gap-3 bg-white rounded border-2 px-3 py-2.5 cursor-pointer transition-colors ${
-                        checked
-                          ? 'border-green-400 bg-green-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        readOnly
-                        className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500 cursor-pointer shrink-0"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-gray-900 truncate">
-                          {service.name}
+              {filteredServices.length === 0 ? (
+                <p className="text-sm text-gray-500 py-4 text-center">
+                  No {serviceFilter} services for this carrier.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {filteredServices.map((service) => {
+                    const checked = isServiceSelected(carrier.carrier_id, service.service_code)
+                    return (
+                      <div
+                        key={service.service_code}
+                        onClick={() => onToggleService(carrier, service)}
+                        className={`flex items-center gap-3 bg-white rounded border-2 px-3 py-2.5 cursor-pointer transition-colors ${
+                          checked
+                            ? 'border-green-400 bg-green-50'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          readOnly
+                          className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500 cursor-pointer shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-gray-900 truncate">
+                            {service.name}
+                          </div>
+                          <div className="text-xs text-gray-400 font-mono truncate">
+                            {service.service_code}
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-400 font-mono truncate">
-                          {service.service_code}
+                        <div className="flex gap-1 shrink-0">
+                          {service.domestic && (
+                            <span className="w-2 h-2 rounded-full bg-green-400" title="Domestic" />
+                          )}
+                          {service.international && (
+                            <span className="w-2 h-2 rounded-full bg-blue-400" title="International" />
+                          )}
                         </div>
                       </div>
-                      <div className="flex gap-1 shrink-0">
-                        {service.domestic && (
-                          <span className="w-2 h-2 rounded-full bg-green-400" title="Domestic" />
-                        )}
-                        {service.international && (
-                          <span className="w-2 h-2 rounded-full bg-blue-400" title="International" />
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
             </>
           ) : (
             <p className="text-sm text-gray-500 py-2">
