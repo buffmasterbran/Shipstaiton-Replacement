@@ -8,6 +8,7 @@ import { getColorFromSku, getSizeFromSku, isShippingInsurance } from '@/lib/orde
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders } from '@/context/OrdersContext'
 import type { OrderLog } from '@/context/OrdersContext'
+import { checkOrderReadiness, countReady } from '@/lib/order-readiness'
 
 // ============================================================================
 // Types
@@ -55,11 +56,13 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   // UI State
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
+  const [selectedLog, setSelectedLog] = useState<OrderLog | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isPushDialogOpen, setIsPushDialogOpen] = useState(false)
   const [selectedSize, setSelectedSize] = useState<string>('all')
   const [selectedVariation, setSelectedVariation] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [readinessFilter, setReadinessFilter] = useState<'all' | 'ready' | 'not-ready'>('all')
   const [pushMessage, setPushMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Process orders: extract main item, SKU, size, color
@@ -153,10 +156,17 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           return false
         }
       }
+
+      // Readiness filter
+      if (readinessFilter !== 'all') {
+        const { ready } = checkOrderReadiness(order.log)
+        if (readinessFilter === 'ready' && !ready) return false
+        if (readinessFilter === 'not-ready' && ready) return false
+      }
       
       return true
     })
-  }, [processedOrders, selectedSize, selectedVariation, searchQuery, expeditedFilter])
+  }, [processedOrders, selectedSize, selectedVariation, searchQuery, expeditedFilter, readinessFilter])
 
   // Group by SKU for the summary display
   const skuGroups = useMemo(() => {
@@ -218,8 +228,24 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
   const handleRowClick = (processedOrder: ProcessedOrder) => {
     setSelectedOrder(processedOrder.order)
     setSelectedRawPayload(processedOrder.log.rawPayload)
+    setSelectedLog(processedOrder.log)
     setIsDialogOpen(true)
   }
+
+  const handleOrderSaved = useCallback((updatedOrder: any) => {
+    if (updatedOrder?.id && refreshOrders) refreshOrders()
+  }, [refreshOrders])
+
+  const viewedIndex = selectedLog ? filteredOrders.findIndex(o => o.log.id === selectedLog.id) : -1
+  const navigateTo = useCallback((idx: number) => {
+    const po = filteredOrders[idx]
+    if (!po) return
+    setSelectedOrder(po.order)
+    setSelectedRawPayload(po.log.rawPayload)
+    setSelectedLog(po.log)
+  }, [filteredOrders])
+  const handleNavPrev = useCallback(() => { if (viewedIndex > 0) navigateTo(viewedIndex - 1) }, [viewedIndex, navigateTo])
+  const handleNavNext = useCallback(() => { if (viewedIndex < filteredOrders.length - 1) navigateTo(viewedIndex + 1) }, [viewedIndex, filteredOrders.length, navigateTo])
 
   // Sorted sizes for filter buttons
   const sortedSizes = Object.entries(sizeCounts).sort((a, b) => b[1] - a[1])
@@ -290,6 +316,54 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
             </button>
           ))}
       </div>
+
+      {/* Readiness filter */}
+      {(() => {
+        const baseOrders = processedOrders.filter((order) => {
+          if (order.log.status === 'ON_HOLD') return false
+          const customerReachedOut = (order.log as any).customerReachedOut || false
+          const isExpedited = isOrderExpedited(order.log.rawPayload, customerReachedOut, (order.log as any).orderType)
+          if (expeditedFilter === 'only' && !isExpedited) return false
+          if (expeditedFilter === 'hide' && isExpedited) return false
+          if (selectedSize !== 'all' && order.size !== selectedSize) return false
+          if (selectedVariation !== 'all') {
+            const variation = order.color || getDisplayName(order.sku)
+            if (variation !== selectedVariation) return false
+          }
+          if (searchQuery) {
+            const q = searchQuery.toLowerCase()
+            if (!order.log.orderNumber.toLowerCase().includes(q) && !order.customerName.toLowerCase().includes(q) && !order.sku.toLowerCase().includes(q)) return false
+          }
+          return true
+        })
+        const { ready, notReady } = countReady(baseOrders.map(o => o.log))
+        return (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase mr-1">Label Ready:</span>
+            {([
+              { key: 'all' as const, label: 'All', count: ready + notReady, color: 'gray' },
+              { key: 'ready' as const, label: 'Ready', count: ready, color: 'green' },
+              { key: 'not-ready' as const, label: 'Not Ready', count: notReady, color: 'red' },
+            ]).map(({ key, label, count, color }) => (
+              <button
+                key={key}
+                onClick={() => setReadinessFilter(key)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  readinessFilter === key
+                    ? color === 'green' ? 'bg-green-600 text-white'
+                      : color === 'red' ? 'bg-red-600 text-white'
+                      : 'bg-gray-700 text-white'
+                    : color === 'green' ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                      : color === 'red' ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {label} ({count})
+              </button>
+            ))}
+          </div>
+        )
+      })()}
 
       {/* Search + Action bar */}
       <div className="flex items-center justify-between gap-4">
@@ -362,52 +436,81 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+              <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase w-16">Ready</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Variation</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Missing</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
               </tr>
             </thead>
           <tbody className="divide-y divide-gray-200">
               {filteredOrders.length === 0 ? (
                 <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                   No orders match the current filters
                   </td>
                 </tr>
               ) : (
-              filteredOrders.slice(0, 200).map((processedOrder) => (
+              filteredOrders.slice(0, 200).map((processedOrder) => {
+                const readiness = checkOrderReadiness(processedOrder.log)
+                return (
                   <tr
                     key={processedOrder.log.id}
-                  onClick={() => handleRowClick(processedOrder)}
-                  className="hover:bg-gray-50 cursor-pointer"
-                >
-                  <td className="px-4 py-2 text-sm font-mono text-gray-900">
-                    {processedOrder.log.orderNumber}
+                    onClick={() => handleRowClick(processedOrder)}
+                    className="hover:bg-gray-50 cursor-pointer"
+                  >
+                    <td className="px-3 py-2 text-center">
+                      {readiness.ready ? (
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 text-red-500">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </span>
+                      )}
                     </td>
-                  <td className="px-4 py-2 text-sm font-mono text-gray-600">
-                    {processedOrder.sku}
+                    <td className="px-4 py-2 text-sm font-mono text-gray-900">
+                      {processedOrder.log.orderNumber}
                     </td>
-                  <td className="px-4 py-2 text-sm text-gray-800">
-                    {processedOrder.mainItem.name || getDisplayName(processedOrder.sku)}
+                    <td className="px-4 py-2 text-sm font-mono text-gray-600">
+                      {processedOrder.sku}
                     </td>
-                  <td className="px-4 py-2 text-sm text-gray-600">
-                    {processedOrder.size}
+                    <td className="px-4 py-2 text-sm text-gray-800">
+                      {processedOrder.mainItem.name || getDisplayName(processedOrder.sku)}
                     </td>
-                  <td className="px-4 py-2 text-sm text-gray-600">
-                    {processedOrder.color || '—'}
+                    <td className="px-4 py-2 text-sm text-gray-600">
+                      {processedOrder.size}
                     </td>
-                  <td className="px-4 py-2 text-sm text-gray-800">
-                    {processedOrder.customerName}
+                    <td className="px-4 py-2 text-sm text-gray-600">
+                      {processedOrder.color || '—'}
                     </td>
-                  <td className="px-4 py-2 text-sm text-gray-500">
+                    <td className="px-4 py-2 text-sm text-gray-800">
+                      {processedOrder.customerName}
+                    </td>
+                    <td className="px-4 py-2 text-sm">
+                      {readiness.missing.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {readiness.missing.map(field => (
+                            <span key={field} className="inline-flex px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-green-600">All set</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-gray-500">
                       {new Date(processedOrder.orderDate).toLocaleDateString()}
                     </td>
                   </tr>
-                ))
+                )
+              }))
               )}
             </tbody>
           </table>
@@ -434,14 +537,16 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
       />
 
       {/* Order Detail Dialog */}
-      {isDialogOpen && selectedOrder && (
       <OrderDialog
         isOpen={isDialogOpen}
-          onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
+        onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null); setSelectedLog(null) }}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
+        orderLog={selectedLog}
+        onSaved={handleOrderSaved}
+        onPrev={viewedIndex > 0 ? handleNavPrev : null}
+        onNext={viewedIndex >= 0 && viewedIndex < filteredOrders.length - 1 ? handleNavNext : null}
       />
-      )}
     </div>
   )
 }

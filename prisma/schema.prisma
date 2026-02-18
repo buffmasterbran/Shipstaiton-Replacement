@@ -25,15 +25,16 @@ model OrderLog {
   rateShopError  String?   @map("rate_shop_error") // Error message if rate shopping failed
 
   // Shipping & tracking fields
-  trackingNumber String?   @map("tracking_number")
-  carrier        String?
-  labelUrl       String?   @map("label_url")
-  labelCost      Float?    @map("label_cost")
-  labelId        String?   @map("label_id")      // ShipEngine label_id (for voiding)
-  shipmentId     String?   @map("shipment_id")    // ShipEngine shipment_id
-  shippedAt      DateTime? @map("shipped_at")
-  printStatus    String?   @map("print_status")    // sent | opened_pdf | failed | not_printed
-  netsuiteUpdated Boolean  @default(false) @map("netsuite_updated")
+  trackingNumber    String?   @map("tracking_number")
+  carrier           String?
+  labelUrl          String?   @map("label_url")
+  labelCost         Float?    @map("label_cost")
+  labelId           String?   @map("label_id")      // ShipEngine label_id (for voiding)
+  shipmentId        String?   @map("shipment_id")    // ShipEngine shipment_id
+  shippedAt         DateTime? @map("shipped_at")
+  printStatus       String?   @map("print_status")    // sent | opened_pdf | failed | not_printed
+  netsuiteUpdated   Boolean   @default(false) @map("netsuite_updated")
+  labelPrepurchased Boolean   @default(false) @map("label_prepurchased") // Label bought at pick-complete, pending print + NetSuite at scan
 
   // Hold order fields
   onHoldReason String?   @map("on_hold_reason")

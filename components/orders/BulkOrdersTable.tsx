@@ -9,6 +9,7 @@ import { computeOrderSignature, splitBulkGroup, type ClassifiableItem } from '@/
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders } from '@/context/OrdersContext'
 import type { OrderLog } from '@/context/OrdersContext'
+import { checkOrderReadiness, countReady } from '@/lib/order-readiness'
 
 // ============================================================================
 // Types
@@ -40,6 +41,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
   // UI State
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
+  const [selectedLog, setSelectedLog] = useState<OrderLog | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isPushDialogOpen, setIsPushDialogOpen] = useState(false)
   const [selectedGroup, setSelectedGroup] = useState<BulkOrderGroup | null>(null)
@@ -49,6 +51,7 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
   const [bulkThreshold, setBulkThreshold] = useState(4)
   const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [readinessFilter, setReadinessFilter] = useState<'all' | 'ready' | 'not-ready'>('all')
   const [pushMessage, setPushMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Process and group orders by identical signature
@@ -151,8 +154,16 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
       )
     }
 
+    // Readiness filter: keep groups where at least one order matches
+    if (readinessFilter !== 'all') {
+      result = result.filter(g => {
+        if (readinessFilter === 'ready') return g.orders.some(o => checkOrderReadiness(o.log).ready)
+        return g.orders.some(o => !checkOrderReadiness(o.log).ready)
+      })
+    }
+
     return result
-  }, [bulkGroups, selectedBoxFilter, searchQuery])
+  }, [bulkGroups, selectedBoxFilter, searchQuery, readinessFilter])
 
   // Total orders across all visible groups
   const totalVisibleOrders = filteredGroups.reduce((sum, g) => sum + g.totalOrders, 0)
@@ -234,11 +245,28 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
     if (refreshOrders) refreshOrders()
   }, [selectedGroup, pushAllMode, pushSelectedMode, filteredGroups, selectedGroups, refreshOrders])
 
-  const handleRowClick = (order: any, rawPayload: any) => {
+  const handleRowClick = (order: any, rawPayload: any, log: OrderLog) => {
     setSelectedOrder(order)
     setSelectedRawPayload(rawPayload)
+    setSelectedLog(log)
     setIsDialogOpen(true)
   }
+
+  const handleOrderSaved = useCallback((updatedOrder: any) => {
+    if (updatedOrder?.id && refreshOrders) refreshOrders()
+  }, [refreshOrders])
+
+  const flatOrders = useMemo(() => filteredGroups.flatMap(g => g.orders), [filteredGroups])
+  const viewedIndex = selectedLog ? flatOrders.findIndex(o => o.log.id === selectedLog.id) : -1
+  const navigateTo = useCallback((idx: number) => {
+    const o = flatOrders[idx]
+    if (!o) return
+    setSelectedOrder(o.order)
+    setSelectedRawPayload(o.log.rawPayload)
+    setSelectedLog(o.log)
+  }, [flatOrders])
+  const handleNavPrev = useCallback(() => { if (viewedIndex > 0) navigateTo(viewedIndex - 1) }, [viewedIndex, navigateTo])
+  const handleNavNext = useCallback(() => { if (viewedIndex < flatOrders.length - 1) navigateTo(viewedIndex + 1) }, [viewedIndex, flatOrders.length, navigateTo])
 
   return (
     <div className="space-y-4">
@@ -301,6 +329,38 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
           className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm flex-1 max-w-xs"
         />
       </div>
+
+      {/* Readiness filter */}
+      {(() => {
+        const allGroupOrders = bulkGroups.flatMap(g => g.orders.map(o => o.log))
+        const { ready, notReady } = countReady(allGroupOrders)
+        return (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase mr-1">Label Ready:</span>
+            {([
+              { key: 'all' as const, label: 'All', count: ready + notReady, color: 'gray' },
+              { key: 'ready' as const, label: 'Ready', count: ready, color: 'green' },
+              { key: 'not-ready' as const, label: 'Not Ready', count: notReady, color: 'red' },
+            ]).map(({ key, label, count, color }) => (
+              <button
+                key={key}
+                onClick={() => setReadinessFilter(key)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  readinessFilter === key
+                    ? color === 'green' ? 'bg-green-600 text-white'
+                      : color === 'red' ? 'bg-red-600 text-white'
+                      : 'bg-gray-700 text-white'
+                    : color === 'green' ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                      : color === 'red' ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {label} ({count})
+              </button>
+            ))}
+          </div>
+        )
+      })()}
 
       {/* Action bar */}
       <div className="flex items-center justify-between">
@@ -390,6 +450,19 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                       → {group.splits.length} splits ({group.splits.join(', ')})
                           </span>
                   )}
+                  {(() => {
+                    const { ready, notReady } = countReady(group.orders.map(o => o.log))
+                    return ready === group.totalOrders ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        All Ready
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-600">
+                        {ready}/{group.totalOrders} ready
+                      </span>
+                    )
+                  })()}
                               </div>
                         <button
                   onClick={() => { setSelectedGroup(group); setPushAllMode(false); setIsPushDialogOpen(true) }}
@@ -420,17 +493,32 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
                   Show {group.orders.length} order{group.orders.length !== 1 ? 's' : ''}
                 </summary>
                 <div className="mt-2 space-y-1 max-h-[200px] overflow-y-auto">
-                  {group.orders.map((o) => (
+                  {group.orders.map((o) => {
+                    const readiness = checkOrderReadiness(o.log)
+                    return (
                     <div
                       key={o.log.id}
-                      onClick={() => handleRowClick(o.order, o.log.rawPayload)}
-                      className="flex items-center justify-between text-sm py-1 hover:bg-gray-50 cursor-pointer rounded px-2"
+                      onClick={() => handleRowClick(o.order, o.log.rawPayload, o.log)}
+                        className="flex items-center gap-2 text-sm py-1 hover:bg-gray-50 cursor-pointer rounded px-2"
                     >
-                      <span className="font-mono text-gray-600">{o.log.orderNumber}</span>
-                      <span className="text-gray-500">{o.customerName}</span>
+                        {readiness.ready ? (
+                          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-600 flex-shrink-0">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-500 flex-shrink-0">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </span>
+                        )}
+                        <span className="font-mono text-gray-600">{o.log.orderNumber}</span>
+                        {readiness.missing.length > 0 && (
+                          <span className="text-xs text-red-500">{readiness.missing.join(', ')}</span>
+                        )}
+                        <span className="text-gray-500 ml-auto">{o.customerName}</span>
                       <span className="text-gray-400 text-xs">{new Date(o.orderDate).toLocaleDateString()}</span>
                         </div>
-                  ))}
+                    )
+                  })}
         </div>
               </details>
             </div>
@@ -457,14 +545,16 @@ export default function BulkOrdersTable({ orders }: BulkOrdersTableProps) {
       />
 
       {/* Order Detail Dialog */}
-      {isDialogOpen && selectedOrder && (
       <OrderDialog
         isOpen={isDialogOpen}
-          onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
+        onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null); setSelectedLog(null) }}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
+        orderLog={selectedLog}
+        onSaved={handleOrderSaved}
+        onPrev={viewedIndex > 0 ? handleNavPrev : null}
+        onNext={viewedIndex >= 0 && viewedIndex < flatOrders.length - 1 ? handleNavNext : null}
       />
-      )}
     </div>
   )
 }

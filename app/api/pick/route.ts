@@ -741,6 +741,33 @@ export async function POST(request: NextRequest) {
           })
         }
 
+        // Fire async label pre-purchase for non-personalized chunks
+        if (!isPersonalized) {
+          const baseUrl = process.env.NEXT_PUBLIC_BASE_URL
+            || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+          console.log(`[Pick → Prepurchase] Chunk ${chunkId} complete (${chunk.ordersInChunk} orders, picker: ${chunk.pickerName}, cart: ${chunk.cart?.name || chunk.cartId})`)
+          console.log(`[Pick → Prepurchase] Firing POST ${baseUrl}/api/orders/prepurchase-chunk-labels { chunkId: "${chunkId}" }`)
+          fetch(`${baseUrl}/api/orders/prepurchase-chunk-labels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chunkId }),
+          })
+            .then(async (res) => {
+              const data = await res.json().catch(() => null)
+              if (res.ok) {
+                console.log(`[Pick → Prepurchase] Response OK: ${data?.succeeded}/${data?.total} labels purchased, ${data?.failed} failed`)
+                if (data?.errors?.length > 0) {
+                  console.log(`[Pick → Prepurchase] Failures:`, data.errors.map((e: any) => `#${e.orderNumber}: ${e.error}`).join(' | '))
+                }
+              } else {
+                console.error(`[Pick → Prepurchase] Response FAILED (${res.status}):`, data?.error || data)
+              }
+            })
+            .catch(err => console.error('[Pick → Prepurchase] Network error:', err.message))
+        } else {
+          console.log(`[Pick] Chunk ${chunkId} complete — personalized, skipping label pre-purchase`)
+        }
+
         return NextResponse.json({
           success: true,
           pickDurationSeconds: pickDuration,

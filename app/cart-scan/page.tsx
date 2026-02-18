@@ -80,7 +80,7 @@ export default function CartScanPage() {
 
   // Load saved name + saved printer/scale selections from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('shipper-name')
+    const saved = localStorage.getItem('shipper-name') || localStorage.getItem('current-user-name')
     if (saved) setShipperName(saved)
     const savedComputer = localStorage.getItem('selected-computer')
     if (savedComputer) setSelectedComputerName(savedComputer)
@@ -483,12 +483,12 @@ export default function CartScanPage() {
       await fetch('/api/ship', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'complete-order', chunkId: currentChunk.id, orderNumber: order.orderNumber }),
+          body: JSON.stringify({ action: 'complete-order', chunkId: currentChunk.id, orderNumber: order.orderNumber, printerId: selectedPrinterId || undefined, userName: shipperName || undefined }),
         })
         setShippedOrders(prev => new Set([...Array.from(prev), order.orderNumber]))
       } catch {}
     }
-  }, [currentBin, currentChunk, ordersByBin])
+  }, [currentBin, currentChunk, ordersByBin, selectedPrinterId, shipperName])
 
   // Single order complete (for standard/bulk modes)
   const handleOrderComplete = useCallback(async () => {
@@ -501,11 +501,11 @@ export default function CartScanPage() {
       await fetch('/api/ship', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'complete-order', chunkId: currentChunk.id, orderNumber: order.orderNumber }),
+        body: JSON.stringify({ action: 'complete-order', chunkId: currentChunk.id, orderNumber: order.orderNumber, printerId: selectedPrinterId || undefined, userName: shipperName || undefined }),
       })
       setShippedOrders(prev => new Set([...Array.from(prev), order.orderNumber]))
     } catch {}
-  }, [currentBin, currentChunk, ordersByBin])
+  }, [currentBin, currentChunk, ordersByBin, selectedPrinterId, shipperName])
 
   const handleNextBin = useCallback(async () => {
     if (currentBinIndex >= binNumbers.length - 1) {
@@ -608,14 +608,10 @@ export default function CartScanPage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-6 text-center">Ship Station</h1>
 
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
-            <input
-              type="text"
-              value={shipperName}
-              onChange={(e) => setShipperName(e.target.value)}
-              placeholder="Enter your name"
-              className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-2">Logged in as</label>
+            <div className="w-full px-4 py-3 text-lg border-2 border-gray-200 rounded-xl bg-gray-50 text-gray-700 font-medium">
+              {shipperName || <span className="text-gray-400">Not logged in</span>}
+            </div>
           </div>
 
           {/* Computer / Printer Selection */}
@@ -1114,7 +1110,7 @@ export default function CartScanPage() {
               fetch('/api/ship', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'complete-order', chunkId: chunk.id, orderNumber }),
+                body: JSON.stringify({ action: 'complete-order', chunkId: chunk.id, orderNumber, printerId: selectedPrinterId || undefined, userName: shipperName || undefined }),
               }).then(() => {
                 setShippedOrders(prev => new Set([...Array.from(prev), orderNumber]))
               }).catch(() => {})
@@ -1136,9 +1132,11 @@ export default function CartScanPage() {
             <div className="flex-1 p-3">
               <div className="grid gap-2 bg-white rounded-lg p-3 shadow h-full" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((bin) => {
-                  const binShipped = (ordersByBin.get(bin) || []).every(o => shippedOrders.has(o.orderNumber))
+                  const binOrdersList = ordersByBin.get(bin) || []
+                  const binShipped = binOrdersList.every(o => shippedOrders.has(o.orderNumber))
                   const isCurrent = bin === currentBin
                   const isEmpty = emptyBins.has(bin) || !ordersByBin.has(bin)
+                  const allPrepurchased = !isEmpty && binOrdersList.length > 0 && binOrdersList.every(o => o.labelPrepurchased)
 
                   let bg = 'bg-gray-50', border = 'border-gray-300', text = 'text-gray-600'
                   if (isEmpty) { bg = 'bg-gray-200'; border = 'border-gray-400'; text = 'text-gray-400' }
@@ -1146,8 +1144,11 @@ export default function CartScanPage() {
                   else if (isCurrent) { bg = 'bg-blue-100'; border = 'border-blue-500'; text = 'text-blue-700' }
               
               return (
-                    <div key={bin} className={`flex items-center justify-center rounded-xl border-2 font-bold text-2xl ${bg} ${border} ${text}`}>
+                    <div key={bin} className={`flex flex-col items-center justify-center rounded-xl border-2 font-bold text-2xl ${bg} ${border} ${text}`}>
                       {isEmpty ? '—' : binShipped ? '✓' : bin}
+                      {allPrepurchased && !binShipped && (
+                        <span className="text-[9px] font-medium text-green-600 leading-none mt-0.5">LABEL READY</span>
+                      )}
                 </div>
               )
             })}

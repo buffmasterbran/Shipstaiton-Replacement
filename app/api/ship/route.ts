@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { createLabel, fulfillPrepurchasedLabel } from '@/lib/label-service'
 
 // GET - Get cart/chunk ready for shipping
 export async function GET(request: NextRequest) {
@@ -235,8 +236,7 @@ export async function POST(request: NextRequest) {
       }
 
       case 'complete-order': {
-        // Mark order as shipped (after label printed)
-        const { chunkId, orderNumber, trackingNumber, labelUrl, labelCost, carrier } = body
+        const { chunkId, orderNumber, printerId, locationId, userName } = body
 
         if (!chunkId || !orderNumber) {
           return NextResponse.json({ 
@@ -244,27 +244,46 @@ export async function POST(request: NextRequest) {
           }, { status: 400 })
         }
 
-        // Find the order first, then update by id
         const order = await prisma.orderLog.findFirst({
           where: { orderNumber },
-          select: { id: true },
         })
 
         if (!order) {
           return NextResponse.json({ error: 'Order not found' }, { status: 404 })
         }
 
-        await prisma.orderLog.update({
-          where: { id: order.id },
-          data: {
-            status: 'SHIPPED',
-            trackingNumber,
-            labelUrl,
-            labelCost,
-            carrier,
-            shippedAt: new Date(),
-          },
-        })
+        let labelResult: any = { success: true }
+
+        if (order.labelPrepurchased && order.labelUrl) {
+          // Label already bought at pick-complete — just print + NetSuite
+          labelResult = await fulfillPrepurchasedLabel({
+            orderId: order.id,
+            printerId: printerId ? Number(printerId) : undefined,
+            userName: userName || 'Scan Station',
+          })
+        } else if (order.status === 'AWAITING_SHIPMENT') {
+          // No pre-purchased label — full label creation flow
+          const shipFromId = locationId || (await prisma.location.findFirst({
+            where: { isDefault: true, active: true },
+            select: { id: true },
+          }))?.id
+
+          if (!shipFromId) {
+            return NextResponse.json({ error: 'No ship-from location configured' }, { status: 500 })
+          }
+
+          labelResult = await createLabel({
+            orderId: order.id,
+            locationId: shipFromId,
+            printerId: printerId ? Number(printerId) : undefined,
+            userName: userName || 'Scan Station',
+          })
+
+          if (!labelResult.success) {
+            return NextResponse.json({ error: labelResult.error || 'Label creation failed' }, { status: 500 })
+          }
+        }
+        // If already SHIPPED and not prepurchased, just update the chunk count
 
         // Update chunk shipped count
         const chunk = await prisma.pickChunk.findUnique({
@@ -280,7 +299,13 @@ export async function POST(request: NextRequest) {
           })
         }
 
-        return NextResponse.json({ success: true })
+        return NextResponse.json({
+          success: true,
+          labelPrepurchased: order.labelPrepurchased,
+          trackingNumber: order.trackingNumber || labelResult.trackingNumber,
+          printStatus: labelResult.printStatus,
+          netsuiteUpdated: labelResult.netsuiteUpdated,
+        })
       }
 
       case 'complete-cart': {

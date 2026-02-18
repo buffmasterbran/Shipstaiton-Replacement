@@ -52,6 +52,8 @@ interface OrderDialogProps {
   rawPayload?: any
   orderLog?: any
   onSaved?: (updated: any) => void
+  onPrev?: (() => void) | null
+  onNext?: (() => void) | null
 }
 
 function formatCurrency(amount: number | string) {
@@ -96,7 +98,7 @@ function saveStationPrefs(computer: string, printer: number, scale: string) {
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','PR','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
-export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderLog, onSaved }: OrderDialogProps) {
+export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderLog, onSaved, onPrev, onNext }: OrderDialogProps) {
   const { carrierServices, boxes, locations, defaultLocationId, loaded: refDataLoaded } = useReferenceData()
   const [showJson, setShowJson] = useState(false)
 
@@ -202,6 +204,19 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
 
   // Original values for change detection
   const origRef = useRef<any>({})
+
+  // === Keyboard nav (left/right arrows) ===
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA' || (e.target as HTMLElement)?.tagName === 'SELECT') return
+      if ((e.target as HTMLElement)?.isContentEditable) return
+      if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev() }
+      if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext() }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, onPrev, onNext])
 
   // === Initialize state when dialog opens ===
   useEffect(() => {
@@ -315,8 +330,15 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
       height: box?.heightInches != null ? String(box.heightInches) : '',
       serviceCode: rate?.serviceCode || '',
     }
+  }, [isOpen, orderLog, order])
 
-    // Fetch PrintNode computers
+  // === PrintNode: fetch computers + restore prefs (only on dialog open, NOT on order switch) ===
+  const printNodeLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!isOpen) { printNodeLoadedRef.current = false; return }
+    if (printNodeLoadedRef.current) return
+    printNodeLoadedRef.current = true
+
     setLoadingComputers(true)
     fetch('/api/printnode?action=computers')
       .then(r => r.json())
@@ -340,7 +362,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
       })
       .catch(() => setComputers([]))
       .finally(() => setLoadingComputers(false))
-  }, [isOpen, orderLog, order])
+  }, [isOpen])
 
   // === Auto rate recalc on weight/dims change (debounced) ===
   const recalcTimerRef = useRef<any>(null)
@@ -942,7 +964,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <Dialog.Title as="h3" className="text-lg font-bold text-white">
-                        Order #{order.orderNumber || 'N/A'}
+                        Order {order.orderNumber?.startsWith('#') ? order.orderNumber : `#${order.orderNumber || 'N/A'}`}
                       </Dialog.Title>
                       {order.orderKey && <span className="text-xs text-blue-200 font-mono">NS: {order.orderKey}</span>}
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isShipped ? 'bg-green-500/30 text-green-100' : 'bg-white/20 text-white'}`}>
@@ -991,6 +1013,26 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                           <><svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>Re-run Ingest</>
                         )}
                       </button>
+                      {(onPrev || onNext) && (
+                        <div className="flex items-center gap-1 ml-2 border-l border-white/20 pl-3">
+                          <button
+                            onClick={onPrev || undefined}
+                            disabled={!onPrev}
+                            className="rounded-full p-1 text-white hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Previous order"
+                          >
+                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                          </button>
+                          <button
+                            onClick={onNext || undefined}
+                            disabled={!onNext}
+                            className="rounded-full p-1 text-white hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Next order"
+                          >
+                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                          </button>
+                        </div>
+                      )}
                       <button onClick={onClose} className="ml-2 rounded-full p-1 text-white hover:bg-white/20 transition-colors">
                         <XMarkIcon className="h-5 w-5" />
                       </button>

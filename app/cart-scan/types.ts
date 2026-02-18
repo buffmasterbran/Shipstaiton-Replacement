@@ -11,6 +11,8 @@ export interface ChunkOrder {
   binNumber: number | null
   rawPayload: any
   status: string
+  labelPrepurchased?: boolean
+  trackingNumber?: string | null
 }
 
 export interface BulkSkuLayoutEntry {

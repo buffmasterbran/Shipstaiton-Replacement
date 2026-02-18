@@ -10,6 +10,7 @@ import { useReferenceData } from '@/hooks/useReferenceData'
 import { useOrders } from '@/context/OrdersContext'
 import type { OrderLog } from '@/context/OrdersContext'
 import type { Box } from '@/lib/box-config'
+import { checkOrderReadiness, countReady } from '@/lib/order-readiness'
 
 // ============================================================================
 // Types
@@ -59,12 +60,14 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
   // UI State
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
+  const [selectedLog, setSelectedLog] = useState<OrderLog | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isPushDialogOpen, setIsPushDialogOpen] = useState(false)
   const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [selectedCupSize, setSelectedCupSize] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
+  const [readinessFilter, setReadinessFilter] = useState<'all' | 'ready' | 'not-ready'>('all')
   const [pushMessage, setPushMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Process orders
@@ -196,11 +199,20 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       )
     }
 
+    // Readiness filter
+    if (readinessFilter !== 'all') {
+      result = result.filter(o => {
+        const { ready } = checkOrderReadiness(o.log)
+        if (readinessFilter === 'ready') return ready
+        return !ready
+      })
+    }
+
     // Default sort: identical orders first, then by date
     result.sort((a, b) => (b.identicalCount || 1) - (a.identicalCount || 1))
 
     return result
-  }, [ordersWithIdenticalCounts, selectedBoxFilter, selectedCupSize, searchQuery, expeditedFilter])
+  }, [ordersWithIdenticalCounts, selectedBoxFilter, selectedCupSize, searchQuery, expeditedFilter, readinessFilter])
 
   // Selection helpers
   const selectableOrders = filteredOrders.filter(o => !o.log.batchId)
@@ -225,6 +237,21 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
 
   // Get selected count
   const selectedCount = selectedOrderIds.size > 0 ? selectedOrderIds.size : filteredOrders.length
+
+  const handleOrderSaved = useCallback((updatedOrder: any) => {
+    if (updatedOrder?.id && refreshOrders) refreshOrders()
+  }, [refreshOrders])
+
+  const viewedIndex = selectedLog ? filteredOrders.findIndex(o => o.log.id === selectedLog.id) : -1
+  const navigateTo = useCallback((idx: number) => {
+    const o = filteredOrders[idx]
+    if (!o) return
+    setSelectedOrder(o.order)
+    setSelectedRawPayload(o.log.rawPayload)
+    setSelectedLog(o.log)
+  }, [filteredOrders])
+  const handleNavPrev = useCallback(() => { if (viewedIndex > 0) navigateTo(viewedIndex - 1) }, [viewedIndex, navigateTo])
+  const handleNavNext = useCallback(() => { if (viewedIndex < filteredOrders.length - 1) navigateTo(viewedIndex + 1) }, [viewedIndex, filteredOrders.length, navigateTo])
 
   // Push handler
   const handlePushToQueue = useCallback(async (cellIds: string[], customName?: string) => {
@@ -327,6 +354,37 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
         </div>
       )}
 
+      {/* Readiness filter */}
+      {(() => {
+        const { ready, notReady } = countReady(ordersWithIdenticalCounts.map(o => o.log))
+        return (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase mr-1">Label Ready:</span>
+            {([
+              { key: 'all' as const, label: 'All', count: ready + notReady, color: 'gray' },
+              { key: 'ready' as const, label: 'Ready', count: ready, color: 'green' },
+              { key: 'not-ready' as const, label: 'Not Ready', count: notReady, color: 'red' },
+            ]).map(({ key, label, count, color }) => (
+              <button
+                key={key}
+                onClick={() => setReadinessFilter(key)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  readinessFilter === key
+                    ? color === 'green' ? 'bg-green-600 text-white'
+                      : color === 'red' ? 'bg-red-600 text-white'
+                      : 'bg-gray-700 text-white'
+                    : color === 'green' ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                      : color === 'red' ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {label} ({count})
+              </button>
+            ))}
+          </div>
+        )
+      })()}
+
       {/* Search + Action bar */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 flex-1">
@@ -376,29 +434,32 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                   className="rounded border-gray-300"
                   />
                 </th>
+              <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase w-16">Ready</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order #</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Box</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Identical</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Missing</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {filteredOrders.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                   No orders match the current filters
                 </td>
               </tr>
             ) : (
               filteredOrders.slice(0, 200).map((o) => {
                 const isSelected = selectedOrderIds.has(o.log.orderNumber)
+                const readiness = checkOrderReadiness(o.log)
                 return (
                   <tr
                     key={o.log.id}
-                    onClick={() => { setSelectedOrder(o.order); setSelectedRawPayload(o.log.rawPayload); setIsDialogOpen(true) }}
+                    onClick={() => { setSelectedOrder(o.order); setSelectedRawPayload(o.log.rawPayload); setSelectedLog(o.log); setIsDialogOpen(true) }}
                     className={`hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-blue-50' : ''}`}
                   >
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -408,6 +469,17 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                         onChange={() => toggleSelection(o.log.orderNumber)}
                         className="rounded border-gray-300"
                         />
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {readiness.ready ? (
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 text-red-500">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-sm font-mono text-gray-900">
                       {o.log.orderNumber}
@@ -439,6 +511,19 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
                       )}
                     </td>
                     <td className="px-4 py-2 text-sm text-gray-800">{o.customerName}</td>
+                    <td className="px-4 py-2 text-sm">
+                      {readiness.missing.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {readiness.missing.map(field => (
+                            <span key={field} className="inline-flex px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-green-600">All set</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-sm text-gray-500">
                       {new Date(o.orderDate).toLocaleDateString()}
                     </td>
@@ -471,14 +556,16 @@ export default function BoxSizeSpecificTable({ orders }: BoxSizeSpecificTablePro
       />
 
       {/* Order Detail Dialog */}
-      {isDialogOpen && selectedOrder && (
       <OrderDialog
         isOpen={isDialogOpen}
-          onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
+        onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null); setSelectedLog(null) }}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
-        />
-      )}
+        orderLog={selectedLog}
+        onSaved={handleOrderSaved}
+        onPrev={viewedIndex > 0 ? handleNavPrev : null}
+        onNext={viewedIndex >= 0 && viewedIndex < filteredOrders.length - 1 ? handleNavNext : null}
+      />
     </div>
   )
 }

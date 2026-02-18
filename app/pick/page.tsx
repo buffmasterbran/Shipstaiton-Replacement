@@ -58,11 +58,13 @@ export default function PickerPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [isActivePick])
 
-  // Load saved picker name
+  // Auto-populate picker name from logged-in user or saved preference
   useEffect(() => {
     const saved = localStorage.getItem('picker-name')
-    if (saved) {
-      setPickerName(saved)
+    const loggedInName = localStorage.getItem('current-user-name')
+    const name = saved || loggedInName || ''
+    if (name) {
+      setPickerName(name)
       setStep('cell-select')
     }
   }, [])
@@ -491,17 +493,11 @@ export default function PickerPage() {
       <div className="fixed inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <h1 className="text-5xl font-bold text-white mb-4 text-center">Pick Station</h1>
-          <p className="text-xl text-gray-400 mb-10 text-center">Enter your name to begin</p>
+          <p className="text-xl text-gray-400 mb-10 text-center">Confirm to begin</p>
           <div className="bg-white rounded-2xl shadow-2xl p-8">
-            <input
-              type="text"
-              value={pickerName}
-              onChange={(e) => setPickerName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              placeholder="Your name"
-              autoFocus
-              className="w-full px-6 py-4 text-2xl border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none mb-6"
-            />
+            <div className="w-full px-6 py-4 text-2xl border-2 border-gray-200 rounded-xl bg-gray-50 text-gray-700 font-medium mb-6">
+              {pickerName || <span className="text-gray-400">Not logged in</span>}
+            </div>
             <button
               onClick={handleLogin}
               disabled={!pickerName.trim()}

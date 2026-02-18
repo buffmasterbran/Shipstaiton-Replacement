@@ -476,6 +476,24 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     if (updatedOrder?.id) updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<ContextOrderLog>)
   }, [updateOrderInPlace])
 
+  const viewedIndex = viewedLog ? pageLogs.findIndex(l => l.id === viewedLog.id) : -1
+  const handleNavPrev = useCallback(() => {
+    if (viewedIndex <= 0) return
+    const log = pageLogs[viewedIndex - 1]
+    const payload = log.rawPayload as any
+    setSelectedOrder(Array.isArray(payload) ? payload[0] : payload)
+    setSelectedRawPayload(payload)
+    setViewedLog(log)
+  }, [viewedIndex, pageLogs])
+  const handleNavNext = useCallback(() => {
+    if (viewedIndex < 0 || viewedIndex >= pageLogs.length - 1) return
+    const log = pageLogs[viewedIndex + 1]
+    const payload = log.rawPayload as any
+    setSelectedOrder(Array.isArray(payload) ? payload[0] : payload)
+    setSelectedRawPayload(payload)
+    setViewedLog(log)
+  }, [viewedIndex, pageLogs])
+
   // === Bulk selection ===
   const pageIds = useMemo(() => new Set(pageLogs.map(l => l.id)), [pageLogs])
   const allPageSelected = pageIds.size > 0 && Array.from(pageIds).every(id => selectedIds.has(id))
@@ -1207,6 +1225,8 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         rawPayload={selectedRawPayload}
         orderLog={viewedLog}
         onSaved={handleOrderSaved}
+        onPrev={viewedIndex > 0 ? handleNavPrev : null}
+        onNext={viewedIndex >= 0 && viewedIndex < pageLogs.length - 1 ? handleNavNext : null}
       />
       {boxConfirmLog && (() => {
         const payload = boxConfirmLog.rawPayload as any

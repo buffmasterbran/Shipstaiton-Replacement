@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import OrderDialog from '../dialogs/OrderDialog'
 import { useExpeditedFilter, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
-import type { OrderLog } from '@/context/OrdersContext'
+import { useOrders, type OrderLog } from '@/context/OrdersContext'
 
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
@@ -64,8 +64,10 @@ function isExpeditedShipping(log: OrderLog): boolean {
 
 export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps) {
   const { personalizedFilter } = useExpeditedFilter()
+  const { refreshOrders } = useOrders()
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
+  const [selectedLog, setSelectedLog] = useState<OrderLog | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('orderDate')

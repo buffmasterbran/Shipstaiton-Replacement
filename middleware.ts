@@ -14,7 +14,7 @@ import { jwtVerify } from 'jose'
 const PUBLIC_PATHS = ['/login', '/api/auth']
 
 // Static assets, Next.js internals, and the ingest API are always allowed
-const ALWAYS_ALLOWED = ['/_next', '/favicon.ico', '/api/ingest-batch']
+const ALWAYS_ALLOWED = ['/_next', '/favicon.ico', '/api/ingest-batch', '/api/orders/prepurchase-chunk-labels']
 
 // Page key mapping (duplicated from lib/permissions.ts because middleware
 // runs in the Edge runtime and can't import Node.js modules)
