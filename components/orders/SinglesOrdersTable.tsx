@@ -511,7 +511,7 @@ export default function SinglesOrdersTable({ orders }: SinglesOrdersTableProps) 
                   </tr>
                 )
               }))
-              )}
+              }
             </tbody>
           </table>
         {filteredOrders.length > 200 && (

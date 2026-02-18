@@ -184,6 +184,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
 
   // === Reprint / Retry ===
   const [reprinting, setReprinting] = useState(false)
+  const [showReprintDialog, setShowReprintDialog] = useState(false)
+  const [reprintComputerName, setReprintComputerName] = useState('')
+  const [reprintPrinterId, setReprintPrinterId] = useState<number | null>(null)
   const [retryingNetsuite, setRetryingNetsuite] = useState(false)
 
   // === Debug / Status Info ===
@@ -201,6 +204,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   // Derived
   const selectedComputer = useMemo(() => computers.find(c => c.name === selectedComputerName) || null, [computers, selectedComputerName])
   const selectedPrinter = useMemo(() => selectedComputer?.printers.find(p => p.id === selectedPrinterId) || null, [selectedComputer, selectedPrinterId])
+  const reprintComputer = useMemo(() => computers.find(c => c.name === reprintComputerName) || null, [computers, reprintComputerName])
 
   // Original values for change detection
   const origRef = useRef<any>({})
@@ -237,6 +241,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
     setVoiding(false)
     setVoidReason('')
     setReprinting(false)
+    setShowReprintDialog(false)
+    setReprintComputerName('')
+    setReprintPrinterId(null)
     setRetryingNetsuite(false)
     setShowHistory(false)
     setShipmentLogs([])
@@ -805,14 +812,20 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   }
 
   // === Reprint Label ===
+  const openReprintDialog = () => {
+    setReprintComputerName(selectedComputerName)
+    setReprintPrinterId(selectedPrinterId)
+    setShowReprintDialog(true)
+  }
+
   const handleReprintLabel = async () => {
-    if (!orderLog?.id || !selectedPrinterId) return
+    if (!orderLog?.id || !reprintPrinterId) return
     setReprinting(true)
     try {
       const res = await fetch(`/api/orders/${orderLog.id}/reprint-label`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ printerId: selectedPrinterId, userName: currentUserName }),
+        body: JSON.stringify({ printerId: reprintPrinterId, userName: currentUserName }),
       })
       const data = await res.json()
       if (!res.ok || data.error) {
@@ -824,6 +837,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
         .then(logs => setShipmentLogs(Array.isArray(logs) ? logs : []))
         .catch(() => {})
 
+      setShowReprintDialog(false)
     } catch (err: any) { setLabelError(err.message || 'Reprint failed') }
     finally { setReprinting(false) }
   }
@@ -1324,11 +1338,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                               <span className="text-sm font-medium text-amber-800">Label created but printing failed</span>
                             </div>
                             <div className="flex gap-2">
-                              {selectedPrinterId && (
-                                <button onClick={handleRetryPrint} disabled={reprinting} className="px-3 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium disabled:opacity-50">
-                                  {reprinting ? 'Retrying...' : 'Retry Print'}
-                                </button>
-                              )}
+                              <button onClick={openReprintDialog} disabled={reprinting || computers.length === 0} className="px-3 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium disabled:opacity-50">
+                                {reprinting ? 'Retrying...' : 'Retry Print'}
+                              </button>
                               <button onClick={handleOpenPdf} className="px-3 py-1.5 text-xs text-amber-700 border border-amber-300 rounded-lg hover:bg-amber-100 font-medium">
                                 Open PDF
                               </button>
@@ -1352,11 +1364,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
 
                         {/* Shipped Actions */}
                         <div className="flex gap-2">
-                          {selectedPrinterId && (
-                            <button onClick={handleReprintLabel} disabled={reprinting} className="flex-1 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors">
-                              {reprinting ? 'Reprinting...' : 'Reprint'}
-                            </button>
-                          )}
+                          <button onClick={openReprintDialog} disabled={reprinting || computers.length === 0} className="flex-1 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors">
+                            {reprinting ? 'Reprinting...' : 'Reprint'}
+                          </button>
                           {shippedInfo.labelUrl && (
                             <button onClick={handleOpenPdf} className="flex-1 py-2 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-lg hover:bg-gray-200 transition-colors">
                               Open PDF
@@ -1736,6 +1746,71 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                         <button
                           onClick={() => { setShowVoidConfirm(false); setVoidReason(''); setLabelError(null) }}
                           disabled={voiding}
+                          className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reprint Dialog Overlay */}
+                {showReprintDialog && (
+                  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 p-6">
+                      <h3 className="text-lg font-bold text-gray-900 mb-4">Reprint Label</h3>
+                      <div className="space-y-3 mb-5">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Station</label>
+                          <select
+                            value={reprintComputerName}
+                            onChange={e => {
+                              const name = e.target.value
+                              setReprintComputerName(name)
+                              const comp = computers.find(c => c.name === name)
+                              if (comp) {
+                                const dp = comp.printers.find(p => p.isDefault) || comp.printers[0]
+                                setReprintPrinterId(dp?.id || null)
+                              } else {
+                                setReprintPrinterId(null)
+                              }
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="">Select a station...</option>
+                            {computers.map(c => <option key={c.id} value={c.name}>{c.friendlyName || c.name}</option>)}
+                          </select>
+                        </div>
+                        {reprintComputer && reprintComputer.printers.length > 0 && (
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Printer</label>
+                            <select
+                              value={reprintPrinterId || ''}
+                              onChange={e => setReprintPrinterId(parseInt(e.target.value, 10))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            >
+                              {reprintComputer.printers.map(p => (
+                                <option key={p.id} value={p.id}>{p.friendlyName || p.name}{p.isDefault ? ' (default)' : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        {reprintComputer && reprintComputer.printers.length === 0 && (
+                          <div className="text-sm text-amber-600 bg-amber-50 p-2.5 rounded-lg">No printers on this station.</div>
+                        )}
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={handleReprintLabel}
+                          disabled={reprinting || !reprintPrinterId}
+                          className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm disabled:opacity-50 transition-colors"
+                        >
+                          {reprinting ? 'Reprinting...' : 'Print'}
+                        </button>
+                        <button
+                          onClick={() => setShowReprintDialog(false)}
+                          disabled={reprinting}
                           className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
                         >
                           Cancel
