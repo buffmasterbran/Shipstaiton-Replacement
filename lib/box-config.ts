@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client'
 import type { ProductSize } from './products'
+import { matchSkuToSize } from './products'
 
 // ============================================================================
 // Types (matching Prisma schema)
@@ -441,6 +442,116 @@ export async function deleteFeedbackRule(
     return true
   } catch {
     return false
+  }
+}
+
+// ============================================================================
+// Calculate Box Suggestion (shared by ingest-batch and reingest)
+// ============================================================================
+
+export interface SuggestedBox {
+  boxId: string | null
+  boxName: string | null
+  confidence: 'confirmed' | 'calculated' | 'unknown'
+  reason?: string
+  lengthInches?: number
+  widthInches?: number
+  heightInches?: number
+  weightLbs?: number
+}
+
+export interface BoxSuggestionResult {
+  suggestedBox: SuggestedBox
+  unmatchedSkus: Array<{ sku: string; itemName: string | null }>
+}
+
+export async function calculateBoxSuggestion(
+  prisma: PrismaClient,
+  items: Array<{ sku?: string; quantity?: number; name?: string }>,
+  sizes: ProductSize[],
+  boxes: Box[],
+  feedbackRules: BoxFeedbackRule[],
+  packingEfficiency: number,
+): Promise<BoxSuggestionResult> {
+  const unmatchedSkus: Array<{ sku: string; itemName: string | null }> = []
+
+  if (!items || items.length === 0) {
+    return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
+  }
+
+  const nonInsuranceItems = items.filter(item => {
+    const sku = (item.sku || '').toUpperCase()
+    const name = (item.name || '').toUpperCase()
+    return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
+  })
+
+  if (nonInsuranceItems.length === 0) {
+    return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
+  }
+
+  const mappedItems: { productId: string; quantity: number; size: ProductSize }[] = []
+
+  for (const item of nonInsuranceItems) {
+    const sku = item.sku || ''
+    const qty = Number(item.quantity) || 1
+    const size = await matchSkuToSize(prisma, sku)
+    if (size) {
+      mappedItems.push({ productId: size.id, quantity: qty, size })
+    } else if (sku) {
+      unmatchedSkus.push({ sku, itemName: item.name || null })
+    }
+  }
+
+  if (mappedItems.length === 0) {
+    const allStickers = nonInsuranceItems.every(item => (item.sku || '').toUpperCase().startsWith('PL-STCK'))
+    if (allStickers && nonInsuranceItems.length > 0) {
+      const stickerBox = boxes.find(b => b.name.toLowerCase() === 'stickers' && b.active)
+      if (stickerBox) {
+        return {
+          suggestedBox: {
+            boxId: stickerBox.id, boxName: stickerBox.name, confidence: 'confirmed', reason: 'sticker-only',
+            lengthInches: stickerBox.lengthInches, widthInches: stickerBox.widthInches,
+            heightInches: stickerBox.heightInches, weightLbs: stickerBox.weightLbs,
+          },
+          unmatchedSkus,
+        }
+      }
+    }
+    return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
+  }
+
+  const totalQty = mappedItems.reduce((sum, i) => sum + i.quantity, 0)
+  if (mappedItems.length === 1 && totalQty === 1) {
+    const singleSize = mappedItems[0].size
+    if (singleSize.singleBoxId) {
+      const dedicatedBox = boxes.find(b => b.id === singleSize.singleBoxId && b.active)
+      if (dedicatedBox) {
+        return {
+          suggestedBox: {
+            boxId: dedicatedBox.id, boxName: dedicatedBox.name, confidence: 'confirmed', reason: 'dedicated-box',
+            lengthInches: dedicatedBox.lengthInches, widthInches: dedicatedBox.widthInches,
+            heightInches: dedicatedBox.heightInches, weightLbs: dedicatedBox.weightLbs,
+          },
+          unmatchedSkus,
+        }
+      }
+    }
+  }
+
+  const productItems = mappedItems.map(i => ({ productId: i.productId, quantity: i.quantity }))
+  const result = findBestBox(productItems, sizes, boxes, feedbackRules, packingEfficiency)
+
+  return {
+    suggestedBox: {
+      boxId: result.box?.id || null,
+      boxName: result.box?.name || null,
+      confidence: result.confidence as 'confirmed' | 'calculated' | 'unknown',
+      lengthInches: result.box?.lengthInches,
+      widthInches: result.box?.widthInches,
+      heightInches: result.box?.heightInches,
+      weightLbs: result.box?.weightLbs,
+    },
+    unmatchedSkus,
   }
 }
 

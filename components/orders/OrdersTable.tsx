@@ -1,18 +1,78 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import OrderDialog from '../dialogs/OrderDialog'
 import BoxConfirmDialog from '../dialogs/BoxConfirmDialog'
-import RateTestDialog from '../dialogs/RateTestDialog'
-import EditOrderDialog from '../dialogs/EditOrderDialog'
+import ColumnSettingsDialog from './ColumnSettingsDialog'
+import BulkActionBar from './BulkActionBar'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders, type OrderLog as ContextOrderLog } from '@/context/OrdersContext'
+import { useReferenceData } from '@/hooks/useReferenceData'
 import { PAGE_SIZES, DEFAULT_PAGE_SIZE, SortKey, SortDir, OrderTypeFilter, ORDER_TYPE_TABS, type OrderLog, type OrderHighlightSettings, type OrdersTableProps } from './types'
 import { formatCurrency, getDaysOld, getOrderHighlightType, getOrderDate, getCustomerName, getOrderNumber, getAmount, getOrderType } from './helpers'
+
+interface ColumnDef {
+  id: string
+  label: string
+  sortKey?: SortKey
+  className?: string
+  headerClassName?: string
+}
+
+const STORAGE_KEY = 'orders-table-columns'
+const PINNED_COLUMNS = new Set(['orderNumber', 'actions'])
+
+const ALL_COLUMNS: ColumnDef[] = [
+  { id: 'orderNumber', label: 'Order #', sortKey: 'orderNumber' },
+  { id: 'if', label: 'IF' },
+  { id: 'customer', label: 'Customer', sortKey: 'customer' },
+  { id: 'items', label: 'Items', sortKey: 'items' },
+  { id: 'box', label: 'Box' },
+  { id: 'weight', label: 'Weight', sortKey: 'weight', className: 'whitespace-nowrap' },
+  { id: 'carrier', label: 'Carrier', sortKey: 'carrier', className: 'whitespace-nowrap' },
+  { id: 'service', label: 'Service', sortKey: 'service', className: 'whitespace-nowrap max-w-[150px]' },
+  { id: 'rate', label: 'Rate', sortKey: 'rate', className: 'whitespace-nowrap text-right font-mono' },
+  { id: 'amount', label: 'Amount', sortKey: 'amount' },
+  { id: 'orderDate', label: 'Order Date', sortKey: 'orderDate' },
+  { id: 'received', label: 'Received', sortKey: 'received' },
+  { id: 'status', label: 'Status', sortKey: 'status' },
+  { id: 'actions', label: 'Actions' },
+]
+
+const DEFAULT_ORDER = ALL_COLUMNS.map((c) => c.id)
+
+function loadColumnPrefs(): { order: string[]; hidden: Set<string> } {
+  if (typeof window === 'undefined') return { order: DEFAULT_ORDER, hidden: new Set() }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return { order: DEFAULT_ORDER, hidden: new Set() }
+    const parsed = JSON.parse(raw)
+    const knownIds = new Set(ALL_COLUMNS.map((c) => c.id))
+    const order = (parsed.order as string[]).filter((id: string) => knownIds.has(id))
+    // Add any new columns that weren't in saved prefs
+    for (const col of ALL_COLUMNS) {
+      if (!order.includes(col.id)) order.push(col.id)
+    }
+    return { order, hidden: new Set((parsed.hidden as string[]) || []) }
+  } catch {
+    return { order: DEFAULT_ORDER, hidden: new Set() }
+  }
+}
+
+function saveColumnPrefs(order: string[], hidden: Set<string>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ order, hidden: Array.from(hidden) }))
+  } catch { /* ignore */ }
+}
 
 export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTableProps) {
   const { expeditedFilter, personalizedFilter } = useExpeditedFilter()
   const { refreshOrders, updateOrderStatus, updateOrderInPlace } = useOrders()
+  const { boxes: refBoxes, carrierServices, loaded: refDataLoaded } = useReferenceData()
+
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; action: string } | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -27,10 +87,6 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
 
-  // Rate test dialog state
-  const [isRateTestOpen, setIsRateTestOpen] = useState(false)
-  const [rateTestOrder, setRateTestOrder] = useState<any | null>(null)
-
   // Delete confirmation state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [orderToDelete, setOrderToDelete] = useState<OrderLog | null>(null)
@@ -43,9 +99,27 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [holdOrderNumber, setHoldOrderNumber] = useState<string>('')
   const [holdReason, setHoldReason] = useState('')
 
-  // Edit dialog state
-  const [isEditOpen, setIsEditOpen] = useState(false)
-  const [editLog, setEditLog] = useState<OrderLog | null>(null)
+  // Column settings
+  const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_ORDER)
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set())
+  const [showColumnSettings, setShowColumnSettings] = useState(false)
+
+  useEffect(() => {
+    const prefs = loadColumnPrefs()
+    setColumnOrder(prefs.order)
+    setHiddenColumns(prefs.hidden)
+  }, [])
+
+  const handleColumnSave = useCallback((order: string[], hidden: Set<string>) => {
+    setColumnOrder(order)
+    setHiddenColumns(hidden)
+    saveColumnPrefs(order, hidden)
+  }, [])
+
+  const visibleColumns = useMemo(() => {
+    const lookup = new Map(ALL_COLUMNS.map((c) => [c.id, c]))
+    return columnOrder.filter((id) => !hiddenColumns.has(id)).map((id) => lookup.get(id)!).filter(Boolean)
+  }, [columnOrder, hiddenColumns])
 
   // Open hold reason dialog
   const handleHoldClick = (log: OrderLog, e: React.MouseEvent) => {
@@ -156,6 +230,18 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         case 'status':
           cmp = (a.status ?? '').localeCompare(b.status ?? '')
           break
+        case 'weight':
+          cmp = ((a as any).shippedWeight ?? 0) - ((b as any).shippedWeight ?? 0)
+          break
+        case 'carrier':
+          cmp = ((a as any).preShoppedRate?.carrier ?? '').localeCompare((b as any).preShoppedRate?.carrier ?? '')
+          break
+        case 'service':
+          cmp = ((a as any).preShoppedRate?.serviceName ?? '').localeCompare((b as any).preShoppedRate?.serviceName ?? '')
+          break
+        case 'rate':
+          cmp = ((a as any).preShoppedRate?.price ?? 0) - ((b as any).preShoppedRate?.price ?? 0)
+          break
         default:
           break
       }
@@ -256,18 +342,148 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
     window.location.reload()
   }
 
-  const handleGetRates = () => {
-    // Transfer the selected order to rate test dialog
-    setRateTestOrder(selectedOrder)
-    setIsRateTestOpen(true)
-    // Optionally close the order dialog
-    setIsDialogOpen(false)
-  }
+  const handleOrderSaved = useCallback((updatedOrder: any) => {
+    if (updatedOrder?.id) updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<ContextOrderLog>)
+  }, [updateOrderInPlace])
 
-  const handleCloseRateTest = () => {
-    setIsRateTestOpen(false)
-    setRateTestOrder(null)
-  }
+  // === Bulk selection ===
+  const pageIds = useMemo(() => new Set(pageLogs.map(l => l.id)), [pageLogs])
+  const allPageSelected = pageIds.size > 0 && Array.from(pageIds).every(id => selectedIds.has(id))
+  const somePageSelected = selectedIds.size > 0
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allPageSelected) {
+        Array.from(pageIds).forEach(id => next.delete(id))
+      } else {
+        Array.from(pageIds).forEach(id => next.add(id))
+      }
+      return next
+    })
+  }, [allPageSelected, pageIds])
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
+
+  // Clear selection when filters/page change
+  useEffect(() => { setSelectedIds(new Set()) }, [typeFilter, searchQuery, page, pageSize])
+
+  // === Bulk action runners ===
+  const runBulkAction = useCallback(async (
+    label: string,
+    ids: string[],
+    action: (id: string) => Promise<any>
+  ) => {
+    setBulkProgress({ done: 0, total: ids.length, action: label })
+    for (let i = 0; i < ids.length; i++) {
+      try {
+        const result = await action(ids[i])
+        if (result?.order) updateOrderInPlace(result.order.id, result.order as Partial<ContextOrderLog>)
+      } catch (e) { console.error(`Bulk ${label} error for ${ids[i]}:`, e) }
+      setBulkProgress({ done: i + 1, total: ids.length, action: label })
+    }
+    setBulkProgress(null)
+    setSelectedIds(new Set())
+  }, [updateOrderInPlace])
+
+  const handleBulkChangeBox = useCallback(async (boxId: string) => {
+    const box = refBoxes.find(b => b.id === boxId)
+    if (!box) return
+    const ids = Array.from(selectedIds)
+    await runBulkAction('Change Box', ids, async (id) => {
+      const res = await fetch(`/api/orders/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ box: { boxId: box.id, boxName: box.name, lengthInches: box.lengthInches, widthInches: box.widthInches, heightInches: box.heightInches, weightLbs: box.weightLbs } }),
+      })
+      return res.json()
+    })
+  }, [selectedIds, refBoxes, runBulkAction])
+
+  const handleBulkChangeService = useCallback(async (serviceCode: string) => {
+    const svc = carrierServices.find(s => s.serviceCode === serviceCode)
+    if (!svc) return
+    const ids = Array.from(selectedIds)
+    await runBulkAction('Change Service', ids, async (id) => {
+      const res = await fetch(`/api/orders/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ carrier: { carrierId: svc.carrierId, carrierCode: svc.carrierCode, carrier: svc.carrierName, serviceCode: svc.serviceCode, serviceName: svc.serviceName } }),
+      })
+      return res.json()
+    })
+  }, [selectedIds, carrierServices, runBulkAction])
+
+  const handleBulkGetRates = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    await runBulkAction('Get Rates', ids, async (id) => {
+      const res = await fetch(`/api/orders/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ retryRateShopping: true }),
+      })
+      return res.json()
+    })
+  }, [selectedIds, runBulkAction])
+
+  const handleBulkReingest = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    await runBulkAction('Re-run Ingest', ids, async (id) => {
+      const res = await fetch(`/api/orders/${id}/reingest`, { method: 'POST' })
+      return res.json()
+    })
+  }, [selectedIds, runBulkAction])
+
+  const handleBulkValidateAddresses = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    await runBulkAction('Validate Addresses', ids, async (id) => {
+      const order = logs.find(l => l.id === id)
+      if (!order) return null
+      const payload = order.rawPayload as any
+      const od = Array.isArray(payload) ? payload[0] : payload
+      const shipTo = od?.shipTo || {}
+      const res = await fetch(`/api/orders/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: { name: shipTo.name, company: shipTo.company, street1: shipTo.street1, street2: shipTo.street2, city: shipTo.city, state: shipTo.state, postalCode: shipTo.postalCode, country: shipTo.country || 'US', phone: shipTo.phone } }),
+      })
+      return res.json()
+    })
+  }, [selectedIds, logs, runBulkAction])
+
+  const handleBulkHold = useCallback(async () => {
+    const reason = prompt('Hold reason for selected orders:')
+    if (!reason) return
+    const ids = Array.from(selectedIds)
+    await runBulkAction('Put on Hold', ids, async (id) => {
+      const res = await fetch('/api/orders', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: id, status: 'ON_HOLD', reason }),
+      })
+      const data = await res.json()
+      if (data.success) updateOrderStatus(id, 'ON_HOLD')
+      return null
+    })
+  }, [selectedIds, runBulkAction, updateOrderStatus])
+
+  const handleBulkDelete = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    if (!confirm(`Delete ${ids.length} order(s)? This cannot be undone.`)) return
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds: ids }),
+      })
+      if (res.ok) {
+        setSelectedIds(new Set())
+        refreshOrders()
+      }
+    } catch (e) { console.error('Bulk delete error:', e) }
+  }, [selectedIds, refreshOrders])
 
   const handleDeleteClick = (log: OrderLog, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent row click
@@ -306,16 +522,6 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const handleCancelDelete = () => {
     setDeleteConfirmOpen(false)
     setOrderToDelete(null)
-  }
-
-  const handleEditClick = (log: OrderLog, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setEditLog(log)
-    setIsEditOpen(true)
-  }
-
-  const handleEditSaved = (updatedOrder: any) => {
-    updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<ContextOrderLog>)
   }
 
   if (logs.length === 0) {
@@ -391,190 +597,287 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
             ))}
           </select>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowColumnSettings(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1 border border-gray-300 rounded text-xs font-medium text-gray-600 hover:bg-gray-50"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M3 8h18M3 12h18M3 16h18M3 20h18" />
+          </svg>
+          Columns
+        </button>
         <span className="text-xs text-gray-500">
           {searchQuery.trim() ? `${totalFiltered}/${logs.length}` : `${logs.length} orders`}
         </span>
       </div>
 
       <div className="bg-white rounded shadow overflow-hidden">
+        {selectedIds.size > 0 && (
+          <BulkActionBar
+            count={selectedIds.size}
+            boxes={refBoxes.filter(b => b.active)}
+            carrierServices={carrierServices}
+            progress={bulkProgress}
+            onChangeBox={handleBulkChangeBox}
+            onChangeService={handleBulkChangeService}
+            onGetRates={handleBulkGetRates}
+            onReingest={handleBulkReingest}
+            onValidateAddresses={handleBulkValidateAddresses}
+            onHold={handleBulkHold}
+            onDelete={handleBulkDelete}
+            onClear={clearSelection}
+          />
+        )}
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <Th columnKey="orderNumber">Order #</Th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  IF
+                <th className="px-3 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
                 </th>
-                <Th columnKey="customer">Customer</Th>
-                <Th columnKey="items">Items</Th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Box
-                </th>
-                <Th columnKey="amount">Amount</Th>
-                <Th columnKey="orderDate">Order Date</Th>
-                <Th columnKey="received">Received</Th>
-                <Th columnKey="status">Status</Th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+                {visibleColumns.map((col) =>
+                  col.sortKey ? (
+                    <Th key={col.id} columnKey={col.sortKey}>{col.label}</Th>
+                  ) : (
+                    <th key={col.id} className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${col.headerClassName || ''}`}>
+                      {col.label}
+                    </th>
+                  )
+                )}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {pageLogs.map((log) => {
                 const payload = log.rawPayload as any
                 const order = Array.isArray(payload) ? payload[0] : payload
-                const itemCount = order?.items?.length || 0
-                const customerName = order?.shipTo?.name || order?.billTo?.name || 'N/A'
                 const highlightType = getOrderHighlightType(log, orderHighlightSettings)
+                const preShoppedRate = (log as any).preShoppedRate as any
+                const shippedWeight = (log as any).shippedWeight as number | null
 
                 return (
                   <tr
                     key={log.id}
                     onClick={() => handleRowClick(log)}
-                    className="cursor-pointer transition-colors hover:bg-gray-50"
+                    className={`cursor-pointer transition-colors ${selectedIds.has(log.id) ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'}`}
                   >
-                    <td className={`px-4 py-3 whitespace-nowrap border-l-4 ${
-                      highlightType === 'red' ? 'border-l-red-500' : highlightType === 'orange' ? 'border-l-yellow-400' : 'border-l-transparent'
-                    }`}>
-                      <span className="text-sm font-semibold text-gray-900">
-                        {order?.orderNumber || log.orderNumber}
-                      </span>
+                    <td className="px-3 py-3 w-10" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(log.id)}
+                        onChange={() => toggleSelect(log.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
                     </td>
-                    <td className="px-2 py-3 whitespace-nowrap text-center">
-                      {order?.netsuiteIfId ? (
-                        <a
-                          href={`https://7913744.app.netsuite.com/app/accounting/transactions/itemship.nl?id=${order.netsuiteIfId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-blue-500 hover:text-blue-700"
-                          title={`IF ${order.netsuiteIfId}`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </a>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{customerName}</div>
-                      {order?.shipTo?.city && order?.shipTo?.state && (
-                        <div className="text-xs text-gray-500">
-                          {order.shipTo.city}, {order.shipTo.state}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {itemCount}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {(() => {
-                        const suggestion = log.suggestedBox
-                        if (!suggestion) {
+                    {visibleColumns.map((col) => {
+                      switch (col.id) {
+                        case 'orderNumber':
                           return (
-                            <button
-                              onClick={(e) => handleBoxClick(log, e)}
-                              className="text-sm text-gray-400 hover:text-gray-600 hover:underline"
-                              title="Click to set box"
-                            >
-                              — Set
-                            </button>
+                            <td key={col.id} className={`px-4 py-3 whitespace-nowrap border-l-4 ${
+                              highlightType === 'red' ? 'border-l-red-500' : highlightType === 'orange' ? 'border-l-yellow-400' : 'border-l-transparent'
+                            }`}>
+                              <span className="text-sm font-semibold text-gray-900">
+                                {order?.orderNumber || log.orderNumber}
+                              </span>
+                            </td>
                           )
-                        }
-                        if (!suggestion.boxName) {
+                        case 'if':
                           return (
-                            <button
-                              onClick={(e) => handleBoxClick(log, e)}
-                              className="text-sm text-red-600 font-medium hover:text-red-800 hover:underline"
-                              title="Click to set box"
-                            >
-                              No fit →
-                            </button>
+                            <td key={col.id} className="px-2 py-3 whitespace-nowrap text-center">
+                              {order?.netsuiteIfId ? (
+                                <a
+                                  href={`https://7913744.app.netsuite.com/app/accounting/transactions/itemship.nl?id=${order.netsuiteIfId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-blue-500 hover:text-blue-700"
+                                  title={`IF ${order.netsuiteIfId}`}
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                  </svg>
+                                </a>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
                           )
-                        }
-                        // Confirmed = not clickable
-                        if (suggestion.confidence === 'confirmed') {
+                        case 'customer':
                           return (
-                            <span className="text-sm font-medium text-green-600">
-                              {suggestion.boxName}
-                            </span>
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                              <div className="text-sm text-gray-900">{order?.shipTo?.name || order?.billTo?.name || 'N/A'}</div>
+                              {order?.shipTo?.city && order?.shipTo?.state && (
+                                <div className="text-xs text-gray-500">
+                                  {order.shipTo.city}, {order.shipTo.state}
+                                </div>
+                              )}
+                            </td>
                           )
-                        }
-                        // Calculated or Unknown = clickable
-                        const colorClass = suggestion.confidence === 'calculated'
-                          ? 'text-amber-600 hover:text-amber-800'
-                          : 'text-red-600 hover:text-red-800'
-                        return (
-                          <button
-                            onClick={(e) => handleBoxClick(log, e)}
-                            className={`text-sm font-medium ${colorClass} hover:underline`}
-                            title="Click to confirm or change box"
-                          >
-                            {suggestion.boxName} →
-                          </button>
-                        )
-                      })()}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {order?.orderDate ? new Date(order.orderDate).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(log.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                          highlightType === 'red'
-                            ? 'bg-red-100 text-red-700'
-                            : highlightType === 'orange'
-                              ? 'bg-yellow-100 text-yellow-700'
-                              : log.status === 'SHIPPED'
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-blue-100 text-blue-800'
-                        }`}
-                      >
-                        {log.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => handleEditClick(log, e)}
-                          className="p-1.5 rounded hover:bg-blue-100 transition-colors text-gray-400 hover:text-blue-600"
-                          title="Edit order"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={(e) => handleHoldClick(log, e)}
-                          disabled={holdingIds.has(log.id) || log.status === 'ON_HOLD'}
-                          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                            log.status === 'ON_HOLD'
-                              ? 'bg-yellow-200 text-yellow-800 cursor-default'
-                              : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
-                          } disabled:opacity-50`}
-                          title={log.status === 'ON_HOLD' ? 'Already on hold' : 'Put order on hold'}
-                        >
-                          {holdingIds.has(log.id) ? '...' : log.status === 'ON_HOLD' ? 'Held' : 'Hold'}
-                        </button>
-                        <button
-                          onClick={(e) => handleDeleteClick(log, e)}
-                          className="p-1.5 rounded hover:bg-red-100 transition-colors text-gray-400 hover:text-red-600"
-                          title="Delete order"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    </td>
+                        case 'items':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                              {order?.items?.length || 0}
+                            </td>
+                          )
+                        case 'box':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                              {(() => {
+                                const suggestion = log.suggestedBox
+                                if (!suggestion) {
+                                  return (
+                                    <button
+                                      onClick={(e) => handleBoxClick(log, e)}
+                                      className="text-sm text-gray-400 hover:text-gray-600 hover:underline"
+                                      title="Click to set box"
+                                    >
+                                      — Set
+                                    </button>
+                                  )
+                                }
+                                if (!suggestion.boxName) {
+                                  return (
+                                    <button
+                                      onClick={(e) => handleBoxClick(log, e)}
+                                      className="text-sm text-red-600 font-medium hover:text-red-800 hover:underline"
+                                      title="Click to set box"
+                                    >
+                                      No fit →
+                                    </button>
+                                  )
+                                }
+                                if (suggestion.confidence === 'confirmed') {
+                                  return (
+                                    <span className="text-sm font-medium text-green-600">
+                                      {suggestion.boxName}
+                                    </span>
+                                  )
+                                }
+                                const colorClass = suggestion.confidence === 'calculated'
+                                  ? 'text-amber-600 hover:text-amber-800'
+                                  : 'text-red-600 hover:text-red-800'
+                                return (
+                                  <button
+                                    onClick={(e) => handleBoxClick(log, e)}
+                                    className={`text-sm font-medium ${colorClass} hover:underline`}
+                                    title="Click to confirm or change box"
+                                  >
+                                    {suggestion.boxName} →
+                                  </button>
+                                )
+                              })()}
+                            </td>
+                          )
+                        case 'weight':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                              {shippedWeight != null ? `${shippedWeight.toFixed(2)} lbs` : <span className="text-gray-300">—</span>}
+                            </td>
+                          )
+                        case 'carrier':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                              {preShoppedRate?.carrier || <span className="text-gray-300">—</span>}
+                            </td>
+                          )
+                        case 'service':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 max-w-[150px] truncate" title={preShoppedRate?.serviceName || ''}>
+                              {preShoppedRate?.serviceName || <span className="text-gray-300">—</span>}
+                            </td>
+                          )
+                        case 'rate':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-right font-mono">
+                              {preShoppedRate?.price != null ? (
+                                <span className="text-green-700 font-medium">{formatCurrency(preShoppedRate.price)}</span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                          )
+                        case 'amount':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {order?.amountPaid !== undefined ? formatCurrency(order.amountPaid) : '—'}
+                            </td>
+                          )
+                        case 'orderDate':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {order?.orderDate ? new Date(order.orderDate).toLocaleDateString() : '—'}
+                            </td>
+                          )
+                        case 'received':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {new Date(log.createdAt).toLocaleDateString()}
+                            </td>
+                          )
+                        case 'status':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                              <span
+                                className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+                                  highlightType === 'red'
+                                    ? 'bg-red-100 text-red-700'
+                                    : highlightType === 'orange'
+                                      ? 'bg-yellow-100 text-yellow-700'
+                                      : log.status === 'SHIPPED'
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {log.status}
+                              </span>
+                            </td>
+                          )
+                        case 'actions':
+                          return (
+                            <td key={col.id} className="px-4 py-3 whitespace-nowrap">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleRowClick(log) }}
+                                  className="p-1.5 rounded hover:bg-blue-100 transition-colors text-gray-400 hover:text-blue-600"
+                                  title="View / edit order"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  onClick={(e) => handleHoldClick(log, e)}
+                                  disabled={holdingIds.has(log.id) || log.status === 'ON_HOLD'}
+                                  className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                                    log.status === 'ON_HOLD'
+                                      ? 'bg-yellow-200 text-yellow-800 cursor-default'
+                                      : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+                                  } disabled:opacity-50`}
+                                  title={log.status === 'ON_HOLD' ? 'Already on hold' : 'Put order on hold'}
+                                >
+                                  {holdingIds.has(log.id) ? '...' : log.status === 'ON_HOLD' ? 'Held' : 'Hold'}
+                                </button>
+                                <button
+                                  onClick={(e) => handleDeleteClick(log, e)}
+                                  className="p-1.5 rounded hover:bg-red-100 transition-colors text-gray-400 hover:text-red-600"
+                                  title="Delete order"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          )
+                        default:
+                          return <td key={col.id} className="px-4 py-3">—</td>
+                      }
+                    })}
                   </tr>
                 )
               })}
@@ -614,12 +917,8 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
         onClose={handleCloseDialog}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
-        onGetRates={handleGetRates}
-        onEdit={viewedLog ? () => {
-          setIsDialogOpen(false)
-          setEditLog(viewedLog)
-          setIsEditOpen(true)
-        } : undefined}
+        orderLog={viewedLog}
+        onSaved={handleOrderSaved}
       />
       {boxConfirmLog && (() => {
         const payload = boxConfirmLog.rawPayload as any
@@ -641,28 +940,6 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           />
         )
       })()}
-      <RateTestDialog
-        isOpen={isRateTestOpen}
-        onClose={handleCloseRateTest}
-        order={rateTestOrder}
-      />
-
-      {/* Edit Order Dialog */}
-      {editLog && (
-        <EditOrderDialog
-          isOpen={isEditOpen}
-          onClose={() => { setIsEditOpen(false); setEditLog(null) }}
-          orderId={editLog.id}
-          orderNumber={editLog.orderNumber}
-          rawPayload={editLog.rawPayload}
-          preShoppedRate={(editLog as any).preShoppedRate || null}
-          shippedWeight={(editLog as any).shippedWeight || null}
-          rateShopStatus={(editLog as any).rateShopStatus || null}
-          rateShopError={(editLog as any).rateShopError || null}
-          onSaved={handleEditSaved}
-        />
-      )}
-
       {/* Hold Reason Dialog */}
       {holdDialogOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -714,6 +991,17 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           </div>
         </div>
       )}
+
+      {/* Column Settings Dialog */}
+      <ColumnSettingsDialog
+        open={showColumnSettings}
+        onClose={() => setShowColumnSettings(false)}
+        columns={ALL_COLUMNS.map((c) => ({ id: c.id, label: c.label }))}
+        columnOrder={columnOrder}
+        hiddenColumns={hiddenColumns}
+        pinnedColumns={PINNED_COLUMNS}
+        onSave={handleColumnSave}
+      />
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirmOpen && orderToDelete && (

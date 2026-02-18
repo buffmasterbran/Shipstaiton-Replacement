@@ -48,7 +48,14 @@ export default function GeneralSettingsPage() {
       .then((data) => {
         const setting = data.settings?.find((s: { key: string }) => s.key === 'selected_services')
         if (setting?.value?.services) {
-          setAvailableServices(setting.value.services)
+          const seen = new Set<string>()
+          const deduped = setting.value.services.filter((s: CarrierService) => {
+            const key = `${s.carrierCode}:${s.serviceCode}`
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+          setAvailableServices(deduped)
         }
       })
       .catch(() => setAvailableServices([]))

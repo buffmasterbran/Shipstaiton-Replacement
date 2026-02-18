@@ -25,6 +25,9 @@ export async function GET() {
         rateShopError: true,
         // Hold fields
         onHoldReason: true,
+        // Address validation
+        addressValidated: true,
+        addressOverridden: true,
         // Picking workflow fields
         batchId: true,
         createdAt: true,

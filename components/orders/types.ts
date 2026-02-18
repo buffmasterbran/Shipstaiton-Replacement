@@ -3,7 +3,7 @@ import type { OrderLog } from '@/context/OrdersContext'
 const PAGE_SIZES = [25, 50, 100] as const
 const DEFAULT_PAGE_SIZE = 25
 
-type SortKey = 'orderNumber' | 'customer' | 'items' | 'amount' | 'orderDate' | 'received' | 'status'
+type SortKey = 'orderNumber' | 'customer' | 'items' | 'amount' | 'orderDate' | 'received' | 'status' | 'weight' | 'carrier' | 'service' | 'rate'
 type SortDir = 'asc' | 'desc'
 type OrderTypeFilter = 'all' | 'single' | 'bulk' | 'box' | 'batched' | 'uncategorized'
 

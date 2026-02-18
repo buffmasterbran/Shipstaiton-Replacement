@@ -1,9 +1,8 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useOrders, type OrderLog } from '@/context/OrdersContext'
 import OrderDialog from '@/components/dialogs/OrderDialog'
-import EditOrderDialog from '@/components/dialogs/EditOrderDialog'
 
 function getErrorHint(error: string | null | undefined): string | null {
   if (!error) return null
@@ -29,10 +28,6 @@ export default function ErrorOrdersPage() {
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [viewedLog, setViewedLog] = useState<OrderLog | null>(null)
-
-  // Edit dialog state
-  const [isEditOpen, setIsEditOpen] = useState(false)
-  const [editLog, setEditLog] = useState<OrderLog | null>(null)
 
   // Retry state
   const [retryingId, setRetryingId] = useState<string | null>(null)
@@ -67,15 +62,9 @@ export default function ErrorOrdersPage() {
     setViewedLog(null)
   }
 
-  const handleEditClick = (log: OrderLog, e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    setEditLog(log)
-    setIsEditOpen(true)
-  }
-
-  const handleEditSaved = (updatedOrder: any) => {
-    updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<OrderLog>)
-  }
+  const handleOrderSaved = useCallback((updatedOrder: any) => {
+    if (updatedOrder?.id) updateOrderInPlace(updatedOrder.id, updatedOrder as Partial<OrderLog>)
+  }, [updateOrderInPlace])
 
   const handleRetry = async (log: OrderLog, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -265,11 +254,11 @@ export default function ErrorOrdersPage() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex items-center justify-end gap-1">
-                          {/* Edit & Fix */}
+                          {/* View & Edit */}
                           <button
-                            onClick={(e) => handleEditClick(log, e)}
+                            onClick={(e) => { e.stopPropagation(); handleRowClick(log) }}
                             className="p-1.5 rounded text-blue-600 hover:bg-blue-100 transition-colors"
-                            title="Edit & Fix"
+                            title="View & Edit"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -320,26 +309,9 @@ export default function ErrorOrdersPage() {
         onClose={handleCloseDialog}
         order={selectedOrder}
         rawPayload={selectedRawPayload}
-        onEdit={viewedLog ? () => {
-          handleCloseDialog()
-          handleEditClick(viewedLog)
-        } : undefined}
+        orderLog={viewedLog}
+        onSaved={handleOrderSaved}
       />
-
-      {editLog && (
-        <EditOrderDialog
-          isOpen={isEditOpen}
-          onClose={() => { setIsEditOpen(false); setEditLog(null) }}
-          orderId={editLog.id}
-          orderNumber={editLog.orderNumber}
-          rawPayload={editLog.rawPayload}
-          preShoppedRate={editLog.preShoppedRate || null}
-          shippedWeight={editLog.shippedWeight || null}
-          rateShopStatus={editLog.rateShopStatus || null}
-          rateShopError={editLog.rateShopError || null}
-          onSaved={handleEditSaved}
-        />
-      )}
     </div>
   )
 }

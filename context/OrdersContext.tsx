@@ -38,6 +38,9 @@ export interface OrderLog {
   rateShopError?: string | null
   // Hold fields
   onHoldReason?: string | null
+  // Address validation
+  addressValidated?: boolean
+  addressOverridden?: boolean
   // Picking workflow fields
   batchId?: string | null
   createdAt: string

@@ -17,7 +17,12 @@ interface SelectedService {
   carrierName: string
   serviceCode: string
   serviceName: string
+  domestic?: boolean
+  international?: boolean
 }
+
+const serviceKey = (carrierId: string, serviceCode: string, domestic: boolean, international: boolean) =>
+  `${carrierId}:${serviceCode}:${domestic ? 'd' : ''}${international ? 'i' : ''}`
 
 export default function CarriersPage() {
   const [carriers, setCarriers] = useState<ShipEngineCarrier[]>([])
@@ -117,19 +122,25 @@ export default function CarriersPage() {
   }
 
   const isSelected = useCallback(
-    (carrierId: string, serviceCode: string) =>
-      selectedServices.some((s) => s.carrierId === carrierId && s.serviceCode === serviceCode),
+    (carrierId: string, serviceCode: string, domestic: boolean, international: boolean) => {
+      return selectedServices.some((s) => {
+        if (s.carrierId !== carrierId || s.serviceCode !== serviceCode) return false
+        if (s.domestic !== undefined) return s.domestic === domestic && s.international === international
+        return true
+      })
+    },
     [selectedServices]
   )
 
   const toggleService = (carrier: ShipEngineCarrier, service: CarrierService) => {
+    const key = serviceKey(carrier.carrier_id, service.service_code, service.domestic, service.international)
     setSelectedServices((prev) => {
       const exists = prev.some(
-        (s) => s.carrierId === carrier.carrier_id && s.serviceCode === service.service_code
+        (s) => serviceKey(s.carrierId, s.serviceCode, !!s.domestic, !!s.international) === key
       )
       if (exists) {
         return prev.filter(
-          (s) => !(s.carrierId === carrier.carrier_id && s.serviceCode === service.service_code)
+          (s) => serviceKey(s.carrierId, s.serviceCode, !!s.domestic, !!s.international) !== key
         )
       }
       return [
@@ -140,6 +151,8 @@ export default function CarriersPage() {
           carrierName: carrier.friendly_name,
           serviceCode: service.service_code,
           serviceName: service.name,
+          domestic: service.domestic,
+          international: service.international,
         },
       ]
     })
@@ -155,6 +168,8 @@ export default function CarriersPage() {
         carrierName: carrier.friendly_name,
         serviceCode: svc.service_code,
         serviceName: svc.name,
+        domestic: svc.domestic,
+        international: svc.international,
       }))
       return [...withoutCarrier, ...all]
     })
@@ -381,7 +396,7 @@ const CarrierCard = ({
   expanded: boolean
   onToggle: () => void
   selectedCount: number
-  isServiceSelected: (carrierId: string, serviceCode: string) => boolean
+  isServiceSelected: (carrierId: string, serviceCode: string, domestic: boolean, international: boolean) => boolean
   onToggleService: (carrier: ShipEngineCarrier, service: CarrierService) => void
   onSelectAll: (carrier: ShipEngineCarrier) => void
   onDeselectAll: (carrierId: string) => void
@@ -390,6 +405,7 @@ const CarrierCard = ({
   onOpenSettings: () => void
 }) => {
   const [serviceFilter, setServiceFilter] = useState<'all' | 'domestic' | 'international'>('all')
+  const [jsonService, setJsonService] = useState<CarrierService | null>(null)
   const breakdown = getServiceBreakdown(carrier.services)
   const billing = getBillingLabel(carrier)
   const icon = getCarrierIcon(carrier.carrier_code)
@@ -542,10 +558,10 @@ const CarrierCard = ({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
                   {filteredServices.map((service) => {
-                    const checked = isServiceSelected(carrier.carrier_id, service.service_code)
+                    const checked = isServiceSelected(carrier.carrier_id, service.service_code, service.domestic, service.international)
                     return (
                       <div
-                        key={service.service_code}
+                        key={`${service.service_code}-${service.domestic ? 'dom' : 'intl'}`}
                         onClick={() => onToggleService(carrier, service)}
                         className={`flex items-center gap-3 bg-white rounded border-2 px-3 py-2.5 cursor-pointer transition-colors ${
                           checked
@@ -567,13 +583,20 @@ const CarrierCard = ({
                             {service.service_code}
                           </div>
                         </div>
-                        <div className="flex gap-1 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           {service.domestic && (
                             <span className="w-2 h-2 rounded-full bg-green-400" title="Domestic" />
                           )}
                           {service.international && (
                             <span className="w-2 h-2 rounded-full bg-blue-400" title="International" />
                           )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setJsonService(service) }}
+                            className="ml-1 px-1.5 py-0.5 text-[10px] font-mono text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                            title="View JSON"
+                          >
+                            {'{ }'}
+                          </button>
                         </div>
                       </div>
                     )
@@ -586,6 +609,31 @@ const CarrierCard = ({
               No services loaded for this carrier.
             </p>
           )}
+        </div>
+      )}
+
+      {jsonService && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setJsonService(null)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-sm font-semibold text-gray-800">{jsonService.name}</h3>
+              <button
+                onClick={() => setJsonService(null)}
+                className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <pre className="p-4 text-xs font-mono text-gray-700 bg-gray-50 overflow-auto max-h-[60vh]">
+              {JSON.stringify(jsonService, null, 2)}
+            </pre>
+          </div>
         </div>
       )}
     </div>

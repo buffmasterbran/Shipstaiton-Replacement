@@ -3,6 +3,35 @@ import { NextRequest, NextResponse } from 'next/server'
 const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY
 const SHIPENGINE_CARRIERS_URL = 'https://api.shipengine.com/v1/carriers'
 
+function normalizeServices(services: any[]): any[] {
+  const grouped = new Map<string, any[]>()
+  for (const svc of services) {
+    const entries = grouped.get(svc.service_code) || []
+    entries.push(svc)
+    grouped.set(svc.service_code, entries)
+  }
+
+  const result: any[] = []
+  for (const entries of Array.from(grouped.values())) {
+    if (entries.length === 1) {
+      result.push(entries[0])
+      continue
+    }
+    const names = new Set(entries.map((e: any) => e.name))
+    if (names.size === 1) {
+      const merged = { ...entries[0] }
+      for (const e of entries) {
+        merged.domestic = merged.domestic || e.domestic
+        merged.international = merged.international || e.international
+      }
+      result.push(merged)
+    } else {
+      result.push(...entries)
+    }
+  }
+  return result
+}
+
 export async function GET(request: NextRequest) {
   try {
     if (!SHIPENGINE_API_KEY) {
@@ -61,7 +90,7 @@ export async function GET(request: NextRequest) {
               const servicesData = await servicesResponse.json()
               return {
                 ...carrier,
-                services: servicesData.services || [],
+                services: normalizeServices(servicesData.services || []),
               }
             }
           } catch (err) {

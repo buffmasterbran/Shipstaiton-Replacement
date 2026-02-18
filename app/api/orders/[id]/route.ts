@@ -7,14 +7,16 @@ import {
   calculateShipmentWeight,
   type ShipToAddress,
 } from '@/lib/rate-shop'
+import { validateAddress, type AddressValidationResult } from '@/lib/address-validation'
 
 /**
- * PATCH /api/orders/[id] - Update an order's address, carrier, weight, or retry rate shopping
+ * PATCH /api/orders/[id] - Update an order's address, carrier, weight, box, or retry rate shopping
  *
  * Body (all fields optional):
  * - address: { name?, company?, street1?, street2?, city?, state?, postalCode?, country?, phone? }
  * - carrier: { carrierId, carrierCode, carrier, serviceCode, serviceName }
  * - weight: number (lbs)
+ * - box: { boxId?, boxName?, lengthInches, widthInches, heightInches, weightLbs? }
  * - retryRateShopping: boolean
  */
 export async function PATCH(
@@ -25,23 +27,21 @@ export async function PATCH(
     const { id } = params
     const body = await request.json()
 
-    const { address, carrier, weight, retryRateShopping } = body
+    const { address, carrier, weight, box, retryRateShopping } = body
 
-    // Fetch existing order
     const order = await prisma.orderLog.findUnique({ where: { id } })
     if (!order) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 })
     }
 
-    // Build update data
     const updateData: any = {}
+    let addressValidation: AddressValidationResult | null = null
 
-    // Handle rawPayload (array-or-object pattern used throughout codebase)
     let rawPayload = order.rawPayload as any
     const isArray = Array.isArray(rawPayload)
     let orderData = isArray ? rawPayload[0] : rawPayload
 
-    // --- Address update ---
+    // --- Address update + validation ---
     if (address && typeof address === 'object') {
       const existingShipTo = orderData.shipTo || {}
       orderData = {
@@ -55,11 +55,66 @@ export async function PATCH(
         rawPayload = orderData
       }
       updateData.rawPayload = rawPayload
+
+      // Validate via ShipEngine
+      try {
+        addressValidation = await validateAddress({
+          name: address.name || existingShipTo.name || '',
+          company: address.company || existingShipTo.company || '',
+          street1: address.street1 || existingShipTo.street1 || '',
+          street2: address.street2 || existingShipTo.street2 || '',
+          city: address.city || existingShipTo.city || '',
+          state: address.state || existingShipTo.state || '',
+          postalCode: address.postalCode || existingShipTo.postalCode || '',
+          country: address.country || existingShipTo.country || 'US',
+        })
+        updateData.addressValidated = addressValidation.status === 'verified'
+        updateData.addressOverridden = false
+      } catch (err) {
+        console.error('Address validation call failed:', err)
+        updateData.addressValidated = false
+      }
+    }
+
+    // --- Accept matched address (user clicked "Accept" on suggestion) ---
+    if (body.acceptMatchedAddress && typeof body.acceptMatchedAddress === 'object') {
+      const matched = body.acceptMatchedAddress
+      const existingShipTo = orderData.shipTo || {}
+      orderData = {
+        ...orderData,
+        shipTo: { ...existingShipTo, ...matched },
+      }
+      if (isArray) {
+        rawPayload = [orderData, ...rawPayload.slice(1)]
+      } else {
+        rawPayload = orderData
+      }
+      updateData.rawPayload = rawPayload
+      updateData.addressValidated = true
+      updateData.addressOverridden = false
+    }
+
+    // --- Override address (user clicked "Keep Mine" on suggestion) ---
+    if (body.overrideAddress === true) {
+      updateData.addressOverridden = true
     }
 
     // --- Weight update ---
     if (weight !== undefined && typeof weight === 'number') {
       updateData.shippedWeight = weight
+    }
+
+    // --- Box update ---
+    if (box && typeof box === 'object') {
+      updateData.suggestedBox = {
+        boxId: box.boxId || null,
+        boxName: box.boxName || null,
+        confidence: 'confirmed',
+        lengthInches: box.lengthInches,
+        widthInches: box.widthInches,
+        heightInches: box.heightInches,
+        weightLbs: box.weightLbs || 0,
+      }
     }
 
     // --- Carrier override ---
@@ -90,7 +145,6 @@ export async function PATCH(
         )
       }
 
-      // Use the (possibly updated) rawPayload
       const currentPayload = updateData.rawPayload || rawPayload
       const currentOrderData = Array.isArray(currentPayload) ? currentPayload[0] : currentPayload
       const shipTo = currentOrderData.shipTo || {}
@@ -108,23 +162,21 @@ export async function PATCH(
         residential: shipTo.residential !== false,
       }
 
-      // Get box dimensions from suggestedBox
-      const suggestedBox = order.suggestedBox as any
-      let dimensions = { length: 6, width: 6, height: 6 } // fallback
-      if (suggestedBox?.lengthInches && suggestedBox?.widthInches && suggestedBox?.heightInches) {
+      // Prefer updated box over existing
+      const currentBox = (updateData.suggestedBox || order.suggestedBox) as any
+      let dimensions = { length: 6, width: 6, height: 6 }
+      if (currentBox?.lengthInches && currentBox?.widthInches && currentBox?.heightInches) {
         dimensions = {
-          length: suggestedBox.lengthInches,
-          width: suggestedBox.widthInches,
-          height: suggestedBox.heightInches,
+          length: currentBox.lengthInches,
+          width: currentBox.widthInches,
+          height: currentBox.heightInches,
         }
       }
 
-      // Calculate weight
       const items = currentOrderData.items || []
-      const boxWeight = suggestedBox?.weightLbs || 0
+      const boxWeight = currentBox?.weightLbs || 0
       const totalWeight = updateData.shippedWeight ?? order.shippedWeight ?? await calculateShipmentWeight(prisma, items, boxWeight)
 
-      // Shop rates
       const rateResult = await shopRates(prisma, shipToAddress, totalWeight, dimensions, rateShopper)
 
       if (rateResult.success && rateResult.rate) {
@@ -166,12 +218,18 @@ export async function PATCH(
         suggestedBox: true,
         orderType: true,
         customerReachedOut: true,
+        addressValidated: true,
+        addressOverridden: true,
         createdAt: true,
         updatedAt: true,
       },
     })
 
-    return NextResponse.json({ success: true, order: updated })
+    return NextResponse.json({
+      success: true,
+      order: updated,
+      addressValidation: addressValidation || undefined,
+    })
   } catch (error: any) {
     console.error('Error updating order:', error)
     return NextResponse.json(

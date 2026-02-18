@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { OrderStatus } from '@prisma/client'
-import { getBoxes, getFeedbackRules, getPackingEfficiency, findBestBox } from '@/lib/box-config'
+import { getBoxes, getFeedbackRules, getPackingEfficiency, findBestBox, calculateBoxSuggestion } from '@/lib/box-config'
 import { getProductSizes, matchSkuToSize, recordUnmatchedSkus, ProductSize } from '@/lib/products'
 import {
   classifyOrder,
@@ -12,25 +12,7 @@ import {
   type OrderType,
   type ShipToAddress,
 } from '@/lib/rate-shop'
-
-// Type for the cached box suggestion
-interface SuggestedBox {
-  boxId: string | null
-  boxName: string | null
-  confidence: 'confirmed' | 'calculated' | 'unknown'
-  reason?: string
-  // Box dimensions and weight for rate shopping
-  lengthInches?: number
-  widthInches?: number
-  heightInches?: number
-  weightLbs?: number
-}
-
-// Result from calculateBoxSuggestion including unmatched SKUs
-interface BoxSuggestionResult {
-  suggestedBox: SuggestedBox
-  unmatchedSkus: Array<{ sku: string; itemName: string | null }>
-}
+import { validateAddress } from '@/lib/address-validation'
 
 // Rate shopping result stored on order
 interface PreShoppedRate {
@@ -43,122 +25,6 @@ interface PreShoppedRate {
   currency: string
   deliveryDays: number | null
   rateId?: string
-}
-
-// Calculate box suggestion for an order's items
-async function calculateBoxSuggestion(
-  items: Array<{ sku?: string; quantity?: number; name?: string }>,
-  sizes: ProductSize[],
-  boxes: Awaited<ReturnType<typeof getBoxes>>,
-  feedbackRules: Awaited<ReturnType<typeof getFeedbackRules>>,
-  packingEfficiency: number,
-  orderNumber?: string // For logging
-): Promise<BoxSuggestionResult> {
-  const unmatchedSkus: Array<{ sku: string; itemName: string | null }> = []
-
-  if (!items || items.length === 0) {
-    return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
-  }
-
-  // Filter out insurance items
-  const nonInsuranceItems = items.filter(item => {
-    const sku = (item.sku || '').toUpperCase()
-    const name = (item.name || '').toUpperCase()
-    return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
-  })
-
-  if (nonInsuranceItems.length === 0) {
-    return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
-  }
-
-  // Map SKUs to product sizes
-  const mappedItems: { productId: string; quantity: number; size: ProductSize }[] = []
-
-  for (const item of nonInsuranceItems) {
-    const sku = item.sku || ''
-    const qty = Number(item.quantity) || 1
-
-    const size = await matchSkuToSize(prisma, sku)
-    if (size) {
-      mappedItems.push({ productId: size.id, quantity: qty, size })
-    } else if (sku) {
-      unmatchedSkus.push({ sku, itemName: item.name || null })
-    }
-  }
-
-  if (mappedItems.length === 0) {
-    // Check if all items are stickers (PL-STCK*)
-    const allStickers = nonInsuranceItems.every(item => {
-      const sku = (item.sku || '').toUpperCase()
-      return sku.startsWith('PL-STCK')
-    })
-
-    if (allStickers && nonInsuranceItems.length > 0) {
-      // Find a box named "Stickers" (case-insensitive)
-      const stickerBox = boxes.find(b => b.name.toLowerCase() === 'stickers' && b.active)
-      if (stickerBox) {
-        return {
-          suggestedBox: {
-            boxId: stickerBox.id,
-            boxName: stickerBox.name,
-            confidence: 'confirmed',
-            reason: 'sticker-only',
-            lengthInches: stickerBox.lengthInches,
-            widthInches: stickerBox.widthInches,
-            heightInches: stickerBox.heightInches,
-            weightLbs: stickerBox.weightLbs,
-          },
-          unmatchedSkus,
-        }
-      }
-    }
-
-    return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
-  }
-
-  // CHECK 1: Single item with dedicated box (singleBoxId)
-  const totalQty = mappedItems.reduce((sum, i) => sum + i.quantity, 0)
-
-  if (mappedItems.length === 1 && totalQty === 1) {
-    const singleSize = mappedItems[0].size
-
-    if (singleSize.singleBoxId) {
-      const dedicatedBox = boxes.find(b => b.id === singleSize.singleBoxId && b.active)
-
-      if (dedicatedBox) {
-        return {
-          suggestedBox: {
-            boxId: dedicatedBox.id,
-            boxName: dedicatedBox.name,
-            confidence: 'confirmed',
-            reason: 'dedicated-box',
-            lengthInches: dedicatedBox.lengthInches,
-            widthInches: dedicatedBox.widthInches,
-            heightInches: dedicatedBox.heightInches,
-            weightLbs: dedicatedBox.weightLbs,
-          },
-          unmatchedSkus,
-        }
-      }
-    }
-  }
-
-  // CHECK 2: Use standard box fitting algorithm
-  const productItems = mappedItems.map(i => ({ productId: i.productId, quantity: i.quantity }))
-  const result = findBestBox(productItems, sizes, boxes, feedbackRules, packingEfficiency)
-
-  return {
-    suggestedBox: {
-      boxId: result.box?.id || null,
-      boxName: result.box?.name || null,
-      confidence: result.confidence as 'confirmed' | 'calculated' | 'unknown',
-      lengthInches: result.box?.lengthInches,
-      widthInches: result.box?.widthInches,
-      heightInches: result.box?.heightInches,
-      weightLbs: result.box?.weightLbs,
-    },
-    unmatchedSkus,
-  }
 }
 
 function validateAuth(request: NextRequest): { valid: boolean; error?: string } {
@@ -314,7 +180,7 @@ export async function POST(request: NextRequest) {
 
       // Calculate box suggestion based on items
       const items = order.items || []
-      const { suggestedBox, unmatchedSkus } = await calculateBoxSuggestion(items, sizes, boxes, feedbackRules, packingEfficiency, String(orderNumber))
+      const { suggestedBox, unmatchedSkus } = await calculateBoxSuggestion(prisma, items, sizes, boxes, feedbackRules, packingEfficiency)
 
       // Collect unmatched SKUs with order context
       for (const unmatched of unmatchedSkus) {
@@ -324,6 +190,22 @@ export async function POST(request: NextRequest) {
           itemName: unmatched.itemName,
         })
       }
+
+      // Kick off address validation in parallel (non-blocking)
+      const shipToRaw = order.shipTo || {}
+      const addressValidationPromise = validateAddress({
+        name: shipToRaw.name || order.billTo?.name || '',
+        company: shipToRaw.company || '',
+        street1: shipToRaw.street1 || shipToRaw.address1 || '',
+        street2: shipToRaw.street2 || shipToRaw.address2 || '',
+        city: shipToRaw.city || '',
+        state: shipToRaw.state || '',
+        postalCode: shipToRaw.postalCode || shipToRaw.zip || '',
+        country: shipToRaw.country || 'US',
+      }).catch((err) => {
+        console.error(`${logPrefix} Address validation failed:`, err.message)
+        return null
+      })
 
       // Check for personalization flag from NetSuite
       const isPersonalized = !!(
@@ -656,6 +538,10 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Await address validation result (already running in parallel)
+      const addrResult = await addressValidationPromise
+      const addressValidated = addrResult?.status === 'verified'
+
       return {
         orderNumber: String(orderNumber),
         status: OrderStatus.AWAITING_SHIPMENT,
@@ -668,6 +554,8 @@ export async function POST(request: NextRequest) {
         rateFetchedAt: rateShopStatus === 'SUCCESS' ? new Date() : null,
         rateShopStatus,
         rateShopError,
+        addressValidated,
+        addressOverridden: false,
       }
     }))
 
@@ -707,6 +595,7 @@ export async function POST(request: NextRequest) {
               rateFetchedAt: orderData.rateFetchedAt,
               rateShopStatus: orderData.rateShopStatus,
               rateShopError: orderData.rateShopError,
+              addressValidated: orderData.addressValidated,
             },
           })
           results.push({
