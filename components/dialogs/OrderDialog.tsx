@@ -4,6 +4,7 @@ import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from 'rea
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 import { useReferenceData } from '@/hooks/useReferenceData'
+import RateBrowserDialog from './RateBrowserDialog'
 
 interface OrderItem {
   sku?: string
@@ -131,6 +132,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
 
   // === Get rate state ===
   const [gettingRate, setGettingRate] = useState(false)
+  const [showRateBrowser, setShowRateBrowser] = useState(false)
 
   // Derived
   const selectedComputer = useMemo(() => computers.find(c => c.name === selectedComputerName) || null, [computers, selectedComputerName])
@@ -327,6 +329,32 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
     } catch (e) { console.error('Get rate error:', e) }
     finally { setGettingRate(false) }
   }, [orderLog?.id, editWeight, editLength, editWidth, editHeight, editBoxId, boxes, onSaved])
+
+  // === Select rate from Rate Browser ===
+  const handleBrowseRateSelect = useCallback(async (rate: any) => {
+    if (!orderLog?.id) return
+    try {
+      const res = await fetch(`/api/orders/${orderLog.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          carrier: {
+            carrierId: rate.carrierId,
+            carrierCode: rate.carrierCode,
+            carrier: rate.carrier,
+            serviceCode: rate.serviceCode,
+            serviceName: rate.serviceName,
+          },
+        }),
+      })
+      const data = await res.json()
+      if (data.success && data.order) {
+        setCurrentRate({ ...rate, price: rate.price })
+        setCurrentRateStatus('SUCCESS')
+        setEditServiceCode(rate.serviceCode)
+        onSaved?.(data.order)
+      }
+    } catch (e) { console.error('Apply rate error:', e) }
+  }, [orderLog?.id, onSaved])
 
   // === Address save + validate ===
   const handleSaveAddress = useCallback(async () => {
@@ -877,6 +905,12 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                       ) : null}
                       {rateRecalcing && <div className="text-xs text-blue-500 mt-2 animate-pulse">Recalculating rate...</div>}
                       {currentRateStatus === 'FAILED' && <div className="text-xs text-red-600 mt-2 bg-red-50 p-2 rounded">Rate shopping failed</div>}
+                      <button
+                        onClick={() => setShowRateBrowser(true)}
+                        className="mt-3 w-full py-1.5 px-3 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                      >
+                        Browse Rates
+                      </button>
                     </div>
 
                     {/* Package */}
@@ -980,6 +1014,15 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
           </div>
         </div>
       </Dialog>
+
+      {/* Rate Browser Dialog (renders outside the main Dialog to avoid z-index issues) */}
+      <RateBrowserDialog
+        isOpen={showRateBrowser}
+        onClose={() => setShowRateBrowser(false)}
+        order={order}
+        orderLog={orderLog}
+        onSelectRate={handleBrowseRateSelect}
+      />
     </Transition>
   )
 }

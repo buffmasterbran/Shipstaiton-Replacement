@@ -32,6 +32,10 @@ export default function ErrorOrdersPage() {
   // Retry state
   const [retryingId, setRetryingId] = useState<string | null>(null)
 
+  // Bulk retry state
+  const [bulkRetrying, setBulkRetrying] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
+
   // Delete state
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
@@ -113,6 +117,24 @@ export default function ErrorOrdersPage() {
     }
   }
 
+  const handleBulkRetry = async () => {
+    if (bulkRetrying || errorOrders.length === 0) return
+    if (!confirm(`Re-run ingest for all ${errorOrders.length} error orders?`)) return
+    setBulkRetrying(true)
+    setBulkProgress({ done: 0, total: errorOrders.length })
+    for (let i = 0; i < errorOrders.length; i++) {
+      try {
+        const res = await fetch(`/api/orders/${errorOrders[i].id}/reingest`, { method: 'POST' })
+        const data = await res.json()
+        if (data.order) updateOrderInPlace(data.order.id, data.order as Partial<OrderLog>)
+      } catch (e) { console.error(`Bulk reingest error for ${errorOrders[i].orderNumber}:`, e) }
+      setBulkProgress({ done: i + 1, total: errorOrders.length })
+    }
+    setBulkRetrying(false)
+    setBulkProgress(null)
+    refreshOrders()
+  }
+
   if (loading) {
     return (
       <div>
@@ -161,6 +183,25 @@ export default function ErrorOrdersPage() {
             </p>
           )}
         </div>
+        {errorOrders.length > 0 && (
+          <button
+            onClick={handleBulkRetry}
+            disabled={bulkRetrying}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-semibold hover:bg-purple-700 disabled:opacity-60 transition-colors"
+          >
+            {bulkRetrying ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                Re-ingesting {bulkProgress?.done}/{bulkProgress?.total}...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
+                Retry All ({errorOrders.length})
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       {errorOrders.length === 0 ? (
