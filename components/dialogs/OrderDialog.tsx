@@ -34,6 +34,7 @@ interface Order {
   requestedShippingService?: string
   paymentMethod?: string
   advancedOptions?: { customField1?: string }
+  shipFrom?: { locationId?: string }
 }
 
 interface PrintNodeComputer {
@@ -67,7 +68,7 @@ function saveStationPrefs(computer: string, printer: number, scale: string) {
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','PR','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY']
 
 export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderLog, onSaved }: OrderDialogProps) {
-  const { carrierServices, boxes, loaded: refDataLoaded } = useReferenceData()
+  const { carrierServices, boxes, locations, defaultLocationId, loaded: refDataLoaded } = useReferenceData()
   const [showJson, setShowJson] = useState(false)
 
   // === PrintNode state ===
@@ -108,6 +109,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   const [addrSuggestion, setAddrSuggestion] = useState<any>(null)
   const [addrMessages, setAddrMessages] = useState<string[]>([])
   const [savingAddress, setSavingAddress] = useState(false)
+
+  // === Ship From state ===
+  const [shipFromId, setShipFromId] = useState('')
 
   // === Rate recalc state ===
   const [rateRecalcing, setRateRecalcing] = useState(false)
@@ -176,6 +180,14 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
     setAddrPostalCode(shipTo.postalCode || '')
     setAddrCountry(shipTo.country || 'US')
     setAddrPhone(shipTo.phone || '')
+
+    // Default ship-from to the order's stored value or the default location
+    const shipFrom = order?.shipFrom as any
+    if (shipFrom?.locationId) {
+      setShipFromId(shipFrom.locationId)
+    } else {
+      setShipFromId(defaultLocationId || '')
+    }
 
     origRef.current = {
       weight: orderLog.shippedWeight != null ? String(orderLog.shippedWeight) : '',
@@ -725,6 +737,42 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                           </button>
                         </div>
                       )}
+                    </div>
+
+                    {/* Ship From */}
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Ship From</h4>
+                      <select
+                        value={shipFromId}
+                        onChange={e => {
+                          setShipFromId(e.target.value)
+                          if (orderLog?.id && e.target.value) {
+                            fetch(`/api/orders/${orderLog.id}`, {
+                              method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ shipFrom: { locationId: e.target.value } }),
+                            }).then(r => r.json()).then(d => { if (d.order && onSaved) onSaved(d.order) }).catch(() => {})
+                          }
+                        }}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                      >
+                        <option value="">-- Select location --</option>
+                        {locations.map(loc => (
+                          <option key={loc.id} value={loc.id}>{loc.name}{loc.isDefault ? ' (default)' : ''}</option>
+                        ))}
+                      </select>
+                      {(() => {
+                        const loc = locations.find(l => l.id === shipFromId)
+                        if (!loc) return null
+                        return (
+                          <div className="text-sm text-gray-700 mt-2">
+                            {loc.company && <div className="text-gray-600">{loc.company}</div>}
+                            <div>{loc.addressLine1}</div>
+                            {loc.addressLine2 && <div>{loc.addressLine2}</div>}
+                            <div>{loc.city}, {loc.state} {loc.postalCode}</div>
+                            {loc.phone && <div className="text-xs text-gray-500 mt-1">{loc.phone}</div>}
+                          </div>
+                        )
+                      })()}
                     </div>
 
                     {/* Order Items */}

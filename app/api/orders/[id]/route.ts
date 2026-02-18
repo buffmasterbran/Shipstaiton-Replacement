@@ -27,7 +27,7 @@ export async function PATCH(
     const { id } = params
     const body = await request.json()
 
-    const { address, carrier, weight, box, retryRateShopping } = body
+    const { address, carrier, weight, box, retryRateShopping, shipFrom } = body
 
     const order = await prisma.orderLog.findUnique({ where: { id } })
     if (!order) {
@@ -97,6 +97,17 @@ export async function PATCH(
     // --- Override address (user clicked "Keep Mine" on suggestion) ---
     if (body.overrideAddress === true) {
       updateData.addressOverridden = true
+    }
+
+    // --- Ship From update ---
+    if (shipFrom && typeof shipFrom === 'object') {
+      orderData = { ...orderData, shipFrom }
+      if (isArray) {
+        rawPayload = [orderData, ...rawPayload.slice(1)]
+      } else {
+        rawPayload = orderData
+      }
+      updateData.rawPayload = rawPayload
     }
 
     // --- Weight update ---
