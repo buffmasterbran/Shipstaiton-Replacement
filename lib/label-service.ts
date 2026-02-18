@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { submitPrintJob } from '@/lib/printnode'
 import { updateItemFulfillment, revertItemFulfillment, isNetSuiteConfigured } from '@/lib/netsuite'
+import { shopRates, getDefaultRateShopper, type ShipToAddress } from '@/lib/rate-shop'
 
 const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY
 const SHIPENGINE_LABELS_URL = 'https://api.shipengine.com/v1/labels'
@@ -75,7 +76,43 @@ export async function createLabel(params: CreateLabelParams): Promise<LabelResul
   if (!location) return { success: false, error: 'Ship-from location not found', printStatus: 'not_printed', netsuiteUpdated: false }
 
   // 2. Validate pre-conditions
-  const rate = order.preShoppedRate as any
+  let rate = order.preShoppedRate as any
+
+  // Safety net: if service is still __RATE_SHOP__, run rate shopping now
+  if (rate?.serviceCode === '__RATE_SHOP__') {
+    const box = order.suggestedBox as any
+    if (!box?.lengthInches || !order.shippedWeight) {
+      return { success: false, error: 'Cannot rate shop without weight and box dimensions', printStatus: 'not_printed', netsuiteUpdated: false }
+    }
+    const rawPayload = order.rawPayload as any
+    const orderData = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
+    const st = orderData?.shipTo || {}
+    const shipTo: ShipToAddress = {
+      name: st.name || '', street1: st.street1 || st.address1 || '',
+      street2: st.street2 || st.address2, city: st.city || '',
+      state: st.state || '', postalCode: st.postalCode || st.zip || '',
+      country: st.country || 'US', residential: st.residential !== false,
+    }
+    const rateShopper = await getDefaultRateShopper(prisma)
+    if (!rateShopper) {
+      return { success: false, error: 'No rate shopper configured for rate shopping', printStatus: 'not_printed', netsuiteUpdated: false }
+    }
+    const rsResult = await shopRates(prisma, shipTo, order.shippedWeight, {
+      length: box.lengthInches, width: box.widthInches, height: box.heightInches,
+    }, rateShopper)
+    if (!rsResult.success || !rsResult.rate) {
+      return { success: false, error: rsResult.error || 'Rate shopping failed', printStatus: 'not_printed', netsuiteUpdated: false }
+    }
+    rate = {
+      carrierId: rsResult.rate.carrierId, carrierCode: rsResult.rate.carrierCode,
+      carrier: rsResult.rate.carrier, serviceCode: rsResult.rate.serviceCode,
+      serviceName: rsResult.rate.serviceName, price: rsResult.rate.price,
+      currency: rsResult.rate.currency, deliveryDays: rsResult.rate.deliveryDays,
+      rateId: rsResult.rate.rateId,
+    }
+    await prisma.orderLog.update({ where: { id: orderId }, data: { preShoppedRate: rate as any, rateShopStatus: 'SUCCESS', rateFetchedAt: new Date() } })
+  }
+
   if (!rate?.serviceCode) return { success: false, error: 'No carrier/service assigned', printStatus: 'not_printed', netsuiteUpdated: false }
 
   if (!order.shippedWeight || order.shippedWeight <= 0) {

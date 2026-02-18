@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useReferenceData } from '@/hooks/useReferenceData'
+import ServiceSelect from '@/components/ui/ServiceSelect'
 
 interface ManualOrderDialogProps {
   isOpen: boolean
@@ -161,12 +162,14 @@ export default function ManualOrderDialog({ isOpen, onClose, onCreated }: Manual
           {/* Service */}
           <div>
             <h3 className="text-sm font-semibold text-gray-800 mb-3">Carrier / Service</h3>
-            <select value={selectedServiceCode} onChange={e => setSelectedServiceCode(e.target.value)} className={inputCls}>
-              <option value="">-- None --</option>
-              {carrierServices.map(s => (
-                <option key={s.serviceCode} value={s.serviceCode}>{s.serviceName} ({s.carrierName})</option>
-              ))}
-            </select>
+            <ServiceSelect
+              value={selectedServiceCode}
+              onChange={setSelectedServiceCode}
+              carrierServices={carrierServices}
+              className={inputCls}
+              placeholder="-- None --"
+              showRateShop={false}
+            />
           </div>
 
           {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}

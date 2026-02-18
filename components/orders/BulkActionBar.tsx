@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import type { BoxConfig, CarrierService } from '@/hooks/useReferenceData'
+import { RATE_SHOP_VALUE } from '@/components/ui/ServiceSelect'
 
 interface BulkActionBarProps {
   count: number
@@ -80,13 +81,38 @@ export default function BulkActionBar({
       </DropdownPicker>
 
       <DropdownPicker label="Change Service" icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.125-.504 1.125-1.125v-1.5c0-1.036-.84-1.875-1.875-1.875H19.5m-12.75 0h12.75" /></svg>}>
-        {carrierServices.map(s => (
-          <button key={s.serviceCode} onClick={() => onChangeService(s.serviceCode)} disabled={isRunning}
-            className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors disabled:opacity-50">
-            <span className="font-medium">{s.serviceName}</span>
-            <span className="text-gray-400 ml-1">({s.carrierName})</span>
-          </button>
-        ))}
+        <button onClick={() => onChangeService(RATE_SHOP_VALUE)} disabled={isRunning}
+          className="w-full text-left px-3 py-2 text-xs hover:bg-amber-50 transition-colors disabled:opacity-50 border-b border-gray-100">
+          <span className="font-medium">⚡ Rate Shopping</span>
+          <span className="text-gray-400 ml-1">(auto-select best rate)</span>
+        </button>
+        {(() => {
+          const groups = new Map<string, { label: string; services: typeof carrierServices }>()
+          const order: string[] = []
+          for (const s of carrierServices) {
+            let g = groups.get(s.carrierId)
+            if (!g) {
+              g = { label: s.accountNickname || s.carrierName, services: [] }
+              groups.set(s.carrierId, g)
+              order.push(s.carrierId)
+            }
+            g.services.push(s)
+          }
+          return order.map(id => {
+            const g = groups.get(id)!
+            return (
+              <div key={id}>
+                <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider bg-gray-50">{g.label}</div>
+                {g.services.map(s => (
+                  <button key={`${s.carrierId}:${s.serviceCode}`} onClick={() => onChangeService(s.serviceCode)} disabled={isRunning}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors disabled:opacity-50">
+                    <span className="font-medium">{s.serviceName}</span>
+                  </button>
+                ))}
+              </div>
+            )
+          })
+        })()}
       </DropdownPicker>
 
       <button onClick={onGetRates} disabled={isRunning} className={`${btnCls} bg-green-100 text-green-700 border border-green-300 hover:bg-green-200 disabled:opacity-50`}>

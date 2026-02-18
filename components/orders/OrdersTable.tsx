@@ -6,6 +6,7 @@ import OrderDialog from '../dialogs/OrderDialog'
 import BoxConfirmDialog from '../dialogs/BoxConfirmDialog'
 import ColumnSettingsDialog from './ColumnSettingsDialog'
 import BulkActionBar from './BulkActionBar'
+import { RATE_SHOP_VALUE } from '@/components/ui/ServiceSelect'
 import ManualOrderDialog from '../dialogs/ManualOrderDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders, type OrderLog as ContextOrderLog } from '@/context/OrdersContext'
@@ -537,16 +538,27 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   }, [selectedIds, refBoxes, runBulkAction])
 
   const handleBulkChangeService = useCallback(async (serviceCode: string) => {
-    const svc = carrierServices.find(s => s.serviceCode === serviceCode)
-    if (!svc) return
     const ids = Array.from(selectedIds)
-    await runBulkAction('Change Service', ids, async (id) => {
-      const res = await fetch(`/api/orders/${id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ carrier: { carrierId: svc.carrierId, carrierCode: svc.carrierCode, carrier: svc.carrierName, serviceCode: svc.serviceCode, serviceName: svc.serviceName } }),
+
+    if (serviceCode === RATE_SHOP_VALUE) {
+      await runBulkAction('Rate Shop', ids, async (id) => {
+        const res = await fetch(`/api/orders/${id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ retryRateShopping: true }),
+        })
+        return res.json()
       })
-      return res.json()
-    })
+    } else {
+      const svc = carrierServices.find(s => s.serviceCode === serviceCode)
+      if (!svc) return
+      await runBulkAction('Change Service', ids, async (id) => {
+        const res = await fetch(`/api/orders/${id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ carrier: { carrierId: svc.carrierId, carrierCode: svc.carrierCode, carrier: svc.carrierName, serviceCode: svc.serviceCode, serviceName: svc.serviceName } }),
+        })
+        return res.json()
+      })
+    }
   }, [selectedIds, carrierServices, runBulkAction])
 
   const handleBulkGetRates = useCallback(async () => {

@@ -37,6 +37,7 @@ export interface CarrierService {
   carrierName: string
   serviceCode: string
   serviceName: string
+  accountNickname?: string | null
 }
 
 export interface SkuPattern {

@@ -4,6 +4,7 @@ import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from 'rea
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 import { useReferenceData } from '@/hooks/useReferenceData'
+import ServiceSelect, { RATE_SHOP_VALUE } from '@/components/ui/ServiceSelect'
 import RateBrowserDialog from './RateBrowserDialog'
 
 interface OrderItem {
@@ -246,11 +247,17 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
         printStatus: orderLog.printStatus || 'unknown',
         netsuiteUpdated: orderLog.netsuiteUpdated ?? false,
       })
-      fetch(`/api/orders/${orderLog.id}/shipment-log`)
-        .then(r => r.json())
-        .then(logs => {
-          const logArr = Array.isArray(logs) ? logs : []
-          setShipmentLogs(logArr)
+    } else {
+      setShippedInfo(null)
+    }
+
+    // Always fetch shipment logs (history of labels created/voided)
+    fetch(`/api/orders/${orderLog.id}/shipment-log`)
+      .then(r => r.json())
+      .then(logs => {
+        const logArr = Array.isArray(logs) ? logs : []
+        setShipmentLogs(logArr)
+        if (isShippedNow) {
           const lastCreate = logArr.find((l: any) => l.action === 'LABEL_CREATED')
           if (lastCreate) {
             setDebugInfo(prev => ({
@@ -261,11 +268,9 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
               netsuiteError: lastCreate.netsuiteError || undefined,
             }))
           }
-        })
-        .catch(() => {})
-    } else {
-      setShippedInfo(null)
-    }
+        }
+      })
+      .catch(() => {})
 
     const rate = orderLog.preShoppedRate
     setCurrentRate(rate || null)
@@ -293,12 +298,13 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
     setAddrCountry(shipTo.country || 'US')
     setAddrPhone(shipTo.phone || '')
 
-    // Default ship-from to the order's stored value or the default location
+    // Default ship-from to the order's stored value or the default location.
+    // Preserve existing selection if already set (e.g. after a void).
     const shipFrom = order?.shipFrom as any
     if (shipFrom?.locationId) {
       setShipFromId(shipFrom.locationId)
     } else {
-      setShipFromId(defaultLocationId || '')
+      setShipFromId(prev => prev || defaultLocationId || '')
     }
 
     origRef.current = {
@@ -390,19 +396,29 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   const handleServiceChange = useCallback(async (serviceCode: string) => {
     setEditServiceCode(serviceCode)
     if (!orderLog?.id || !serviceCode) return
-    const svc = carrierServices.find(s => s.serviceCode === serviceCode)
-    if (!svc) return
+
     setSaving(true)
     try {
+      let body: any
+      if (serviceCode === RATE_SHOP_VALUE) {
+        body = { retryRateShopping: true }
+      } else {
+        const svc = carrierServices.find(s => s.serviceCode === serviceCode)
+        if (!svc) { setSaving(false); return }
+        body = { carrier: { carrierId: svc.carrierId, carrierCode: svc.carrierCode, carrier: svc.carrierName, serviceCode: svc.serviceCode, serviceName: svc.serviceName } }
+      }
+
       const res = await fetch(`/api/orders/${orderLog.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ carrier: { carrierId: svc.carrierId, carrierCode: svc.carrierCode, carrier: svc.carrierName, serviceCode: svc.serviceCode, serviceName: svc.serviceName } }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (data.success && data.order) {
         setCurrentRate(data.order.preShoppedRate || null)
         setCurrentRateStatus(data.order.rateShopStatus || null)
-        origRef.current.serviceCode = serviceCode
+        const newServiceCode = data.order.preShoppedRate?.serviceCode || serviceCode
+        setEditServiceCode(newServiceCode)
+        origRef.current.serviceCode = newServiceCode
         onSaved?.(data.order)
       }
     } catch (e) { console.error('Service save error:', e) }
@@ -1320,48 +1336,54 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                           </div>
                         </div>
 
-                        {/* Shipment History */}
-                        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                          <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hover:bg-gray-50 transition-colors">
-                            Shipment History ({shipmentLogs.length})
-                            <svg className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                          </button>
-                          {showHistory && (
-                            <div className="border-t border-gray-200 max-h-48 overflow-y-auto">
-                              {shipmentLogs.length === 0 ? (
-                                <div className="px-4 py-3 text-xs text-gray-400 text-center">No history yet</div>
-                              ) : shipmentLogs.map((log: any) => (
-                                <div key={log.id} className="px-4 py-2.5 border-b border-gray-100 last:border-b-0">
-                                  <div className="flex items-center justify-between">
-                                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                                      log.action === 'LABEL_CREATED' ? 'bg-green-100 text-green-700' :
-                                      log.action === 'LABEL_VOIDED' ? 'bg-red-100 text-red-700' :
-                                      'bg-blue-100 text-blue-700'
-                                    }`}>{log.action.replace('LABEL_', '')}</span>
-                                    <span className="text-xs text-gray-400">{new Date(log.createdAt).toLocaleString()}</span>
-                                  </div>
-                                  <div className="mt-1 text-xs text-gray-600">
-                                    {log.trackingNumber && <span>Tracking: {log.trackingNumber}</span>}
-                                    {log.labelCost > 0 && <span className="ml-2">Cost: ${log.labelCost.toFixed(2)}</span>}
-                                    {log.voidReason && <div className="text-red-600 mt-0.5">Reason: {log.voidReason}</div>}
-                                  </div>
-                                  <div className="text-xs text-gray-400 mt-0.5">by {log.createdByName}</div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
                       </>
+                    )}
+
+                    {/* Shipment History — always visible when there are logs */}
+                    {shipmentLogs.length > 0 && (
+                      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                        <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide hover:bg-gray-50 transition-colors">
+                          Shipment History ({shipmentLogs.length})
+                          <svg className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                        </button>
+                        {showHistory && (
+                          <div className="border-t border-gray-200 max-h-48 overflow-y-auto">
+                            {shipmentLogs.map((log: any) => (
+                              <div key={log.id} className="px-4 py-2.5 border-b border-gray-100 last:border-b-0">
+                                <div className="flex items-center justify-between">
+                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                                    log.action === 'LABEL_CREATED' ? 'bg-green-100 text-green-700' :
+                                    log.action === 'LABEL_VOIDED' ? 'bg-red-100 text-red-700' :
+                                    'bg-blue-100 text-blue-700'
+                                  }`}>{log.action.replace('LABEL_', '')}</span>
+                                  <span className="text-xs text-gray-400">{new Date(log.createdAt).toLocaleString()}</span>
+                                </div>
+                                <div className="mt-1 text-xs text-gray-600">
+                                  {log.carrier && <span className="mr-2">{log.carrier}</span>}
+                                  {log.serviceName && <span className="mr-2">{log.serviceName}</span>}
+                                  {log.trackingNumber && <span>Tracking: {log.trackingNumber}</span>}
+                                  {log.labelCost > 0 && <span className="ml-2">Cost: ${log.labelCost.toFixed(2)}</span>}
+                                  {log.voidReason && <div className="text-red-600 mt-0.5">Reason: {log.voidReason}</div>}
+                                </div>
+                                <div className="text-xs text-gray-400 mt-0.5">by {log.createdByName}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     {/* Service — hidden when shipped */}
                     {!isShipped && (
                       <div className="bg-white rounded-lg p-4 border border-gray-200">
                         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Service</h4>
-                        <select value={editServiceCode} onChange={e => handleServiceChange(e.target.value)} disabled={!refDataLoaded} className={selectCls}>
-                          <option value="">{!refDataLoaded ? 'Loading...' : 'Select service...'}</option>
-                          {carrierServices.map(s => <option key={s.serviceCode} value={s.serviceCode}>{s.carrierName} — {s.serviceName}</option>)}
-                        </select>
+                        <ServiceSelect
+                          value={editServiceCode}
+                          onChange={handleServiceChange}
+                          carrierServices={carrierServices}
+                          disabled={!refDataLoaded}
+                          className={selectCls}
+                        />
                         {currentRate && currentRate.price > 0 ? (
                           <div className="flex items-center justify-between mt-3">
                             <div>
@@ -1634,55 +1656,55 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                   </div>
                 </div>
 
+                {/* Void Confirmation Overlay — inside Dialog.Panel so HeadlessUI outside-click doesn't interfere */}
+                {showVoidConfirm && (
+                  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+                      <h3 className="text-lg font-bold text-gray-900 mb-2">Void Shipping Label</h3>
+                      <p className="text-sm text-gray-600 mb-1">This will:</p>
+                      <ul className="text-sm text-gray-600 mb-4 list-disc list-inside space-y-1">
+                        <li>Void the label with ShipEngine (refund the label cost)</li>
+                        <li>Reset the order status to <strong>Awaiting Shipment</strong></li>
+                        <li>Clear the tracking number</li>
+                        {shippedInfo?.netsuiteUpdated && (
+                          <li className="text-amber-700 font-medium">Attempt to revert the NetSuite Item Fulfillment status to Picked</li>
+                        )}
+                      </ul>
+                      {labelError && (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 mb-4">{labelError}</div>
+                      )}
+                      <div className="mb-4">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Reason (optional)</label>
+                        <input
+                          type="text"
+                          value={voidReason}
+                          onChange={e => setVoidReason(e.target.value)}
+                          placeholder="e.g., Wrong address, customer request..."
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        />
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={handleVoidLabel}
+                          disabled={voiding}
+                          className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-sm disabled:opacity-50 transition-colors"
+                        >
+                          {voiding ? 'Voiding...' : 'Confirm Void'}
+                        </button>
+                        <button
+                          onClick={() => { setShowVoidConfirm(false); setVoidReason(''); setLabelError(null) }}
+                          disabled={voiding}
+                          className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </Dialog.Panel>
             </Transition.Child>
-
-            {/* Void Confirmation Dialog — inside Dialog to avoid HeadlessUI outside-click interference */}
-            {showVoidConfirm && (
-              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={e => e.stopPropagation()}>
-                <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6" onClick={e => e.stopPropagation()}>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">Void Shipping Label</h3>
-                  <p className="text-sm text-gray-600 mb-1">This will:</p>
-                  <ul className="text-sm text-gray-600 mb-4 list-disc list-inside space-y-1">
-                    <li>Void the label with ShipEngine (refund the label cost)</li>
-                    <li>Reset the order status to <strong>Awaiting Shipment</strong></li>
-                    <li>Clear the tracking number</li>
-                    {shippedInfo?.netsuiteUpdated && (
-                      <li className="text-amber-700 font-medium">Attempt to revert the NetSuite Item Fulfillment status to Picked</li>
-                    )}
-                  </ul>
-                  {labelError && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 mb-4">{labelError}</div>
-                  )}
-                  <div className="mb-4">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Reason (optional)</label>
-                    <input
-                      type="text"
-                      value={voidReason}
-                      onChange={e => setVoidReason(e.target.value)}
-                      placeholder="e.g., Wrong address, customer request..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                    />
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={handleVoidLabel}
-                      disabled={voiding}
-                      className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-sm disabled:opacity-50 transition-colors"
-                    >
-                      {voiding ? 'Voiding...' : 'Confirm Void'}
-                    </button>
-                    <button
-                      onClick={() => { setShowVoidConfirm(false); setVoidReason(''); setLabelError(null) }}
-                      disabled={voiding}
-                      className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </Dialog>

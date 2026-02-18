@@ -2,14 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import type { OrderHighlightSettings } from '@/lib/settings'
-
-interface CarrierService {
-  carrierId: string
-  carrierCode: string
-  carrierName: string
-  serviceCode: string
-  serviceName: string
-}
+import type { CarrierService } from '@/hooks/useReferenceData'
+import ServiceSelect from '@/components/ui/ServiceSelect'
 
 interface SinglesCarrier {
   carrierId: string
@@ -103,10 +97,8 @@ export default function GeneralSettingsPage() {
     }
   }
 
-  const handleServiceChange = (serviceKey: string) => {
-    const service = availableServices.find(
-      (s) => `${s.carrierCode}:${s.serviceCode}` === serviceKey
-    )
+  const handleServiceChange = (serviceCode: string) => {
+    const service = availableServices.find(s => s.serviceCode === serviceCode)
     if (service) {
       setSinglesCarrier({
         carrierId: service.carrierId,
@@ -272,21 +264,14 @@ export default function GeneralSettingsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Shipping Service
               </label>
-              <select
-                value={singlesCarrier ? `${singlesCarrier.carrierCode}:${singlesCarrier.serviceCode}` : ''}
-                onChange={(e) => handleServiceChange(e.target.value)}
+              <ServiceSelect
+                value={singlesCarrier?.serviceCode || ''}
+                onChange={handleServiceChange}
+                carrierServices={availableServices}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
-                <option value="">Select a service...</option>
-                {availableServices.map((service) => (
-                  <option
-                    key={`${service.carrierCode}:${service.serviceCode}`}
-                    value={`${service.carrierCode}:${service.serviceCode}`}
-                  >
-                    {service.carrierName} - {service.serviceName}
-                  </option>
-                ))}
-              </select>
+                placeholder="Select a service..."
+                showRateShop={false}
+              />
             </div>
 
             {singlesCarrier && (

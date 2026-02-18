@@ -17,6 +17,7 @@ interface SelectedService {
   carrierName: string
   serviceCode: string
   serviceName: string
+  accountNickname?: string | null
   domestic?: boolean
   international?: boolean
 }
@@ -44,6 +45,34 @@ export default function CarriersPage() {
     fetchCarriers()
     fetchSelectedServices()
   }, [])
+
+  // Auto-merge nicknames from ShipEngine carrier data into saved services
+  useEffect(() => {
+    if (carriers.length === 0 || savedServices.length === 0) return
+    const nicknameMap = new Map<string, string | null>()
+    for (const c of carriers) {
+      nicknameMap.set(c.carrier_id, c.nickname || null)
+    }
+    let needsUpdate = false
+    const merged = savedServices.map(svc => {
+      const nickname = nicknameMap.get(svc.carrierId)
+      if (nickname !== undefined && svc.accountNickname !== nickname) {
+        needsUpdate = true
+        return { ...svc, accountNickname: nickname }
+      }
+      return svc
+    })
+    if (needsUpdate) {
+      setSelectedServices(merged)
+      setSavedServices(merged)
+      // Auto-save the enriched data
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'selected_services', value: { services: merged } }),
+      }).catch(err => console.error('Auto-save nickname merge failed:', err))
+    }
+  }, [carriers, savedServices])
 
   const fetchCarriers = async () => {
     try {
@@ -149,6 +178,7 @@ export default function CarriersPage() {
           carrierId: carrier.carrier_id,
           carrierCode: carrier.carrier_code,
           carrierName: carrier.friendly_name,
+          accountNickname: carrier.nickname || null,
           serviceCode: service.service_code,
           serviceName: service.name,
           domestic: service.domestic,
@@ -166,6 +196,7 @@ export default function CarriersPage() {
         carrierId: carrier.carrier_id,
         carrierCode: carrier.carrier_code,
         carrierName: carrier.friendly_name,
+        accountNickname: carrier.nickname || null,
         serviceCode: svc.service_code,
         serviceName: svc.name,
         domestic: svc.domestic,

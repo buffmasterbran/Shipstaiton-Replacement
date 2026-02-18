@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { isShippingInsurance, getSizeFromSku, getColorFromSku } from '@/lib/order-utils'
 import { formatWeight } from '@/lib/weight-utils'
 import { useReferenceData, resolveBarcode, resolveWeight } from '@/hooks/useReferenceData'
+import ServiceSelect from '@/components/ui/ServiceSelect'
 import { VerifyItem, ScanStatus, OrderData } from './types'
 import { playSuccessSound, playErrorSound, playAllVerifiedSound } from './audio'
 
@@ -608,18 +609,14 @@ export default function ScanToVerifyPage() {
                 {/* Service */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-0.5">Service</label>
-                  <select
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                  <ServiceSelect
                     value={selectedService}
-                    onChange={(e) => setSelectedService(e.target.value)}
-                  >
-                    <option value="">Select service...</option>
-                    {ref.carrierServices.map((svc) => (
-                      <option key={`${svc.carrierCode}:${svc.serviceCode}`} value={`${svc.carrierCode}:${svc.serviceCode}`}>
-                        {svc.carrierName} - {svc.serviceName}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setSelectedService}
+                    carrierServices={ref.carrierServices}
+                    disabled={!ref.loaded}
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                    showRateShop={false}
+                  />
                 </div>
 
                 {/* Confirmation */}

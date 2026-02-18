@@ -4,6 +4,7 @@ import { Fragment, useState, useEffect } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { useReferenceData } from '@/hooks/useReferenceData'
+import ServiceSelect from '@/components/ui/ServiceSelect'
 
 interface EditOrderDialogProps {
   isOpen: boolean
@@ -346,19 +347,14 @@ export default function EditOrderDialog({
                     )}
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Service</label>
-                      <select
+                      <ServiceSelect
                         value={selectedServiceCode}
-                        onChange={e => setSelectedServiceCode(e.target.value)}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        onChange={setSelectedServiceCode}
+                        carrierServices={carrierServices}
                         disabled={!refDataLoaded}
-                      >
-                        <option value="">{!refDataLoaded ? 'Loading services...' : 'Select service...'}</option>
-                        {carrierServices.map(s => (
-                          <option key={s.serviceCode} value={s.serviceCode}>
-                            {s.carrierName} - {s.serviceName}
-                          </option>
-                        ))}
-                      </select>
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        showRateShop={false}
+                      />
                       {refDataLoaded && carrierServices.length === 0 && (
                         <p className="text-xs text-amber-600 mt-1">
                           No services configured. Go to the Carriers tab to select services.

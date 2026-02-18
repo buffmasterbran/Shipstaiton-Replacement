@@ -160,9 +160,9 @@ export async function updateItemFulfillment(update: FulfillmentUpdate) {
 }
 
 /**
- * Revert an Item Fulfillment to Picked status (shipStatus "B")
+ * Revert an Item Fulfillment to Picked status (shipStatus "A")
  * Used when voiding a shipping label.
  */
 export async function revertItemFulfillment(internalId: string) {
-  return netsuiteRequest('PATCH', `/itemFulfillment/${internalId}`, { shipStatus: 'B' })
+  return netsuiteRequest('PATCH', `/itemFulfillment/${internalId}`, { shipStatus: 'A' })
 }
