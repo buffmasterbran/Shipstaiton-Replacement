@@ -571,7 +571,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
         <div className="fixed inset-0 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4">
             <Transition.Child as={Fragment} enter="ease-out duration-200" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100" leave="ease-in duration-150" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95">
-              <Dialog.Panel className="w-full max-w-7xl transform overflow-hidden rounded-xl bg-white text-left shadow-2xl transition-all">
+              <Dialog.Panel className="w-full max-w-7xl max-h-[95vh] transform rounded-xl bg-white text-left shadow-2xl transition-all flex flex-col overflow-hidden">
 
                 {/* Header */}
                 <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-3">
@@ -611,7 +611,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                 )}
 
                 {/* Two-Panel Content */}
-                <div className="grid grid-cols-1 lg:grid-cols-5 max-h-[calc(100vh-140px)] overflow-hidden">
+                <div className="grid grid-cols-1 lg:grid-cols-5 flex-1 min-h-0 overflow-hidden">
 
                   {/* LEFT PANEL */}
                   <div className="lg:col-span-3 overflow-y-auto p-6 space-y-5 border-r border-gray-200">

@@ -5,6 +5,7 @@ import OrderDialog from '../dialogs/OrderDialog'
 import BoxConfirmDialog from '../dialogs/BoxConfirmDialog'
 import ColumnSettingsDialog from './ColumnSettingsDialog'
 import BulkActionBar from './BulkActionBar'
+import ManualOrderDialog from '../dialogs/ManualOrderDialog'
 import { useExpeditedFilter, isOrderExpedited, isOrderPersonalized } from '@/context/ExpeditedFilterContext'
 import { useOrders, type OrderLog as ContextOrderLog } from '@/context/OrdersContext'
 import { useReferenceData } from '@/hooks/useReferenceData'
@@ -103,6 +104,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_ORDER)
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set())
   const [showColumnSettings, setShowColumnSettings] = useState(false)
+  const [showManualOrder, setShowManualOrder] = useState(false)
 
   useEffect(() => {
     const prefs = loadColumnPrefs()
@@ -607,6 +609,16 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           </svg>
           Columns
         </button>
+        <button
+          type="button"
+          onClick={() => setShowManualOrder(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1 border border-blue-300 bg-blue-50 rounded text-xs font-medium text-blue-700 hover:bg-blue-100"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          Add Order
+        </button>
         <span className="text-xs text-gray-500">
           {searchQuery.trim() ? `${totalFiltered}/${logs.length}` : `${logs.length} orders`}
         </span>
@@ -991,6 +1003,13 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
           </div>
         </div>
       )}
+
+      {/* Manual Order Dialog */}
+      <ManualOrderDialog
+        isOpen={showManualOrder}
+        onClose={() => setShowManualOrder(false)}
+        onCreated={() => { setShowManualOrder(false); refreshOrders() }}
+      />
 
       {/* Column Settings Dialog */}
       <ColumnSettingsDialog
