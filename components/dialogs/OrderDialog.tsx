@@ -156,6 +156,7 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
 
   // === Re-ingest state ===
   const [reingesting, setReingesting] = useState(false)
+  const [reingestSteps, setReingestSteps] = useState<string[] | null>(null)
 
   // === Get rate state ===
   const [gettingRate, setGettingRate] = useState(false)
@@ -854,9 +855,11 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   const handleReingest = useCallback(async () => {
     if (!orderLog?.id) return
     setReingesting(true)
+    setReingestSteps(null)
     try {
       const res = await fetch(`/api/orders/${orderLog.id}/reingest`, { method: 'POST' })
       const data = await res.json()
+      if (data.steps) setReingestSteps(data.steps)
       if (data.success && data.order) {
         const o = data.order
         setCurrentRate(o.preShoppedRate || null)
@@ -1611,6 +1614,22 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                           </>
                         )}
                       </div>
+                    )}
+
+                    {/* Re-ingest Log */}
+                    {reingestSteps && reingestSteps.length > 0 && (
+                      <details className="bg-gray-900 rounded-lg text-xs font-mono" open>
+                        <summary className="cursor-pointer px-4 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-200 select-none">
+                          Re-Ingest Log ({reingestSteps.length} steps)
+                        </summary>
+                        <div className="px-4 pb-3 space-y-0.5 max-h-64 overflow-auto">
+                          {reingestSteps.map((step, i) => (
+                            <div key={i} className={`leading-relaxed ${step.includes('ERROR') || step.includes('FAILED') || step.includes('NO MATCH') ? 'text-red-400' : step.includes('SUCCESS') ? 'text-green-400' : 'text-gray-300'}`}>
+                              {step}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     )}
                   </div>
                 </div>

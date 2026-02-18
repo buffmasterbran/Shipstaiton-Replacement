@@ -174,22 +174,32 @@ export async function POST(request: NextRequest) {
           getPackingEfficiency(prisma),
         ])
 
-        // Map SKUs to product sizes
-        const mappedItems: { productId: string; quantity: number; size: typeof sizes[0] }[] = []
+        // Map SKUs to product sizes and group by productId
+        const rawMapped: { productId: string; quantity: number; size: typeof sizes[0] }[] = []
         const unmappedSkus: string[] = []
 
         for (const item of body.items) {
           const sku = item.sku as string
           const qty = Number(item.quantity) || 1
 
-          // Try to match SKU to a product size
           const size = await matchSkuToSize(prisma, sku)
           if (size) {
-            mappedItems.push({ productId: size.id, quantity: qty, size })
+            rawMapped.push({ productId: size.id, quantity: qty, size })
           } else {
             unmappedSkus.push(sku)
           }
         }
+
+        const groupedMap = new Map<string, typeof rawMapped[0]>()
+        for (const m of rawMapped) {
+          const existing = groupedMap.get(m.productId)
+          if (existing) {
+            existing.quantity += m.quantity
+          } else {
+            groupedMap.set(m.productId, { ...m })
+          }
+        }
+        const mappedItems = Array.from(groupedMap.values())
 
         // If we couldn't map any SKUs, return unknown
         if (mappedItems.length === 0) {
@@ -208,12 +218,15 @@ export async function POST(request: NextRequest) {
           if (singleSize.singleBoxId) {
             const dedicatedBox = boxes.find(b => b.id === singleSize.singleBoxId && b.active)
             if (dedicatedBox) {
+              const productItems = mappedItems.map(i => ({ productId: i.productId, quantity: i.quantity }))
               return NextResponse.json({
                 box: dedicatedBox,
                 confidence: 'confirmed',
                 reason: 'dedicated-box',
                 productSize: singleSize.name,
+                comboSignature: buildComboSignature(productItems),
                 unmappedSkus,
+                mappedItems: mappedItems.map(i => ({ productId: i.productId, productName: i.size.name, quantity: i.quantity, volume: i.size.volume ?? (i.size.lengthInches * i.size.widthInches * i.size.heightInches) })),
               })
             }
           }
@@ -229,7 +242,7 @@ export async function POST(request: NextRequest) {
           comboSignature: signature,
           usableVolume: result.box ? result.box.volume * packingEfficiency : null,
           unmappedSkus,
-          mappedItems: mappedItems.map(i => ({ sku: body.items.find((x: { sku: string }) => x.sku)?.sku, productId: i.productId, productName: i.size.name, quantity: i.quantity })),
+          mappedItems: mappedItems.map(i => ({ productId: i.productId, productName: i.size.name, quantity: i.quantity, volume: i.size.volume ?? (i.size.lengthInches * i.size.widthInches * i.size.heightInches) })),
         })
       }
 

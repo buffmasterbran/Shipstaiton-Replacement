@@ -4,7 +4,6 @@ import { useState, useEffect, Fragment } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { useReferenceData } from '@/hooks/useReferenceData'
 import type { Box } from '@/lib/box-config'
-import type { Product } from '@/lib/products'
 
 interface OrderItem {
   sku: string
@@ -43,36 +42,73 @@ export default function BoxConfirmDialog({
   const ref = useReferenceData()
   const boxes = ref.boxes as unknown as Box[]
 
-  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [mappedItems, setMappedItems] = useState<{ productId: string; productName: string; quantity: number; volume: number }[]>([])
+  const [canonicalSignature, setCanonicalSignature] = useState<string | null>(null)
 
-  // Fetch products when dialog opens (boxes come from shared reference data)
+  // Use the suggest-box API (same matchSkuToSize as ingestion) for correct mapping
   useEffect(() => {
-    if (isOpen) {
-      fetchProducts()
+    if (isOpen && items.length > 0) {
+      fetchSuggestion()
     }
-  }, [isOpen])
+  }, [isOpen, items])
 
-  // Map order items to products when data is loaded
-  useEffect(() => {
-    if (products.length > 0 && items.length > 0) {
-      mapItemsToProducts()
-    }
-  }, [products, items])
-
-  const fetchProducts = async () => {
+  const fetchSuggestion = async () => {
     setLoading(true)
     setError(null)
     try {
-      const prodRes = await fetch('/api/products')
-      const prodData = await prodRes.json()
-      if (!prodRes.ok) throw new Error(prodData.error || 'Failed to fetch products')
-      setProducts(prodData.sizes || prodData.products || [])
+      const res = await fetch('/api/box-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'suggest-box',
+          items: items.map(i => ({ sku: i.sku, quantity: i.quantity })),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to compute box suggestion')
+
+      setCanonicalSignature(data.comboSignature || null)
+
+      const mapped: { productId: string; productName: string; quantity: number; volume: number }[] = []
+      if (data.mappedItems) {
+        for (const mi of data.mappedItems) {
+          const existing = mapped.find(m => m.productId === mi.productId)
+          if (existing) {
+            existing.quantity += mi.quantity
+          } else {
+            mapped.push({
+              productId: mi.productId,
+              productName: mi.productName || mi.productId,
+              quantity: mi.quantity,
+              volume: mi.volume ?? 0,
+            })
+          }
+        }
+      }
+      setMappedItems(mapped)
+
+      if (data.box && data.comboSignature) {
+        setTestResult({
+          box: { id: data.box.id, name: data.box.name, volume: data.box.volume || 0 },
+          confidence: data.confidence,
+          fitRatio: data.fitRatio,
+          orderVolume: data.orderVolume,
+          usableVolume: data.usableVolume,
+          comboSignature: data.comboSignature,
+        })
+      } else if (data.comboSignature) {
+        setTestResult({
+          box: null,
+          confidence: data.confidence || 'unknown',
+          orderVolume: data.orderVolume,
+          comboSignature: data.comboSignature,
+        })
+      }
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -80,80 +116,8 @@ export default function BoxConfirmDialog({
     }
   }
 
-  const mapItemsToProducts = async () => {
-    // Try to match SKUs to product sizes
-    const mapped: { productId: string; productName: string; quantity: number; volume: number }[] = []
-
-    for (const item of items) {
-      // Try to find a matching product by SKU pattern
-      // This uses the same logic as the ingest API - match by SKU prefix
-      const sku = item.sku.toUpperCase()
-
-      // Skip insurance/shipping items
-      if (sku.includes('INSURANCE') || sku.includes('SHIPPING')) continue
-
-      // Try to match to a product size
-      let matchedProduct: Product | undefined
-
-      // Match DPT10 → 10oz Tumbler, DPT16 → 16oz Tumbler, DPT26 → 26oz Bottle
-      if (sku.startsWith('DPT10')) {
-        matchedProduct = products.find(p => p.name.toLowerCase().includes('10oz'))
-      } else if (sku.startsWith('DPT16')) {
-        matchedProduct = products.find(p => p.name.toLowerCase().includes('16oz'))
-      } else if (sku.startsWith('DPT26')) {
-        matchedProduct = products.find(p => p.name.toLowerCase().includes('26oz'))
-      }
-
-      if (matchedProduct) {
-        // Check if we already have this product
-        const existing = mapped.find(m => m.productId === matchedProduct!.id)
-        if (existing) {
-          existing.quantity += item.quantity
-        } else {
-          mapped.push({
-            productId: matchedProduct.id,
-            productName: matchedProduct.name,
-            quantity: item.quantity,
-            volume: matchedProduct.volume ?? 0,
-          })
-        }
-      }
-    }
-
-    setMappedItems(mapped)
-
-    // Auto-run test if we have mapped items
-    if (mapped.length > 0) {
-      runTestWithItems(mapped)
-    }
-  }
-
-  const runTestWithItems = async (testItems: { productId: string; quantity: number }[]) => {
-    setTesting(true)
-    setError(null)
-
-    try {
-      const res = await fetch('/api/box-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'test-fit',
-          items: testItems.map(i => ({ productId: i.productId, quantity: i.quantity })),
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to test')
-      setTestResult(data)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setTesting(false)
-    }
-  }
-
   const saveFeedback = async (boxId: string) => {
-    if (!testResult?.comboSignature) return
+    if (!boxId || !canonicalSignature) return
 
     setSaving(true)
     setError(null)
@@ -164,8 +128,8 @@ export default function BoxConfirmDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'add-feedback',
-          comboSignature: testResult.comboSignature,
-          boxId: boxId,
+          comboSignature: canonicalSignature,
+          boxId,
           fits: true,
         }),
       })
@@ -185,6 +149,7 @@ export default function BoxConfirmDialog({
   const handleClose = () => {
     setTestResult(null)
     setMappedItems([])
+    setCanonicalSignature(null)
     setError(null)
     onClose()
   }
@@ -318,7 +283,7 @@ export default function BoxConfirmDialog({
                               {testResult.box.name}
                             </div>
                             <div className="text-sm text-gray-600 mt-1">
-                              Fill: {testResult.fitRatio ? (testResult.fitRatio * 100).toFixed(0) : '—'}%
+                              Fill: {testResult.orderVolume && testResult.usableVolume ? (testResult.orderVolume / testResult.usableVolume * 100).toFixed(0) : '—'}%
                               <span className="text-gray-400 ml-1">
                                 ({testResult.orderVolume?.toFixed(0)} / {testResult.usableVolume?.toFixed(0)} in³)
                               </span>

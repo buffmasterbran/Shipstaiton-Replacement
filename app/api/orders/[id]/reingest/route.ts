@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getBoxes, getFeedbackRules, getPackingEfficiency, calculateBoxSuggestion } from '@/lib/box-config'
-import { getProductSizes } from '@/lib/products'
+import { getProductSizes, matchSkuToSize } from '@/lib/products'
 import {
   classifyOrder,
   calculateShipmentWeight,
@@ -34,7 +34,8 @@ export async function POST(
     const rawPayload = order.rawPayload as any
     const orderData = Array.isArray(rawPayload) ? rawPayload[0] : rawPayload
     const orderNumber = order.orderNumber
-    const log = (msg: string) => console.log(`[Re-Ingest ${orderNumber}] ${msg}`)
+    const steps: string[] = []
+    const log = (msg: string) => { console.log(`[Re-Ingest ${orderNumber}] ${msg}`); steps.push(msg) }
 
     log('Starting re-ingest...')
 
@@ -63,9 +64,37 @@ export async function POST(
       mappingLookup.set(m.incomingName.toLowerCase(), m)
     }
 
-    // === STEP 1: Box suggestion ===
+    // === STEP 1: SKU mapping + Box suggestion ===
     const items = orderData.items || []
     log(`Items: ${items.length} line items`)
+
+    const skuGrouped = new Map<string, { name: string; dims: string; weightLbs: number; qty: number; skus: string[] }>()
+    for (const item of items) {
+      const sku = item.sku || ''
+      const qty = Number(item.quantity) || 1
+      const match = await matchSkuToSize(prisma, sku)
+      if (match) {
+        const existing = skuGrouped.get(match.id)
+        if (existing) {
+          existing.qty += qty
+          existing.skus.push(`${sku} x${qty}`)
+        } else {
+          skuGrouped.set(match.id, {
+            name: match.name,
+            dims: `${match.lengthInches}x${match.widthInches}x${match.heightInches}`,
+            weightLbs: match.weightLbs,
+            qty,
+            skus: [`${sku} x${qty}`],
+          })
+        }
+      } else {
+        log(`  SKU "${sku}" x${qty} -> NO MATCH`)
+      }
+    }
+    Array.from(skuGrouped.values()).forEach(g => {
+      log(`  ${g.qty}x "${g.name}" (${g.dims}", ${g.weightLbs}lbs) [from: ${g.skus.join(', ')}]`)
+    })
+
     const { suggestedBox, unmatchedSkus } = await calculateBoxSuggestion(prisma, items, sizes, boxes, feedbackRules, packingEfficiency)
     log(`Box suggestion: ${suggestedBox.boxName ? `"${suggestedBox.boxName}" (${suggestedBox.confidence}, ${suggestedBox.lengthInches}x${suggestedBox.widthInches}x${suggestedBox.heightInches})` : 'NONE (unknown)'}`)
     if (unmatchedSkus.length > 0) {
@@ -300,7 +329,7 @@ export async function POST(
 
     log('Order updated successfully')
 
-    return NextResponse.json({ success: true, order: updated })
+    return NextResponse.json({ success: true, order: updated, steps })
   } catch (error: any) {
     console.error(`[Re-Ingest] Error:`, error)
     return NextResponse.json({ error: 'Re-ingest failed', details: error.message }, { status: 500 })

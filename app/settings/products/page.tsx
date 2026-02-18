@@ -491,7 +491,16 @@ export default function ProductsPage() {
                 className="w-full border rounded px-3 py-2 text-sm"
                 placeholder="^DPT26, ^PT26"
               />
-              <p className="text-xs text-gray-500 mt-1">Regex patterns for orders without exact SKU</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Comma-separated regex patterns used as fallback when no exact SKU match is found.
+                Each pattern is tested against the full SKU string. Use <code className="bg-gray-100 px-1 rounded">^</code> to anchor to the start.
+                <br />
+                <span className="font-medium">Examples:</span>{' '}
+                <code className="bg-gray-100 px-1 rounded">^DPT16</code> matches DPT16-BLK, DPT16SD, etc.{' '}
+                <code className="bg-gray-100 px-1 rounded">^DPT16[^S]</code> would match DPT16-BLK but NOT DPT16SD.
+                <br />
+                <span className="font-medium">Tip:</span> Patterns are checked in database order across ALL product sizes — make patterns specific enough to avoid matching the wrong size (e.g. avoid bare <code className="bg-gray-100 px-1 rounded">^PT</code> which matches PT10, PT16, PT26, etc.).
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>

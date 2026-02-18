@@ -238,6 +238,21 @@ function checkFeedback(
   return { hasFeedback: false }
 }
 
+/** Check if every item can physically fit inside a box (any orientation) */
+function allItemsFitInBox(
+  items: { productId: string; quantity: number }[],
+  products: ProductSize[],
+  box: Box
+): boolean {
+  const boxDims = [box.lengthInches, box.widthInches, box.heightInches].sort((a, b) => a - b)
+  return items.every(item => {
+    const product = products.find(p => p.id === item.productId)
+    if (!product) return true
+    const itemDims = [product.lengthInches, product.widthInches, product.heightInches].sort((a, b) => a - b)
+    return itemDims[0] <= boxDims[0] && itemDims[1] <= boxDims[1] && itemDims[2] <= boxDims[2]
+  })
+}
+
 /** Find best box for an order */
 export function findBestBox(
   items: { productId: string; quantity: number; sku?: string }[],
@@ -252,38 +267,32 @@ export function findBestBox(
   // Classify order to determine single-cup box eligibility
   const classification = classifyOrderItems(items, products)
 
-  // Sort boxes by priority (smaller/preferred first)
-  // Filter out boxes that don't match the order type
   const eligibleBoxes = boxes
     .filter(b => {
       if (!b.active || !b.inStock) return false
-
-      // Single-cup boxes: only for exactly 1 cup with no accessories
       if (b.singleCupOnly) {
-        // Must have exactly 1 cup (quantity = 1)
         if (classification.cupCount !== 1) return false
-        // Must not have accessories (lids, straws, etc.)
         if (classification.hasAccessories) return false
       }
-
       return true
     })
     .sort((a, b) => a.priority - b.priority)
 
+  // PASS 1: Human-confirmed feedback always wins (regardless of priority)
   for (const box of eligibleBoxes) {
-    // LAYER 1: Check feedback rules first (human override)
     const feedback = checkFeedback(signature, box.id, feedbackRules)
-
-    if (feedback.hasFeedback) {
-      if (feedback.fits) {
-        return { box, confidence: 'confirmed', orderVolume }
-      } else {
-        // Human said doesn't fit, try next box
-        continue
-      }
+    if (feedback.hasFeedback && feedback.fits) {
+      return { box, confidence: 'confirmed', orderVolume }
     }
+  }
 
-    // LAYER 2: Fall back to volume calculation
+  // PASS 2: Priority-based algorithm with dimension + volume checks
+  for (const box of eligibleBoxes) {
+    const feedback = checkFeedback(signature, box.id, feedbackRules)
+    if (feedback.hasFeedback && !feedback.fits) continue
+
+    if (!allItemsFitInBox(items, products, box)) continue
+
     const fitRatio = calculateFitRatio(orderVolume, box, packingEfficiency)
     if (fitRatio <= 1.0) {
       return { box, confidence: 'calculated', fitRatio, orderVolume }
@@ -489,18 +498,30 @@ export async function calculateBoxSuggestion(
     return { suggestedBox: { boxId: null, boxName: null, confidence: 'unknown' }, unmatchedSkus }
   }
 
-  const mappedItems: { productId: string; quantity: number; size: ProductSize }[] = []
+  const rawMapped: { productId: string; quantity: number; size: ProductSize }[] = []
 
   for (const item of nonInsuranceItems) {
     const sku = item.sku || ''
     const qty = Number(item.quantity) || 1
     const size = await matchSkuToSize(prisma, sku)
     if (size) {
-      mappedItems.push({ productId: size.id, quantity: qty, size })
+      rawMapped.push({ productId: size.id, quantity: qty, size })
     } else if (sku) {
       unmatchedSkus.push({ sku, itemName: item.name || null })
     }
   }
+
+  // Group by productId so different SKUs mapping to the same product are aggregated
+  const groupedMap = new Map<string, { productId: string; quantity: number; size: ProductSize }>()
+  for (const m of rawMapped) {
+    const existing = groupedMap.get(m.productId)
+    if (existing) {
+      existing.quantity += m.quantity
+    } else {
+      groupedMap.set(m.productId, { ...m })
+    }
+  }
+  const mappedItems = Array.from(groupedMap.values())
 
   if (mappedItems.length === 0) {
     const allStickers = nonInsuranceItems.every(item => (item.sku || '').toUpperCase().startsWith('PL-STCK'))
