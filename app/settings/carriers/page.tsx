@@ -375,6 +375,7 @@ const CarrierCard = ({
   onDeselectAll,
   onDisconnect,
   isDisconnecting,
+  onOpenSettings,
 }: {
   carrier: ShipEngineCarrier
   expanded: boolean
