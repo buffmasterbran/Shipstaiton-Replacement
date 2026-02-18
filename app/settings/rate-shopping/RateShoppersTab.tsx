@@ -47,9 +47,33 @@ export function RateShoppersTab() {
   async function fetchCarriers() {
     try {
       setLoadingCarriers(true)
-      const response = await fetch('/api/shipengine/carriers?includeServices=true')
-      const data = await response.json()
-      if (response.ok && data.carriers) setCarriers(data.carriers)
+      const [carriersRes, settingsRes] = await Promise.all([
+        fetch('/api/shipengine/carriers?includeServices=true'),
+        fetch('/api/settings'),
+      ])
+      const carriersData = await carriersRes.json()
+      const settingsData = await settingsRes.json()
+
+      // Build set of selected service keys
+      const keys = new Set<string>()
+      const selectedSetting = settingsData.settings?.find((s: { key: string }) => s.key === 'selected_services')
+      if (selectedSetting?.value?.services) {
+        for (const svc of selectedSetting.value.services) {
+          keys.add(`${svc.carrierId}:${svc.serviceCode}`)
+        }
+      }
+
+      if (carriersRes.ok && carriersData.carriers) {
+        const filtered = (carriersData.carriers as Carrier[])
+          .map((carrier) => ({
+            ...carrier,
+            services: (carrier.services || []).filter(
+              (s) => keys.size === 0 || keys.has(`${carrier.carrier_id}:${s.service_code}`)
+            ),
+          }))
+          .filter((carrier) => carrier.services.length > 0)
+        setCarriers(filtered)
+      }
     } catch (err) {
       console.error('Error fetching carriers:', err)
     } finally {

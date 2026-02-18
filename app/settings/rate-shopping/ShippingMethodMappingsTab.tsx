@@ -8,9 +8,10 @@ export function ShippingMethodMappingsTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Carriers for the service picker
+  // Carriers for the service picker (filtered to selected services only)
   const [carriers, setCarriers] = useState<Carrier[]>([])
   const [loadingCarriers, setLoadingCarriers] = useState(false)
+  const [selectedServiceKeys, setSelectedServiceKeys] = useState<Set<string>>(new Set())
 
   // Rate shoppers for the rate_shopper target type
   const [rateShoppers, setRateShoppers] = useState<RateShopper[]>([])
@@ -64,10 +65,34 @@ export function ShippingMethodMappingsTab() {
   async function fetchCarriers() {
     try {
       setLoadingCarriers(true)
-      const res = await fetch('/api/shipengine/carriers?includeServices=true')
-      const data = await res.json()
-      if (res.ok && data.carriers) {
-        setCarriers(data.carriers)
+      const [carriersRes, settingsRes] = await Promise.all([
+        fetch('/api/shipengine/carriers?includeServices=true'),
+        fetch('/api/settings'),
+      ])
+      const carriersData = await carriersRes.json()
+      const settingsData = await settingsRes.json()
+
+      // Build set of selected service keys
+      const keys = new Set<string>()
+      const selectedSetting = settingsData.settings?.find((s: { key: string }) => s.key === 'selected_services')
+      if (selectedSetting?.value?.services) {
+        for (const svc of selectedSetting.value.services) {
+          keys.add(`${svc.carrierId}:${svc.serviceCode}`)
+        }
+      }
+      setSelectedServiceKeys(keys)
+
+      if (carriersRes.ok && carriersData.carriers) {
+        // Filter carriers to only include selected services
+        const filtered = (carriersData.carriers as Carrier[])
+          .map((carrier) => ({
+            ...carrier,
+            services: (carrier.services || []).filter(
+              (s) => keys.size === 0 || keys.has(`${carrier.carrier_id}:${s.service_code}`)
+            ),
+          }))
+          .filter((carrier) => carrier.services.length > 0)
+        setCarriers(filtered)
       }
     } catch (err) {
       console.error('Error fetching carriers:', err)

@@ -1,13 +1,21 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { ShipEngineCarrier, CarrierTab } from './types'
+import { useState, useEffect, useCallback } from 'react'
+import { ShipEngineCarrier, CarrierService, CarrierTab } from './types'
 import {
   classifyCarriers,
   getServiceBreakdown,
   getBillingLabel,
   getCarrierIcon,
 } from './helpers'
+
+interface SelectedService {
+  carrierId: string
+  carrierCode: string
+  carrierName: string
+  serviceCode: string
+  serviceName: string
+}
 
 export default function CarriersPage() {
   const [carriers, setCarriers] = useState<ShipEngineCarrier[]>([])
@@ -16,8 +24,15 @@ export default function CarriersPage() {
   const [activeTab, setActiveTab] = useState<CarrierTab>('our-accounts')
   const [expandedCarrier, setExpandedCarrier] = useState<string | null>(null)
 
+  const [selectedServices, setSelectedServices] = useState<SelectedService[]>([])
+  const [savedServices, setSavedServices] = useState<SelectedService[]>([])
+  const [saving, setSaving] = useState(false)
+
+  const hasChanges = JSON.stringify(selectedServices) !== JSON.stringify(savedServices)
+
   useEffect(() => {
     fetchCarriers()
+    fetchSelectedServices()
   }, [])
 
   const fetchCarriers = async () => {
@@ -37,6 +52,94 @@ export default function CarriersPage() {
     }
   }
 
+  const fetchSelectedServices = async () => {
+    try {
+      const response = await fetch('/api/settings')
+      const data = await response.json()
+      if (response.ok && data.settings) {
+        const setting = data.settings.find((s: { key: string }) => s.key === 'selected_services')
+        if (setting?.value?.services) {
+          setSelectedServices(setting.value.services)
+          setSavedServices(setting.value.services)
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching selected services:', err)
+    }
+  }
+
+  const saveSelection = async () => {
+    try {
+      setSaving(true)
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'selected_services',
+          value: { services: selectedServices },
+        }),
+      })
+      if (!response.ok) throw new Error('Failed to save')
+      setSavedServices([...selectedServices])
+    } catch (err) {
+      console.error('Error saving services:', err)
+      alert('Failed to save service selection')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const isSelected = useCallback(
+    (carrierId: string, serviceCode: string) =>
+      selectedServices.some((s) => s.carrierId === carrierId && s.serviceCode === serviceCode),
+    [selectedServices]
+  )
+
+  const toggleService = (carrier: ShipEngineCarrier, service: CarrierService) => {
+    setSelectedServices((prev) => {
+      const exists = prev.some(
+        (s) => s.carrierId === carrier.carrier_id && s.serviceCode === service.service_code
+      )
+      if (exists) {
+        return prev.filter(
+          (s) => !(s.carrierId === carrier.carrier_id && s.serviceCode === service.service_code)
+        )
+      }
+      return [
+        ...prev,
+        {
+          carrierId: carrier.carrier_id,
+          carrierCode: carrier.carrier_code,
+          carrierName: carrier.friendly_name,
+          serviceCode: service.service_code,
+          serviceName: service.name,
+        },
+      ]
+    })
+  }
+
+  const selectAllForCarrier = (carrier: ShipEngineCarrier) => {
+    if (!carrier.services) return
+    setSelectedServices((prev) => {
+      const withoutCarrier = prev.filter((s) => s.carrierId !== carrier.carrier_id)
+      const all = carrier.services!.map((svc) => ({
+        carrierId: carrier.carrier_id,
+        carrierCode: carrier.carrier_code,
+        carrierName: carrier.friendly_name,
+        serviceCode: svc.service_code,
+        serviceName: svc.name,
+      }))
+      return [...withoutCarrier, ...all]
+    })
+  }
+
+  const deselectAllForCarrier = (carrierId: string) => {
+    setSelectedServices((prev) => prev.filter((s) => s.carrierId !== carrierId))
+  }
+
+  const selectedCountForCarrier = (carrierId: string) =>
+    selectedServices.filter((s) => s.carrierId === carrierId).length
+
   const { own, managed } = classifyCarriers(carriers)
   const displayedCarriers = activeTab === 'our-accounts' ? own : managed
 
@@ -46,14 +149,14 @@ export default function CarriersPage() {
         <div>
           <h1 className="text-3xl font-bold">Carriers</h1>
           <p className="text-gray-600 mt-1">
-            Manage your carrier accounts and ShipEngine-provided services
+            Manage your carrier accounts and select which services to use across the app
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button
             onClick={fetchCarriers}
             disabled={loading}
-            className="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50"
+            className="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50 text-sm"
           >
             {loading ? 'Refreshing...' : 'Refresh'}
           </button>
@@ -65,6 +168,31 @@ export default function CarriersPage() {
           >
             + Add Carrier Account
           </a>
+        </div>
+      </div>
+
+      {/* Selection summary bar */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium text-blue-900">
+              {selectedServices.length} service{selectedServices.length !== 1 ? 's' : ''} selected
+            </p>
+            <p className="text-sm text-blue-700 mt-0.5">
+              Only selected services appear in dropdowns throughout the app (shipping rules, rate shoppers, weight rules, etc.)
+            </p>
+          </div>
+          <button
+            onClick={saveSelection}
+            disabled={saving || !hasChanges}
+            className={`px-5 py-2 rounded-lg font-medium text-sm transition-colors ${
+              hasChanges
+                ? 'bg-green-600 text-white hover:bg-green-700'
+                : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            {saving ? 'Saving...' : hasChanges ? 'Save Selection' : 'Saved'}
+          </button>
         </div>
       </div>
 
@@ -81,9 +209,7 @@ export default function CarriersPage() {
           >
             Our Accounts
             <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-              activeTab === 'our-accounts'
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-gray-100 text-gray-600'
+              activeTab === 'our-accounts' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
             }`}>
               {own.length}
             </span>
@@ -98,9 +224,7 @@ export default function CarriersPage() {
           >
             ShipEngine
             <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-              activeTab === 'shipengine'
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-gray-100 text-gray-600'
+              activeTab === 'shipengine' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
             }`}>
               {managed.length}
             </span>
@@ -154,8 +278,41 @@ export default function CarriersPage() {
                   expandedCarrier === carrier.carrier_id ? null : carrier.carrier_id
                 )
               }
+              selectedCount={selectedCountForCarrier(carrier.carrier_id)}
+              isServiceSelected={isSelected}
+              onToggleService={toggleService}
+              onSelectAll={selectAllForCarrier}
+              onDeselectAll={deselectAllForCarrier}
             />
           ))}
+        </div>
+      )}
+
+      {/* Sticky save bar */}
+      {hasChanges && (
+        <div className="fixed bottom-0 left-64 right-0 bg-white border-t border-gray-200 shadow-lg px-8 py-4 z-40">
+          <div className="flex items-center justify-between max-w-5xl">
+            <span className="text-sm text-amber-600 font-medium">
+              You have unsaved changes — {selectedServices.length} service{selectedServices.length !== 1 ? 's' : ''} selected
+            </span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setSelectedServices([...savedServices])
+                }}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+              >
+                Discard
+              </button>
+              <button
+                onClick={saveSelection}
+                disabled={saving}
+                className="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+              >
+                {saving ? 'Saving...' : 'Save Selection'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -168,17 +325,30 @@ const CarrierCard = ({
   carrier,
   expanded,
   onToggle,
+  selectedCount,
+  isServiceSelected,
+  onToggleService,
+  onSelectAll,
+  onDeselectAll,
 }: {
   carrier: ShipEngineCarrier
   expanded: boolean
   onToggle: () => void
+  selectedCount: number
+  isServiceSelected: (carrierId: string, serviceCode: string) => boolean
+  onToggleService: (carrier: ShipEngineCarrier, service: CarrierService) => void
+  onSelectAll: (carrier: ShipEngineCarrier) => void
+  onDeselectAll: (carrierId: string) => void
 }) => {
   const breakdown = getServiceBreakdown(carrier.services)
   const billing = getBillingLabel(carrier)
   const icon = getCarrierIcon(carrier.carrier_code)
+  const allSelected = breakdown.total > 0 && selectedCount === breakdown.total
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+    <div className={`bg-white border-2 rounded-lg shadow-sm overflow-hidden transition-colors ${
+      selectedCount > 0 ? 'border-green-400' : 'border-gray-200'
+    }`}>
       {/* Header */}
       <div
         className="p-5 cursor-pointer hover:bg-gray-50 transition-colors"
@@ -194,6 +364,11 @@ const CarrierCard = ({
                 </h2>
                 {carrier.nickname && carrier.nickname !== carrier.friendly_name && (
                   <span className="text-sm text-gray-500">({carrier.nickname})</span>
+                )}
+                {selectedCount > 0 && (
+                  <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs font-semibold rounded-full">
+                    {selectedCount}/{breakdown.total} selected
+                  </span>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5">
@@ -242,50 +417,72 @@ const CarrierCard = ({
         </div>
       </div>
 
-      {/* Expanded service list */}
+      {/* Expanded service list with checkboxes */}
       {expanded && (
         <div className="border-t border-gray-200 bg-gray-50 px-5 py-4">
           {carrier.services && carrier.services.length > 0 ? (
             <>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-gray-700">
-                  Available Services ({breakdown.total})
+                  Select Services ({selectedCount}/{breakdown.total})
                 </h3>
-                <div className="flex gap-4 text-xs text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-green-400" />
-                    Domestic ({breakdown.domestic})
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-blue-400" />
-                    International ({breakdown.international})
-                  </span>
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-4 text-xs text-gray-500 mr-4">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-green-400" />
+                      Domestic
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-blue-400" />
+                      International
+                    </span>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); allSelected ? onDeselectAll(carrier.carrier_id) : onSelectAll(carrier) }}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                  >
+                    {allSelected ? 'Deselect All' : 'Select All'}
+                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                {carrier.services.map((service) => (
-                  <div
-                    key={service.service_code}
-                    className="flex items-center justify-between bg-white rounded border border-gray-200 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-gray-900 truncate">
-                        {service.name}
+                {carrier.services.map((service) => {
+                  const checked = isServiceSelected(carrier.carrier_id, service.service_code)
+                  return (
+                    <div
+                      key={service.service_code}
+                      onClick={() => onToggleService(carrier, service)}
+                      className={`flex items-center gap-3 bg-white rounded border-2 px-3 py-2.5 cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-green-400 bg-green-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        readOnly
+                        className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500 cursor-pointer shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-gray-900 truncate">
+                          {service.name}
+                        </div>
+                        <div className="text-xs text-gray-400 font-mono truncate">
+                          {service.service_code}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-400 font-mono truncate">
-                        {service.service_code}
+                      <div className="flex gap-1 shrink-0">
+                        {service.domestic && (
+                          <span className="w-2 h-2 rounded-full bg-green-400" title="Domestic" />
+                        )}
+                        {service.international && (
+                          <span className="w-2 h-2 rounded-full bg-blue-400" title="International" />
+                        )}
                       </div>
                     </div>
-                    <div className="flex gap-1 ml-2 shrink-0">
-                      {service.domestic && (
-                        <span className="w-2 h-2 rounded-full bg-green-400" title="Domestic" />
-                      )}
-                      {service.international && (
-                        <span className="w-2 h-2 rounded-full bg-blue-400" title="International" />
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </>
           ) : (

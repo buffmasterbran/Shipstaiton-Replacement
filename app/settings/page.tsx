@@ -43,22 +43,13 @@ export default function GeneralSettingsPage() {
       })
       .finally(() => setLoading(false))
 
-    fetch('/api/shipengine/carriers?includeServices=true')
+    fetch('/api/settings')
       .then((res) => res.json())
       .then((data) => {
-        const services: CarrierService[] = []
-        for (const carrier of data.carriers || []) {
-          for (const service of carrier.services || []) {
-            services.push({
-              carrierId: carrier.carrier_id,
-              carrierCode: carrier.carrier_code,
-              carrierName: carrier.friendly_name,
-              serviceCode: service.service_code,
-              serviceName: service.name,
-            })
-          }
+        const setting = data.settings?.find((s: { key: string }) => s.key === 'selected_services')
+        if (setting?.value?.services) {
+          setAvailableServices(setting.value.services)
         }
-        setAvailableServices(services)
       })
       .catch(() => setAvailableServices([]))
       .finally(() => setLoadingServices(false))
@@ -267,7 +258,7 @@ export default function GeneralSettingsPage() {
         {loadingServices ? (
           <p className="text-gray-500 text-sm">Loading carriers...</p>
         ) : availableServices.length === 0 ? (
-          <p className="text-amber-600 text-sm">No carriers available. Configure carriers in ShipEngine first.</p>
+          <p className="text-amber-600 text-sm">No services selected. Go to <a href="/settings/carriers" className="underline font-medium">Carriers</a> to select which services to use.</p>
         ) : (
           <div className="space-y-4">
             <div>
