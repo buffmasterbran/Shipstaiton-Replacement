@@ -38,6 +38,9 @@ export interface OrderLog {
   rateShopError?: string | null
   // Hold fields
   onHoldReason?: string | null
+  // Shipping & tracking
+  trackingNumber?: string | null
+  carrier?: string | null
   // Address validation
   addressValidated?: boolean
   addressOverridden?: boolean
