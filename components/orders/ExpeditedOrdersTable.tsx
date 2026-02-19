@@ -176,6 +176,7 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
     const order = Array.isArray(payload) ? payload[0] : payload
     setSelectedOrder(order)
     setSelectedRawPayload(payload)
+    setSelectedLog(log)
     setIsDialogOpen(true)
   }
 
@@ -183,6 +184,7 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
     setIsDialogOpen(false)
     setSelectedOrder(null)
     setSelectedRawPayload(null)
+    setSelectedLog(null)
   }
 
   const toggleReachedOut = async (log: OrderLog, e: React.MouseEvent) => {
@@ -437,7 +439,7 @@ export default function ExpeditedOrdersTable({ logs }: ExpeditedOrdersTableProps
       </div>
 
       {/* Order Dialog */}
-      <OrderDialog order={selectedOrder} isOpen={isDialogOpen} onClose={handleCloseDialog} rawPayload={selectedRawPayload} />
+      <OrderDialog order={selectedOrder} isOpen={isDialogOpen} onClose={handleCloseDialog} rawPayload={selectedRawPayload} orderLog={selectedLog} onSaved={() => refreshOrders()} />
     </>
   )
 }

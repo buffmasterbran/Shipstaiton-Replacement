@@ -67,6 +67,7 @@ export default function PersonalizedOrdersTable({ orders }: PersonalizedOrdersTa
   // UI State
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
   const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
+  const [selectedLog, setSelectedLog] = useState<OrderLog | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [selectedBoxFilter, setSelectedBoxFilter] = useState<string>('all')
   const [selectedCupSize, setSelectedCupSize] = useState<string>('all')
@@ -424,7 +425,7 @@ export default function PersonalizedOrdersTable({ orders }: PersonalizedOrdersTa
                 return (
                   <tr
                     key={o.log.id}
-                    onClick={() => { setSelectedOrder(o.order); setSelectedRawPayload(o.log.rawPayload); setIsDialogOpen(true) }}
+                    onClick={() => { setSelectedOrder(o.order); setSelectedRawPayload(o.log.rawPayload); setSelectedLog(o.log); setIsDialogOpen(true) }}
                     className={`hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-purple-50' : ''}`}
                   >
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -485,9 +486,11 @@ export default function PersonalizedOrdersTable({ orders }: PersonalizedOrdersTa
       {isDialogOpen && selectedOrder && (
         <OrderDialog
           isOpen={isDialogOpen}
-          onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null) }}
+          onClose={() => { setIsDialogOpen(false); setSelectedOrder(null); setSelectedRawPayload(null); setSelectedLog(null) }}
           order={selectedOrder}
           rawPayload={selectedRawPayload}
+          orderLog={selectedLog}
+          onSaved={() => refreshOrders()}
         />
       )}
     </div>

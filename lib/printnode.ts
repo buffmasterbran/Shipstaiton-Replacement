@@ -182,6 +182,40 @@ export async function submitPrintJob(
 }
 
 /**
+ * Submit a print job with base64 PDF content (for Global-E labels etc.)
+ */
+export async function submitPrintJobBase64(
+  printerId: number,
+  title: string,
+  base64Pdf: string
+): Promise<number> {
+  const res = await fetch('https://api.printnode.com/printjobs', {
+    method: 'POST',
+    headers: {
+      Authorization: getAuthHeader(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      printerId,
+      title,
+      contentType: 'pdf_base64',
+      content: base64Pdf,
+      source: 'E-Com Batch Tool',
+    }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    console.error('[PrintNode] Failed to submit base64 print job:', res.status, text)
+    throw new Error(`PrintNode print job failed: ${res.status}`)
+  }
+
+  const jobId = await res.json()
+  console.log(`[PrintNode] Base64 print job submitted: ${jobId} → printer ${printerId}`)
+  return jobId
+}
+
+/**
  * Check if PrintNode is configured (API key exists)
  */
 export function isPrintNodeConfigured(): boolean {

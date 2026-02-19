@@ -46,31 +46,42 @@ export default function CarriersPage() {
     fetchSelectedServices()
   }, [])
 
-  // Auto-merge nicknames from ShipEngine carrier data into saved services
+  // Auto-merge nicknames + domestic/international flags from ShipEngine carrier data
   useEffect(() => {
     if (carriers.length === 0 || savedServices.length === 0) return
     const nicknameMap = new Map<string, string | null>()
+    const scopeMap = new Map<string, { domestic: boolean; international: boolean }>()
     for (const c of carriers) {
       nicknameMap.set(c.carrier_id, c.nickname || null)
+      if (c.services) {
+        for (const svc of c.services) {
+          scopeMap.set(`${c.carrier_id}:${svc.service_code}`, { domestic: svc.domestic, international: svc.international })
+        }
+      }
     }
     let needsUpdate = false
     const merged = savedServices.map(svc => {
+      let updated = svc
       const nickname = nicknameMap.get(svc.carrierId)
       if (nickname !== undefined && svc.accountNickname !== nickname) {
         needsUpdate = true
-        return { ...svc, accountNickname: nickname }
+        updated = { ...updated, accountNickname: nickname }
       }
-      return svc
+      const scope = scopeMap.get(`${svc.carrierId}:${svc.serviceCode}`)
+      if (scope && (svc.domestic !== scope.domestic || svc.international !== scope.international)) {
+        needsUpdate = true
+        updated = { ...updated, domestic: scope.domestic, international: scope.international }
+      }
+      return updated
     })
     if (needsUpdate) {
       setSelectedServices(merged)
       setSavedServices(merged)
-      // Auto-save the enriched data
       fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'selected_services', value: { services: merged } }),
-      }).catch(err => console.error('Auto-save nickname merge failed:', err))
+      }).catch(err => console.error('Auto-save merge failed:', err))
     }
   }, [carriers, savedServices])
 

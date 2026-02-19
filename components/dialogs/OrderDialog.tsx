@@ -4,7 +4,7 @@ import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from 'rea
 import { Dialog, Transition } from '@headlessui/react'
 import { XMarkIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 import { useReferenceData } from '@/hooks/useReferenceData'
-import ServiceSelect, { RATE_SHOP_VALUE } from '@/components/ui/ServiceSelect'
+import ServiceSelect, { RATE_SHOP_VALUE, GLOBAL_E_VALUE } from '@/components/ui/ServiceSelect'
 import RateBrowserDialog from './RateBrowserDialog'
 
 interface OrderItem {
@@ -113,6 +113,11 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   const [buying, setBuying] = useState(false)
   const [labelResult, setLabelResult] = useState<{ trackingNumber: string; labelUrl: string; cost: number } | null>(null)
   const [labelError, setLabelError] = useState<string | null>(null)
+
+  // === Global-E state ===
+  const [globalEShipping, setGlobalEShipping] = useState(false)
+  const [globalEResult, setGlobalEResult] = useState<{ trackingNumber: string; trackingUrl: string; carrier: string } | null>(null)
+  const [globalEError, setGlobalEError] = useState<string | null>(null)
 
   // === Editable fields (right sidebar) ===
   const [editServiceCode, setEditServiceCode] = useState('')
@@ -765,6 +770,71 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
     finally { setBuying(false) }
   }
 
+  // NOT TESTED -- Global-E shipping handler (Feb 2026, no live orders to test)
+  const handleGlobalEShip = async () => {
+    if (!orderLog?.id) return
+    setGlobalEShipping(true)
+    setGlobalEError(null)
+    setGlobalEResult(null)
+    try {
+      const res = await fetch('/api/global-e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'get-label',
+          orderLogId: orderLog.id,
+          printerId: selectedPrinterId || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setGlobalEError(data.error || 'Failed to get Global-E label')
+        return
+      }
+
+      setGlobalEResult({
+        trackingNumber: data.trackingNumber || '',
+        trackingUrl: data.trackingUrl || '',
+        carrier: data.carrier || 'Global-E',
+      })
+
+      // Open commercial invoice PDFs in new tabs if not printed
+      if (!selectedPrinterId && data.invoiceUrls?.length > 0) {
+        for (const url of data.invoiceUrls) {
+          window.open(url, '_blank')
+        }
+      }
+      setLocalStatus('SHIPPED')
+      setShippedInfo({
+        trackingNumber: data.trackingNumber || '',
+        carrier: data.carrier || 'Global-E',
+        serviceName: 'Global-E International',
+        labelUrl: data.labelUrls?.[0] || '',
+        labelCost: 0,
+        shippedAt: new Date().toISOString(),
+        printStatus: selectedPrinterId ? 'sent' : 'not_printed',
+        netsuiteUpdated: false,
+        netsuiteError: undefined,
+      })
+
+      if (!selectedPrinterId && data.labelUrls?.[0]) {
+        window.open(data.labelUrls[0], '_blank')
+      }
+
+      if (onSaved) {
+        try {
+          const orderRes = await fetch(`/api/orders/${orderLog.id}`)
+          const orderData = await orderRes.json()
+          if (orderData) onSaved(orderData)
+        } catch { /* table will refresh on close */ }
+      }
+    } catch (err: any) {
+      setGlobalEError(err.message || 'Failed to ship with Global-E')
+    } finally {
+      setGlobalEShipping(false)
+    }
+  }
+
   // === Void Label ===
   const handleVoidLabel = async () => {
     if (!orderLog?.id) return
@@ -946,7 +1016,15 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
   if (!order) return null
   const isShipped = localStatus === 'SHIPPED'
   const isBlocked = localStatus === 'ON_HOLD' || localStatus === 'CANCELLED'
-  const canBuy = !isShipped && !isBlocked && !!currentRate?.serviceCode && parseFloat(editWeight) > 0 && !!shipFromId
+  const isInternational = addrCountry !== '' && addrCountry.toUpperCase() !== 'US'
+  const filteredServices = carrierServices.filter(s => {
+    const hasScopeFlags = s.domestic !== undefined || s.international !== undefined
+    if (!hasScopeFlags) return true
+    if (isInternational) return !!s.international
+    return !!s.domestic
+  })
+  const isGlobalE = editServiceCode === GLOBAL_E_VALUE
+  const canBuy = !isShipped && !isBlocked && (isGlobalE || (!!currentRate?.serviceCode && parseFloat(editWeight) > 0 && !!shipFromId))
 
   const voidWindowExpired = shippedInfo?.shippedAt
     ? (Date.now() - new Date(shippedInfo.shippedAt).getTime()) / (1000 * 60 * 60) > 24
@@ -1432,9 +1510,10 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                         <ServiceSelect
                           value={editServiceCode}
                           onChange={handleServiceChange}
-                          carrierServices={carrierServices}
+                          carrierServices={filteredServices}
                           disabled={!refDataLoaded}
                           className={selectCls}
+                          showGlobalE={isInternational}
                         />
                         {currentRate && currentRate.price > 0 ? (
                           <div className="flex items-center justify-between mt-3">
@@ -1582,14 +1661,35 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
                       </div>
                     )}
 
+                    {isInternational && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700 flex items-center gap-2">
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        International order ({addrCountry})
+                      </div>
+                    )}
+                    {globalEError && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{globalEError}</div>}
+                    {globalEResult && (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700">
+                        <div className="font-medium">Shipped via {globalEResult.carrier}</div>
+                        <div className="mt-1">Tracking: {globalEResult.trackingNumber}</div>
+                        {globalEResult.trackingUrl && (
+                          <a href={globalEResult.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-green-600 underline text-xs mt-1 block">Track shipment</a>
+                        )}
+                      </div>
+                    )}
+
                     {!isShipped && !isBlocked && (
-                      <button onClick={handleBuyAndPrint} disabled={!canBuy || buying} className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold flex items-center justify-center gap-2 text-sm shadow-sm transition-colors">
-                        {buying ? (
-                          <><svg className="animate-spin w-4 h-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>Creating Label...</>
+                      <button
+                        onClick={isGlobalE ? handleGlobalEShip : handleBuyAndPrint}
+                        disabled={!canBuy || buying || globalEShipping}
+                        className={`w-full py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-semibold flex items-center justify-center gap-2 text-sm shadow-sm transition-colors ${isGlobalE ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}
+                      >
+                        {(buying || globalEShipping) ? (
+                          <><svg className="animate-spin w-4 h-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>{isGlobalE ? 'Getting Global-E Label...' : 'Creating Label...'}</>
                         ) : selectedPrinterId ? (
-                          <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 12h.008v.008h-.008V12zm-2.25 0h.008v.008h-.008V12z" /></svg>Create + Print Label</>
+                          <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 12h.008v.008h-.008V12zm-2.25 0h.008v.008h-.008V12z" /></svg>{isGlobalE ? 'Ship Global-E + Print Label' : 'Create + Print Label'}</>
                         ) : (
-                          <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>Create Label (Open PDF)</>
+                          <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={isGlobalE ? "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" : "M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"} /></svg>{isGlobalE ? 'Ship Global-E (Open PDF)' : 'Create Label (Open PDF)'}</>
                         )}
                       </button>
                     )}

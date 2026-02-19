@@ -38,6 +38,8 @@ export interface CarrierService {
   serviceCode: string
   serviceName: string
   accountNickname?: string | null
+  domestic?: boolean
+  international?: boolean
 }
 
 export interface SkuPattern {

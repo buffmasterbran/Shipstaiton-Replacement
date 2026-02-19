@@ -2,6 +2,8 @@
 
 import { useState, useMemo } from 'react'
 import { useOrders } from '@/context/OrdersContext'
+import type { OrderLog } from '@/context/OrdersContext'
+import OrderDialog from '@/components/dialogs/OrderDialog'
 import { getColorFromSku } from '@/lib/order-utils'
 
 interface HeldOrder {
@@ -11,13 +13,18 @@ interface HeldOrder {
   items: Array<{ sku: string; name: string; quantity: number; color: string }>
   holdReason: string | null
   heldAt: string
+  log: OrderLog
 }
 
 export default function HoldOrdersPage() {
-  const { orders, loading, error, updateOrderStatus } = useOrders()
+  const { orders, loading, error, updateOrderStatus, refreshOrders } = useOrders()
   const [unholdingId, setUnholdingId] = useState<string | null>(null)
 
-  // Filter to only held orders
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null)
+  const [selectedRawPayload, setSelectedRawPayload] = useState<any | null>(null)
+  const [selectedLog, setSelectedLog] = useState<OrderLog | null>(null)
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+
   const heldOrders = useMemo(() => {
     return orders
       .filter(order => order.status === 'ON_HOLD')
@@ -48,11 +55,29 @@ export default function HoldOrdersPage() {
           items,
           holdReason: order.onHoldReason || null,
           heldAt: order.updatedAt,
+          log: order,
         } as HeldOrder
       })
   }, [orders])
 
-  const handleUnhold = async (orderId: string) => {
+  const handleRowClick = (held: HeldOrder) => {
+    const payload = held.log.rawPayload as any
+    const order = Array.isArray(payload) ? payload[0] : payload
+    setSelectedOrder(order)
+    setSelectedRawPayload(payload)
+    setSelectedLog(held.log)
+    setIsDialogOpen(true)
+  }
+
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false)
+    setSelectedOrder(null)
+    setSelectedRawPayload(null)
+    setSelectedLog(null)
+  }
+
+  const handleUnhold = async (orderId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
     setUnholdingId(orderId)
     try {
       const res = await fetch('/api/orders/hold', {
@@ -62,7 +87,6 @@ export default function HoldOrdersPage() {
       })
       
       if (res.ok) {
-        // Update order status locally instead of full refresh
         updateOrderStatus(orderId, 'AWAITING_SHIPMENT')
       } else {
         const data = await res.json()
@@ -144,7 +168,11 @@ export default function HoldOrdersPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {heldOrders.map((order) => (
-                <tr key={order.id} className="hover:bg-gray-50">
+                <tr
+                  key={order.id}
+                  onClick={() => handleRowClick(order)}
+                  className="hover:bg-blue-50 cursor-pointer transition-colors"
+                >
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="text-sm font-medium text-gray-900">
                       {order.orderNumber}
@@ -159,7 +187,7 @@ export default function HoldOrdersPage() {
                     <div className="text-sm text-gray-600">
                       {order.items.slice(0, 2).map((item, idx) => (
                         <div key={idx} className="truncate max-w-xs">
-                          {item.sku} <span className="text-gray-400">×{item.quantity}</span>
+                          {item.sku} <span className="text-gray-400">&times;{item.quantity}</span>
                           {item.color && <span className="ml-1 text-gray-400">({item.color})</span>}
                         </div>
                       ))}
@@ -187,7 +215,7 @@ export default function HoldOrdersPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right">
                     <button
-                      onClick={() => handleUnhold(order.id)}
+                      onClick={(e) => handleUnhold(order.id, e)}
                       disabled={unholdingId === order.id}
                       className="px-3 py-1.5 text-sm font-medium text-yellow-700 bg-yellow-100 rounded-lg hover:bg-yellow-200 transition-colors disabled:opacity-50"
                     >
@@ -200,6 +228,15 @@ export default function HoldOrdersPage() {
           </table>
         </div>
       )}
+
+      <OrderDialog
+        isOpen={isDialogOpen}
+        onClose={handleCloseDialog}
+        order={selectedOrder}
+        rawPayload={selectedRawPayload}
+        orderLog={selectedLog}
+        onSaved={() => refreshOrders()}
+      />
     </div>
   )
 }

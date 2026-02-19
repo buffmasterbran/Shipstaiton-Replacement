@@ -3,6 +3,7 @@
 import type { CarrierService } from '@/hooks/useReferenceData'
 
 export const RATE_SHOP_VALUE = '__RATE_SHOP__'
+export const GLOBAL_E_VALUE = '__GLOBAL_E__'
 
 interface ServiceSelectProps {
   value: string
@@ -12,6 +13,7 @@ interface ServiceSelectProps {
   className?: string
   placeholder?: string
   showRateShop?: boolean
+  showGlobalE?: boolean
 }
 
 interface AccountGroup {
@@ -70,6 +72,7 @@ export default function ServiceSelect({
   className = '',
   placeholder = 'Select service...',
   showRateShop = true,
+  showGlobalE = false,
 }: ServiceSelectProps) {
   const groups = buildGroups(carrierServices)
 
@@ -81,6 +84,9 @@ export default function ServiceSelect({
       className={className}
     >
       <option value="">{disabled && carrierServices.length === 0 ? 'Loading...' : placeholder}</option>
+      {showGlobalE && (
+        <option value={GLOBAL_E_VALUE}>🌐 Global-E (international label)</option>
+      )}
       {showRateShop && (
         <option value={RATE_SHOP_VALUE}>⚡ Rate Shopping (auto-select best rate)</option>
       )}
