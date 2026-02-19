@@ -578,7 +578,7 @@ export default function PersonalizationPage() {
     }
 
     // Mark completed bins (all personalized items in that bin are done)
-    for (const binNum of binsWithItems) {
+    for (const binNum of Array.from(binsWithItems)) {
       const binItemIndices = personalizedItems
         .map((item, idx) => ({ item, idx }))
         .filter(({ item }) => item.binNumber === binNum)
