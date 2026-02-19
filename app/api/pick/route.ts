@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 
 // Helper to count items in an order (excluding insurance)
@@ -1092,7 +1093,7 @@ export async function POST(request: NextRequest) {
             engraverName: null,
             engraverId: null,
             engravingStartedAt: null,
-            engravingProgress: null,
+            engravingProgress: Prisma.DbNull,
           },
         })
 
