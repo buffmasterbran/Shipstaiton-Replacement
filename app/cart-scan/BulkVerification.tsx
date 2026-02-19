@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import Barcode from 'react-barcode'
 import { ChunkOrder, OrderItem, BulkSkuLayoutEntry, BulkShelfAssignment } from './types'
 import { getShipstationBarcode, getOrderItems } from './helpers'
+import { MockupButton } from './MockupModal'
 
 export function BulkVerification({
   shelfAssignments,
@@ -249,6 +250,7 @@ export function BulkVerification({
                 <div>
                   <div className="font-mono text-lg font-bold text-gray-900">{item.sku}</div>
                   <div className="text-sm text-gray-600">{item.name}</div>
+                  {item.mockupUrl && <MockupButton url={item.mockupUrl} />}
                   {bins.length > 0 && (
                     <div className="text-xs text-orange-600 mt-1">
                       Grab from Bin{bins.length > 1 ? 's' : ''} {bins.join(', ')}

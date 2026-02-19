@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import Barcode from 'react-barcode'
 import { ChunkOrder, OrderItem } from './types'
 import { getShipstationBarcode, getOrderItems } from './helpers'
+import { MockupButton } from './MockupModal'
 
 export function StandardVerification({
   order,
@@ -130,6 +131,7 @@ export function StandardVerification({
                 <div>
                   <div className="font-mono text-lg font-bold text-gray-900">{item.sku}</div>
                   <div className="text-sm text-gray-600">{item.name}</div>
+                  {item.mockupUrl && <MockupButton url={item.mockupUrl} />}
                     </div>
                 <div className={`text-3xl font-bold ${isComplete ? 'text-green-600' : 'text-gray-400'}`}>
                   {scanned}/{item.quantity}

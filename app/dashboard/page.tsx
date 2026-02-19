@@ -12,6 +12,11 @@ interface DashboardData {
       id: string; name: string; color: string | null
       pickerName: string; startedAt: string | null; orderCount: number
     }>
+    engravingCarts: Array<{
+      id: string; name: string; color: string | null
+      engraverName: string; startedAt: string | null
+      itemsEngraved: number; ordersTotal: number
+    }>
     shippingCarts: Array<{
       id: string; name: string; color: string | null
       shipperName: string; startedAt: string | null
@@ -36,6 +41,11 @@ interface DashboardData {
     shippers: Array<{
       name: string; carts: number; orders: number
       avgSeconds: number; avgSecondsPerOrder: number
+      fastest: number; slowest: number
+    }>
+    engravers: Array<{
+      name: string; carts: number; items: number; orders: number
+      avgSeconds: number; avgSecondsPerItem: number
       fastest: number; slowest: number
     }>
   }
@@ -155,7 +165,7 @@ export default function DashboardPage() {
   if (!data) return null
 
   const { liveOps, orderHealth, performance, throughput } = data
-  const totalActiveCarts = liveOps.pickingCarts.length + liveOps.shippingCarts.length
+  const totalActiveCarts = liveOps.pickingCarts.length + (liveOps.engravingCarts?.length ?? 0) + liveOps.shippingCarts.length
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -215,6 +225,29 @@ export default function DashboardPage() {
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-gray-900">{cart.name}</div>
                         <div className="text-sm text-gray-500">{cart.pickerName} · {cart.orderCount} orders</div>
+                      </div>
+                      <div className="text-sm text-gray-400 shrink-0">{formatMinutesAgo(cart.startedAt)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Engraving Carts */}
+            {liveOps.engravingCarts?.length > 0 && (
+              <div className="bg-white rounded-xl border border-purple-200 p-4">
+                <h3 className="text-sm font-bold text-purple-600 uppercase tracking-wide mb-3">
+                  Engraving ({liveOps.engravingCarts.length})
+                </h3>
+                <div className="space-y-3">
+                  {liveOps.engravingCarts.map(cart => (
+                    <div key={cart.id} className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full shrink-0" style={{ backgroundColor: cart.color || '#9ca3af' }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-gray-900">{cart.name}</div>
+                        <div className="text-sm text-gray-500">
+                          {cart.engraverName} · {cart.itemsEngraved}/{cart.ordersTotal} engraved
+                        </div>
                       </div>
                       <div className="text-sm text-gray-400 shrink-0">{formatMinutesAgo(cart.startedAt)}</div>
                     </div>
@@ -428,6 +461,42 @@ export default function DashboardPage() {
               <div className="p-6 text-center text-gray-400 text-sm">No shipping data for this period</div>
             )}
           </div>
+
+          {/* Engravers Table */}
+          {performance.engravers && performance.engravers.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 bg-purple-50 border-b border-purple-100">
+                <h3 className="font-bold text-purple-800">Engravers</h3>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-gray-500 text-xs uppercase">
+                    <th className="text-left px-4 py-2">Name</th>
+                    <th className="text-right px-4 py-2">Carts</th>
+                    <th className="text-right px-4 py-2">Items</th>
+                    <th className="text-right px-4 py-2">Orders</th>
+                    <th className="text-right px-4 py-2">Avg/Cart</th>
+                    <th className="text-right px-4 py-2">Avg/Item</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {performance.engravers.map((engraver, idx) => (
+                    <tr key={engraver.name} className={`border-b border-gray-50 ${idx === 0 ? 'bg-purple-50/50' : ''}`}>
+                      <td className="px-4 py-2.5 font-medium text-gray-900">
+                        {idx === 0 && performance.engravers.length > 1 && <span className="mr-1">&#9733;</span>}
+                        {engraver.name}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-gray-600">{engraver.carts}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-600">{engraver.items}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-600">{engraver.orders}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-600 font-mono">{formatDuration(engraver.avgSeconds)}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-600 font-mono">{formatDuration(engraver.avgSecondsPerItem)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

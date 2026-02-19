@@ -431,6 +431,7 @@ model User {
   group          PermissionGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   pickedChunks   PickChunk[]      @relation("ChunkPicker")
   shippedChunks  PickChunk[]      @relation("ChunkShipper")
+  engravedChunks PickChunk[]      @relation("ChunkEngraver")
 
   @@index([active])
   @@index([role])
@@ -597,19 +598,27 @@ model PickChunk {
   // Legacy name-based fields (kept for backward compat)
   pickerName          String?         @map("picker_name")
   shipperName         String?         @map("shipper_name")
+  engraverName        String?         @map("engraver_name")
   // New user-based fields
   pickerId            String?         @map("picker_id")
   shipperId           String?         @map("shipper_id")
+  engraverId          String?         @map("engraver_id")
   ordersInChunk       Int             @default(0) @map("orders_in_chunk")
   ordersShipped       Int             @default(0) @map("orders_shipped")
   ordersSkipped       Int             @default(0) @map("orders_skipped")
+  itemsEngraved       Int             @default(0) @map("items_engraved")
   claimedAt           DateTime?       @map("claimed_at")
   pickingStartedAt    DateTime?       @map("picking_started_at")
   pickingCompletedAt  DateTime?       @map("picking_completed_at")
   shippingStartedAt   DateTime?       @map("shipping_started_at")
   shippingCompletedAt DateTime?       @map("shipping_completed_at")
+  engravingStartedAt  DateTime?       @map("engraving_started_at")
+  engravingCompletedAt DateTime?      @map("engraving_completed_at")
   pickDurationSeconds Int?            @map("pick_duration_seconds")
   shipDurationSeconds Int?            @map("ship_duration_seconds")
+  engravingDurationSeconds Int?       @map("engraving_duration_seconds")
+  engravingPausedSeconds   Int?       @map("engraving_paused_seconds")
+  engravingProgress   Json?           @map("engraving_progress")
   createdAt           DateTime        @default(now()) @map("created_at")
   updatedAt           DateTime        @updatedAt @map("updated_at")
 
@@ -617,6 +626,7 @@ model PickChunk {
   cart                 PickCart?                   @relation(fields: [cartId], references: [id], onDelete: SetNull)
   picker               User?                      @relation("ChunkPicker", fields: [pickerId], references: [id], onDelete: SetNull)
   shipper              User?                      @relation("ChunkShipper", fields: [shipperId], references: [id], onDelete: SetNull)
+  engraver             User?                      @relation("ChunkEngraver", fields: [engraverId], references: [id], onDelete: SetNull)
   orders               OrderLog[]
   bulkBatchAssignments ChunkBulkBatchAssignment[]
 
@@ -624,6 +634,7 @@ model PickChunk {
   @@index([status])
   @@index([cartId])
   @@index([pickerId])
+  @@index([engraverId])
   @@index([pickingMode])
   @@map("pick_chunks")
 }

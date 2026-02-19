@@ -713,7 +713,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
   )
 
   const Th = ({ columnKey, colId, children }: { columnKey: SortKey; colId: string; children: React.ReactNode }) => (
-    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider relative overflow-hidden" style={{ width: columnWidths[colId] }}>
+    <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider relative overflow-hidden" style={{ width: columnWidths[colId] }}>
       <button
         type="button"
         onClick={() => handleSort(columnKey)}
@@ -903,7 +903,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                   col.sortKey ? (
                     <Th key={col.id} colId={col.id} columnKey={col.sortKey}>{col.label}</Th>
                   ) : (
-                    <th key={col.id} className={`px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider relative overflow-hidden ${col.headerClassName || ''}`} style={{ width: columnWidths[col.id] || col.defaultWidth }}>
+                    <th key={col.id} className={`px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider relative overflow-hidden ${col.headerClassName || ''}`} style={{ width: columnWidths[col.id] || col.defaultWidth }}>
                       <span className="truncate block">{col.label}</span>
                       <ResizeHandle colId={col.id} />
                     </th>
@@ -934,7 +934,7 @@ export default function OrdersTable({ logs, orderHighlightSettings }: OrdersTabl
                       />
                     </td>
                     {visibleColumns.map((col) => {
-                      const tdCls = 'px-4 py-3 whitespace-nowrap overflow-hidden text-ellipsis'
+                      const tdCls = 'px-2 py-3 whitespace-nowrap overflow-hidden text-ellipsis'
                       switch (col.id) {
                         case 'orderNumber':
                           return (

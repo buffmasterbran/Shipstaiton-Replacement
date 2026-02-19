@@ -19,7 +19,19 @@ export async function POST() {
       return NextResponse.json({ cleared: 0, message: 'No shipped orders to clear' })
     }
 
-    // Reset shipped orders back to AWAITING_SHIPMENT and clear shipping data
+    // Delete shipment logs for shipped orders
+    const shippedOrderIds = await prisma.orderLog.findMany({
+      where: { status: 'SHIPPED' },
+      select: { id: true },
+    })
+    if (shippedOrderIds.length > 0) {
+      const deleteLogsResult = await prisma.shipmentLog.deleteMany({
+        where: { orderLogId: { in: shippedOrderIds.map(o => o.id) } },
+      })
+      console.log(`[CLEAR SHIPPED] Deleted ${deleteLogsResult.count} shipment logs`)
+    }
+
+    // Reset shipped orders back to AWAITING_SHIPMENT and clear all shipping/picking/engraving data
     const result = await prisma.orderLog.updateMany({
       where: { status: 'SHIPPED' },
       data: {
@@ -28,7 +40,12 @@ export async function POST() {
         carrier: null,
         labelUrl: null,
         labelCost: null,
+        labelId: null,
+        shipmentId: null,
         shippedAt: null,
+        printStatus: null,
+        netsuiteUpdated: false,
+        labelPrepurchased: false,
         batchId: null,
         chunkId: null,
         binNumber: null,

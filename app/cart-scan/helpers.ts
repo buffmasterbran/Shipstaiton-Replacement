@@ -19,11 +19,18 @@ export function getOrderItems(rawPayload: any): OrderItem[] {
       const name = (item.name || '').toUpperCase()
       return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
     })
-    .map((item: any) => ({
-      sku: item.sku || 'N/A',
-      name: item.name || 'Unknown',
-      quantity: item.quantity || 1,
-    }))
+    .map((item: any) => {
+      const skuUpper = (item.sku || '').toUpperCase()
+      // TEMPORARY FALLBACK: orders ingested before 2/19/2026 don't have custcol_customization_barcode.
+      // Once all old orders are shipped, remove the SKU fallback and keep only the barcode check.
+      return {
+        sku: item.sku || 'N/A',
+        name: item.name || 'Unknown',
+        quantity: item.quantity || 1,
+        mockupUrl: item.custcol_custom_image_url || '',
+        isPersonalized: !!item.custcol_customization_barcode || skuUpper.endsWith('-PERS'),
+      }
+    })
 }
 
 export function getModeBadge(mode: PickingMode, isPersonalized?: boolean) {

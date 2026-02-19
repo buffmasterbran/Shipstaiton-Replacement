@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
       highlightSettings,
       pickingCarts,
       shippingCarts,
+      engravingCarts,
       awaitingPickCount,
       pickedAwaitingShipCount,
       onHoldCount,
@@ -58,6 +59,17 @@ export async function GET(request: NextRequest) {
           chunks: {
             where: { status: 'SHIPPING' },
             select: { shipperName: true, shippingStartedAt: true, ordersInChunk: true, ordersShipped: true },
+          },
+        },
+      }),
+
+      // Active engraving carts
+      prisma.pickCart.findMany({
+        where: { status: 'ENGRAVING', active: true },
+        include: {
+          chunks: {
+            where: { status: 'READY_FOR_ENGRAVING' },
+            select: { engraverName: true, engravingStartedAt: true, ordersInChunk: true, itemsEngraved: true },
           },
         },
       }),
@@ -102,10 +114,13 @@ export async function GET(request: NextRequest) {
         select: {
           pickerName: true,
           shipperName: true,
+          engraverName: true,
           pickDurationSeconds: true,
           shipDurationSeconds: true,
+          engravingDurationSeconds: true,
           ordersInChunk: true,
           ordersShipped: true,
+          itemsEngraved: true,
           pickingCompletedAt: true,
           shippingCompletedAt: true,
         },
@@ -153,6 +168,18 @@ export async function GET(request: NextRequest) {
           ordersTotal: chunk?.ordersInChunk || 0,
         }
       }),
+      engravingCarts: (engravingCarts as any[]).map(cart => {
+        const chunk = cart.chunks[0]
+        return {
+          id: cart.id,
+          name: cart.name,
+          color: cart.color,
+          engraverName: chunk?.engraverName || 'Unclaimed',
+          startedAt: chunk?.engravingStartedAt || null,
+          itemsEngraved: chunk?.itemsEngraved || 0,
+          ordersTotal: chunk?.ordersInChunk || 0,
+        }
+      }),
       queueDepth: {
         awaitingPick: awaitingPickCount,
         pickedAwaitingShip: pickedAwaitingShipCount,
@@ -191,6 +218,7 @@ export async function GET(request: NextRequest) {
     // --- Build team performance ---
     const pickerMap = new Map<string, { carts: number; orders: number; totalSeconds: number; fastest: number; slowest: number }>()
     const shipperMap = new Map<string, { carts: number; orders: number; totalSeconds: number; fastest: number; slowest: number }>()
+    const engraverMap = new Map<string, { carts: number; items: number; orders: number; totalSeconds: number; fastest: number; slowest: number }>()
 
     for (const chunk of completedChunks) {
       // Picker stats
@@ -213,6 +241,18 @@ export async function GET(request: NextRequest) {
         existing.fastest = Math.min(existing.fastest, chunk.shipDurationSeconds)
         existing.slowest = Math.max(existing.slowest, chunk.shipDurationSeconds)
         shipperMap.set(chunk.shipperName, existing)
+      }
+
+      // Engraver stats
+      if (chunk.engraverName && chunk.engravingDurationSeconds && chunk.engravingDurationSeconds > 0) {
+        const existing = engraverMap.get(chunk.engraverName) || { carts: 0, items: 0, orders: 0, totalSeconds: 0, fastest: Infinity, slowest: 0 }
+        existing.carts++
+        existing.items += chunk.itemsEngraved || 0
+        existing.orders += chunk.ordersInChunk || 0
+        existing.totalSeconds += chunk.engravingDurationSeconds
+        existing.fastest = Math.min(existing.fastest, chunk.engravingDurationSeconds)
+        existing.slowest = Math.max(existing.slowest, chunk.engravingDurationSeconds)
+        engraverMap.set(chunk.engraverName, existing)
       }
     }
 
@@ -240,6 +280,19 @@ export async function GET(request: NextRequest) {
       }))
       .sort((a, b) => b.orders - a.orders)
 
+    const engravers = Array.from(engraverMap.entries())
+      .map(([name, stats]) => ({
+        name,
+        carts: stats.carts,
+        items: stats.items,
+        orders: stats.orders,
+        avgSeconds: Math.round(stats.totalSeconds / stats.carts),
+        avgSecondsPerItem: stats.items > 0 ? Math.round(stats.totalSeconds / stats.items) : 0,
+        fastest: stats.fastest === Infinity ? 0 : stats.fastest,
+        slowest: stats.slowest,
+      }))
+      .sort((a, b) => b.items - a.items)
+
     // --- Build throughput ---
     const throughput = {
       shippedToday: shippedTodayCount,
@@ -250,7 +303,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       liveOps,
       orderHealth,
-      performance: { pickers, shippers },
+      performance: { pickers, shippers, engravers },
       throughput,
       period,
     })

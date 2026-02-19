@@ -98,41 +98,66 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ availableOrderCount: count })
     }
 
-    // Engraving queue: chunks with READY_FOR_ENGRAVING status
+    // Engraving queue: carts in ENGRAVING status with their chunks and orders
     if (action === 'engraving-queue') {
-      const chunks = await prisma.pickChunk.findMany({
-        where: {
-          status: 'READY_FOR_ENGRAVING',
-        },
+      const carts = await prisma.pickCart.findMany({
+        where: { status: 'ENGRAVING' },
         include: {
-          batch: {
-            select: { id: true, name: true, type: true },
-          },
-          cart: {
-            select: { id: true, name: true, color: true },
-          },
-          orders: {
-            where: { status: 'AWAITING_SHIPMENT' },
-            select: {
-              id: true,
-              orderNumber: true,
-              rawPayload: true,
+          chunks: {
+            where: { status: 'READY_FOR_ENGRAVING' },
+            include: {
+              batch: { select: { id: true, name: true, type: true } },
+              orders: {
+                where: { status: 'AWAITING_SHIPMENT' },
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  binNumber: true,
+                  rawPayload: true,
+                },
+                orderBy: { binNumber: 'asc' },
+              },
             },
           },
         },
-        orderBy: { createdAt: 'asc' },
+        orderBy: { name: 'asc' },
       })
 
-      // Add bin numbers from chunk order assignment
-      const chunksWithBins = chunks.map(chunk => ({
-        ...chunk,
-        orders: chunk.orders.map((order, idx) => ({
-          ...order,
-          binNumber: idx + 1,
-        })),
-      }))
+      // Compute personalized item counts per cart for the queue display
+      const cartsWithCounts = carts.map(cart => {
+        const chunk = cart.chunks[0]
+        let personalizedItemCount = 0
+        let totalBins = 0
+        if (chunk) {
+          const binsSeen = new Set<number>()
+          for (const order of chunk.orders) {
+            if (order.binNumber) binsSeen.add(order.binNumber)
+            const payload = Array.isArray(order.rawPayload) ? (order.rawPayload as any[])[0] : order.rawPayload
+            const items = (payload as any)?.items || []
+            for (const item of items) {
+              const sku = (item.sku || '').toUpperCase()
+              // TEMPORARY FALLBACK: orders ingested before 2/19/2026 don't have custcol_customization_barcode.
+              // Once all old orders are shipped, remove the SKU fallback and keep only the barcode check.
+              if (item.custcol_customization_barcode || sku.endsWith('-PERS')) {
+                personalizedItemCount += (item.quantity || 1)
+              }
+            }
+          }
+          totalBins = binsSeen.size
+        }
+        return {
+          ...cart,
+          personalizedItemCount,
+          totalBins,
+          chunk: chunk ? {
+            ...chunk,
+            engraverName: (chunk as any).engraverName,
+            engravingProgress: (chunk as any).engravingProgress,
+          } : null,
+        }
+      })
 
-      return NextResponse.json({ chunks: chunksWithBins })
+      return NextResponse.json({ carts: cartsWithCounts })
     }
 
     if (!cellId) {
@@ -890,20 +915,108 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // Mark a single order as engraved
+      // Start engraving: claim a cart and record engraver info
+      case 'start-engraving': {
+        const { cartId, engraverName } = body
+        if (!cartId || !engraverName) {
+          return NextResponse.json({ error: 'cartId and engraverName required' }, { status: 400 })
+        }
+
+        const cart = await prisma.pickCart.findUnique({
+          where: { id: cartId },
+          include: {
+            chunks: {
+              where: { status: 'READY_FOR_ENGRAVING' },
+              include: {
+                batch: { select: { id: true, name: true, type: true } },
+                orders: {
+                  where: { status: 'AWAITING_SHIPMENT' },
+                  select: {
+                    id: true,
+                    orderNumber: true,
+                    binNumber: true,
+                    rawPayload: true,
+                  },
+                  orderBy: { binNumber: 'asc' },
+                },
+              },
+            },
+          },
+        })
+
+        if (!cart || cart.status !== 'ENGRAVING') {
+          return NextResponse.json({ error: 'Cart not found or not in engraving status' }, { status: 400 })
+        }
+
+        const chunk = cart.chunks[0]
+        if (!chunk) {
+          return NextResponse.json({ error: 'No chunk ready for engraving on this cart' }, { status: 400 })
+        }
+
+        // Record engraver and start time on the chunk
+        await prisma.pickChunk.update({
+          where: { id: chunk.id },
+          data: {
+            engraverName,
+            engravingStartedAt: new Date(),
+            engravingProgress: { completedItems: [], currentIndex: 0, totalPausedMs: 0 },
+          },
+        })
+
+        return NextResponse.json({
+          success: true,
+          cart: {
+            ...cart,
+            chunks: [{ ...chunk, engraverName, engravingStartedAt: new Date() }],
+          },
+        })
+      }
+
+      // Persist individual item completion for crash recovery
+      case 'mark-engraved-item': {
+        const { chunkId, itemIndex, totalPausedMs } = body
+        if (!chunkId || itemIndex === undefined) {
+          return NextResponse.json({ error: 'chunkId and itemIndex required' }, { status: 400 })
+        }
+
+        const chunk = await prisma.pickChunk.findUnique({
+          where: { id: chunkId },
+          select: { engravingProgress: true, itemsEngraved: true },
+        })
+        if (!chunk) {
+          return NextResponse.json({ error: 'Chunk not found' }, { status: 404 })
+        }
+
+        const progress = (chunk.engravingProgress as any) || { completedItems: [], currentIndex: 0, totalPausedMs: 0 }
+        if (!progress.completedItems.includes(itemIndex)) {
+          progress.completedItems.push(itemIndex)
+        }
+        progress.currentIndex = itemIndex + 1
+        if (totalPausedMs !== undefined) {
+          progress.totalPausedMs = totalPausedMs
+        }
+
+        await prisma.pickChunk.update({
+          where: { id: chunkId },
+          data: {
+            engravingProgress: progress,
+            itemsEngraved: progress.completedItems.length,
+          },
+        })
+
+        return NextResponse.json({ success: true, progress })
+      }
+
+      // Mark a single order as engraved (called when all personalized items in order are done)
       case 'mark-engraved': {
         const { chunkId, orderNumber } = body
         if (!chunkId || !orderNumber) {
           return NextResponse.json({ error: 'chunkId and orderNumber required' }, { status: 400 })
         }
 
-        // Update the order
-        await prisma.orderLog.updateMany({
-          where: { chunkId, orderNumber },
-          data: { status: 'ENGRAVED' as any },
-        })
+        // Order stays AWAITING_SHIPMENT — engraving progress tracked on the chunk
+        // Just increment the batch counter below
 
-        // Increment batch engravedOrders count
         const chunk = await prisma.pickChunk.findUnique({
           where: { id: chunkId },
           select: { batchId: true },
@@ -920,28 +1033,68 @@ export async function POST(request: NextRequest) {
 
       // Complete engraving for a chunk - move to READY_FOR_SHIPPING
       case 'complete-engraving': {
-        const { chunkId } = body
+        const { chunkId, engravingDurationSeconds, engravingPausedSeconds, itemsEngraved } = body
         if (!chunkId) {
           return NextResponse.json({ error: 'chunkId required' }, { status: 400 })
         }
 
         const engravingChunk = await prisma.pickChunk.findUnique({
           where: { id: chunkId },
-          select: { cartId: true },
+          select: { cartId: true, engravingStartedAt: true },
         })
+
+        const serverDuration = engravingChunk?.engravingStartedAt
+          ? Math.round((Date.now() - new Date(engravingChunk.engravingStartedAt).getTime()) / 1000)
+          : null
 
         await prisma.pickChunk.update({
           where: { id: chunkId },
-          data: { status: 'READY_FOR_SHIPPING' },
+          data: {
+            status: 'READY_FOR_SHIPPING',
+            engravingCompletedAt: new Date(),
+            engravingDurationSeconds: engravingDurationSeconds ?? serverDuration,
+            engravingPausedSeconds: engravingPausedSeconds ?? 0,
+            itemsEngraved: itemsEngraved ?? 0,
+          },
         })
 
-        // Update cart status so it appears in shipping queue
         if (engravingChunk?.cartId) {
           await prisma.pickCart.update({
             where: { id: engravingChunk.cartId },
             data: { status: 'PICKED_READY' },
           })
         }
+
+        return NextResponse.json({ success: true })
+      }
+
+      // Cancel engraving - only allowed if no items have been engraved yet
+      case 'cancel-engraving': {
+        const { chunkId } = body
+        if (!chunkId) {
+          return NextResponse.json({ error: 'chunkId required' }, { status: 400 })
+        }
+
+        const chunk = await prisma.pickChunk.findUnique({
+          where: { id: chunkId },
+          select: { itemsEngraved: true, cartId: true },
+        })
+        if (!chunk) {
+          return NextResponse.json({ error: 'Chunk not found' }, { status: 404 })
+        }
+        if (chunk.itemsEngraved > 0) {
+          return NextResponse.json({ error: 'Cannot cancel after engraving has started' }, { status: 400 })
+        }
+
+        await prisma.pickChunk.update({
+          where: { id: chunkId },
+          data: {
+            engraverName: null,
+            engraverId: null,
+            engravingStartedAt: null,
+            engravingProgress: null,
+          },
+        })
 
         return NextResponse.json({ success: true })
       }

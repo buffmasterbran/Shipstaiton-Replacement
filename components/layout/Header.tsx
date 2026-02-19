@@ -2,6 +2,7 @@
 
 import type { UserRole } from './MainLayout'
 import type { FilterMode } from '@/context/ExpeditedFilterContext'
+import DateRangePicker from '@/components/shared/DateRangePicker'
 
 interface HeaderProps {
   role: UserRole
@@ -73,7 +74,7 @@ export default function Header({
   setRole,
   expeditedFilter = 'all',
   setExpeditedFilter,
-  personalizedFilter = 'hide',
+  personalizedFilter = 'all',
   setPersonalizedFilter,
   hideExpeditedToggle = false,
   // Legacy props (ignored if new props are provided)
@@ -108,31 +109,12 @@ export default function Header({
     <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
       {/* Date Range Picker + Filter Toggles */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate?.(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-sm text-gray-700"
-          />
-          <span className="text-gray-400 text-sm">–</span>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate?.(e.target.value)}
-            min={startDate || undefined}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-sm text-gray-700"
-          />
-          {(startDate || endDate) && (
-            <button
-              onClick={() => { setStartDate?.(''); setEndDate?.('') }}
-              className="text-gray-400 hover:text-gray-600 text-sm"
-              title="Clear dates"
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <DateRangePicker
+          startDate={startDate}
+          endDate={endDate}
+          onChangeStart={(d) => setStartDate?.(d)}
+          onChangeEnd={(d) => setEndDate?.(d)}
+        />
 
         {/* Expedited Filter Toggle (3-state) */}
         {!hideExpeditedToggle && setExpeditedFilter && (
@@ -156,6 +138,21 @@ export default function Header({
               />
             </svg>
             {getFilterLabel(expeditedFilter, 'expedited')}
+          </button>
+        )}
+
+        {/* Personalized Filter Toggle (3-state) */}
+        {setPersonalizedFilter && (
+          <button
+            type="button"
+            onClick={() => setPersonalizedFilter(cycleFilterMode(personalizedFilter))}
+            className={getFilterButtonClass(personalizedFilter, 'personalized')}
+            title="Click to cycle: All → Personalized Only → Non-Personalized"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+            {getFilterLabel(personalizedFilter, 'personalized')}
           </button>
         )}
 

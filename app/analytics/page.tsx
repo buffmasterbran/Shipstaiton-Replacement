@@ -16,6 +16,13 @@ interface PickingMetrics {
     avgOrdersPerHour: number
     leaderboard: Array<{ name: string; orders: number; avgOrdersPerHour: number }>
   }
+  engraving?: {
+    avgDurationSeconds: number
+    avgItemsPerHour: number
+    avgOrdersPerHour: number
+    totalItemsEngraved: number
+    leaderboard: Array<{ name: string; items: number; orders: number; avgItemsPerHour: number }>
+  }
   shipping: {
     avgDurationSeconds: number
     avgOrdersPerHour: number
@@ -37,6 +44,12 @@ function formatDuration(seconds: number): string {
   const hours = Math.floor(mins / 60)
   const remainingMins = mins % 60
   return `${hours}h ${remainingMins}m`
+}
+
+function formatDurationMMSS(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
 function StatCard({ 
@@ -103,6 +116,50 @@ function Leaderboard({
             </div>
             <div className="text-right font-bold text-gray-700">
               {entry.orders}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function EngravingLeaderboard({ 
+  title, 
+  entries 
+}: { 
+  title: string
+  entries: Array<{ name: string; items: number; orders: number; avgItemsPerHour: number }>
+}) {
+  if (entries.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-4">
+        <h3 className="font-semibold text-gray-900 mb-3">{title}</h3>
+        <p className="text-gray-400 text-sm">No data yet</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-4">
+      <h3 className="font-semibold text-gray-900 mb-3">{title}</h3>
+      <div className="space-y-2">
+        {entries.map((entry, idx) => (
+          <div key={entry.name} className="flex items-center gap-3">
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+              idx === 0 ? 'bg-yellow-100 text-yellow-700' :
+              idx === 1 ? 'bg-gray-100 text-gray-600' :
+              idx === 2 ? 'bg-orange-100 text-orange-700' :
+              'bg-gray-50 text-gray-500'
+            }`}>
+              {idx + 1}
+            </div>
+            <div className="flex-1">
+              <div className="font-medium text-gray-900">{entry.name}</div>
+              <div className="text-xs text-gray-500">{entry.avgItemsPerHour} items/hr</div>
+            </div>
+            <div className="text-right font-bold text-gray-700">
+              {entry.items}
             </div>
           </div>
         ))}
@@ -238,6 +295,37 @@ export default function AnalyticsPage() {
               />
             </div>
           </div>
+
+          {/* Engraving Performance */}
+          {metrics.engraving && metrics.engraving.totalItemsEngraved > 0 && (
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">Engraving Performance</h2>
+              <div className="grid grid-cols-3 gap-4">
+                <StatCard 
+                  title="Avg Cart Engraving Time" 
+                  value={formatDurationMMSS(metrics.engraving.avgDurationSeconds)} 
+                  subtitle="Time per cart"
+                  color="purple"
+                />
+                <StatCard 
+                  title="Items/Hour" 
+                  value={metrics.engraving.avgItemsPerHour} 
+                  subtitle="Primary metric"
+                  color="purple"
+                />
+                <StatCard 
+                  title="Orders/Hour" 
+                  value={metrics.engraving.avgOrdersPerHour} 
+                  subtitle="Order throughput"
+                  color="purple"
+                />
+                <EngravingLeaderboard 
+                  title="Top Engravers" 
+                  entries={metrics.engraving.leaderboard} 
+                />
+              </div>
+            </div>
+          )}
 
           {/* Shipping Performance */}
           <div>

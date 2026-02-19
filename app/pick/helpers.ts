@@ -7,8 +7,7 @@ export function getOrderItems(rawPayload: any): OrderItem[] {
     .filter((item: any) => {
       const sku = (item.sku || '').toUpperCase()
       const name = (item.name || '').toUpperCase()
-      return !sku.includes('ENGRAV') && !name.includes('ENGRAV')
-        && !sku.includes('PERSONAL') && !name.includes('PERSONAL')
+      return !sku.includes('INSURANCE') && !sku.includes('SHIPPING') && !name.includes('INSURANCE')
     })
     .map((item: any) => ({
       sku: item.sku || 'UNKNOWN',

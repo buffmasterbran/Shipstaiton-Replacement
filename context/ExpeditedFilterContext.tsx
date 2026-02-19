@@ -97,7 +97,7 @@ export function shouldShowOrder(
 
 export function ExpeditedFilterProvider({ children }: { children: ReactNode }) {
   const [expeditedFilter, setExpeditedFilter] = useState<FilterMode>('hide') // Default: Shipping: Standard (hide expedited)
-  const [personalizedFilter, setPersonalizedFilter] = useState<FilterMode>('hide') // Default: Non-PERS (hide personalized)
+  const [personalizedFilter, setPersonalizedFilter] = useState<FilterMode>('all') // Default: show all (personalized + non-personalized)
 
   // Persist to localStorage
   useEffect(() => {

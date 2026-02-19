@@ -54,6 +54,8 @@ export interface OrderItem {
   sku: string
   name: string
   quantity: number
+  mockupUrl?: string
+  isPersonalized?: boolean
 }
 
 export interface PrintNodeComputer {

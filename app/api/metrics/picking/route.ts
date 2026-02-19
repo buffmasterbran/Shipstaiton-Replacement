@@ -32,11 +32,15 @@ export async function GET(request: NextRequest) {
         id: true,
         pickerName: true,
         shipperName: true,
+        engraverName: true,
+        isPersonalized: true,
         ordersInChunk: true,
         ordersShipped: true,
         ordersSkipped: true,
+        itemsEngraved: true,
         pickDurationSeconds: true,
         shipDurationSeconds: true,
+        engravingDurationSeconds: true,
         pickingStartedAt: true,
         pickingCompletedAt: true,
         shippingStartedAt: true,
@@ -129,6 +133,53 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.orders - a.orders)
       .slice(0, 10)
 
+    // Engraver leaderboard
+    const engraverStats = new Map<string, { items: number; orders: number; totalSeconds: number }>()
+    let totalItemsEngraved = 0
+    completedChunks.forEach(chunk => {
+      if (chunk.engraverName && chunk.engravingDurationSeconds && chunk.engravingDurationSeconds > 0) {
+        const existing = engraverStats.get(chunk.engraverName) || { items: 0, orders: 0, totalSeconds: 0 }
+        existing.items += chunk.itemsEngraved || 0
+        existing.orders += chunk.ordersInChunk || 0
+        existing.totalSeconds += chunk.engravingDurationSeconds
+        engraverStats.set(chunk.engraverName, existing)
+      }
+      if (chunk.isPersonalized && chunk.itemsEngraved > 0) {
+        totalItemsEngraved += chunk.itemsEngraved
+      }
+    })
+
+    const engraverLeaderboard = Array.from(engraverStats.entries())
+      .map(([name, stats]) => ({
+        name,
+        items: stats.items,
+        orders: stats.orders,
+        avgItemsPerHour: stats.totalSeconds > 0
+          ? Math.round((stats.items / stats.totalSeconds) * 3600)
+          : 0,
+      }))
+      .sort((a, b) => b.items - a.items)
+      .slice(0, 10)
+
+    const engravingDurations = completedChunks
+      .filter(c => c.engravingDurationSeconds != null && c.engravingDurationSeconds > 0)
+      .map(c => c.engravingDurationSeconds!)
+
+    const avgEngravingDuration = engravingDurations.length > 0
+      ? Math.round(engravingDurations.reduce((a, b) => a + b, 0) / engravingDurations.length)
+      : 0
+
+    const engravingTotalSeconds = engravingDurations.reduce((a, b) => a + b, 0)
+    const avgEngravingItemsPerHour = engravingTotalSeconds > 0
+      ? Math.round((totalItemsEngraved / engravingTotalSeconds) * 3600)
+      : 0
+    const engravingOrdersTotal = completedChunks
+      .filter(c => c.engravingDurationSeconds != null && c.engravingDurationSeconds > 0)
+      .reduce((sum, c) => sum + c.ordersInChunk, 0)
+    const avgEngravingOrdersPerHour = engravingTotalSeconds > 0
+      ? Math.round((engravingOrdersTotal / engravingTotalSeconds) * 3600)
+      : 0
+
     // Problem rate (skipped orders / total orders)
     const problemRate = totalOrdersPicked > 0
       ? Math.round((totalOrdersSkipped / totalOrdersPicked) * 100 * 10) / 10
@@ -160,6 +211,7 @@ export async function GET(request: NextRequest) {
         totalOrdersPicked,
         totalOrdersShipped,
         totalOrdersSkipped,
+        totalItemsEngraved,
         problemRate,
       },
       picking: {
@@ -171,6 +223,13 @@ export async function GET(request: NextRequest) {
         avgDurationSeconds: avgShipDuration,
         avgOrdersPerHour: avgShipOrdersPerHour,
         leaderboard: shipperLeaderboard,
+      },
+      engraving: {
+        avgDurationSeconds: avgEngravingDuration,
+        avgItemsPerHour: avgEngravingItemsPerHour,
+        avgOrdersPerHour: avgEngravingOrdersPerHour,
+        totalItemsEngraved,
+        leaderboard: engraverLeaderboard,
       },
       batches: batchCounts,
     })

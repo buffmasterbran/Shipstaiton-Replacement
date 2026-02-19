@@ -23,6 +23,8 @@ export default function GeneralSettingsPage() {
   const [savingSingles, setSavingSingles] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [singlesMessage, setSinglesMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [engravingPauseEnabled, setEngravingPauseEnabled] = useState(false)
+  const [savingPause, setSavingPause] = useState(false)
 
   useEffect(() => {
     fetch('/api/settings')
@@ -30,6 +32,8 @@ export default function GeneralSettingsPage() {
       .then((data) => {
         if (data.order_highlight) setOrderHighlight(data.order_highlight)
         if (data.singles_carrier) setSinglesCarrier(data.singles_carrier)
+        const pauseSetting = (data.settings || []).find((s: any) => s.key === 'engraving_pause_enabled')
+        if (pauseSetting?.value?.enabled) setEngravingPauseEnabled(true)
       })
       .catch(() => {
         setOrderHighlight(null)
@@ -334,6 +338,43 @@ export default function GeneralSettingsPage() {
             To add more mappings, update the SKU_DISPLAY_NAMES constant in SinglesOrdersTable.tsx
           </p>
             </div>
+      </div>
+
+      {/* Engraving Station */}
+      <div className="bg-white rounded-lg shadow p-6 max-w-2xl mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">Engraving Station</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Controls for the engraving station workflow.
+        </p>
+        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+          <div>
+            <span className="text-gray-700 text-sm font-medium">Allow engravers to pause mid-cart</span>
+            <p className="text-xs text-gray-400 mt-0.5">When enabled, a Pause button appears during engraving. Timer stops while paused.</p>
+          </div>
+          <button
+            onClick={async () => {
+              const newValue = !engravingPauseEnabled
+              setSavingPause(true)
+              try {
+                await fetch('/api/settings', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ key: 'engraving_pause_enabled', value: { enabled: newValue } }),
+                })
+                setEngravingPauseEnabled(newValue)
+              } catch {}
+              setSavingPause(false)
+            }}
+            disabled={savingPause}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              engravingPauseEnabled ? 'bg-purple-600' : 'bg-gray-300'
+            } ${savingPause ? 'opacity-50' : ''}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              engravingPauseEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
+        </div>
       </div>
 
       {/* Picking Configuration */}
