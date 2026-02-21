@@ -38,15 +38,22 @@ const UPS_MAP: Omit<ServiceEntry, 'network'>[] = [
 // ─── FedEx mapping ───────────────────────────────────────────────────────────
 
 const FEDEX_MAP: Omit<ServiceEntry, 'network'>[] = [
-  { directCode: 'FEDEX_GROUND',          shipEngineCode: 'fedex_ground',              identity: 'fedex:ground',              name: 'FedEx Ground',              domestic: true, international: false },
-  { directCode: 'GROUND_HOME_DELIVERY',  shipEngineCode: 'fedex_home_delivery',       identity: 'fedex:home_delivery',       name: 'FedEx Home Delivery',       domestic: true, international: false },
-  { directCode: 'FEDEX_EXPRESS_SAVER',   shipEngineCode: 'fedex_express_saver',       identity: 'fedex:express_saver',       name: 'FedEx Express Saver',       domestic: true, international: false },
-  { directCode: 'FEDEX_2_DAY',           shipEngineCode: 'fedex_2day',                identity: 'fedex:2day',                name: 'FedEx 2Day',                domestic: true, international: false },
-  { directCode: 'FEDEX_2_DAY_AM',        shipEngineCode: 'fedex_2day_am',             identity: 'fedex:2day_am',             name: 'FedEx 2Day A.M.',           domestic: true, international: false },
-  { directCode: 'STANDARD_OVERNIGHT',    shipEngineCode: 'fedex_standard_overnight',  identity: 'fedex:standard_overnight',  name: 'FedEx Standard Overnight',  domestic: true, international: false },
-  { directCode: 'PRIORITY_OVERNIGHT',    shipEngineCode: 'fedex_priority_overnight',  identity: 'fedex:priority_overnight',  name: 'FedEx Priority Overnight',  domestic: true, international: false },
-  { directCode: 'FIRST_OVERNIGHT',       shipEngineCode: 'fedex_first_overnight',     identity: 'fedex:first_overnight',     name: 'FedEx First Overnight',     domestic: true, international: false },
-  { directCode: 'FEDEX_GROUND_ECONOMY',  shipEngineCode: 'fedex_ground_economy',      identity: 'fedex:ground_economy',      name: 'FedEx Ground Economy',      domestic: true, international: false },
+  // Domestic
+  { directCode: 'FEDEX_GROUND',                    shipEngineCode: 'fedex_ground',                        identity: 'fedex:ground',                    name: 'FedEx Ground',                       domestic: true,  international: false },
+  { directCode: 'GROUND_HOME_DELIVERY',            shipEngineCode: 'fedex_home_delivery',                 identity: 'fedex:home_delivery',             name: 'FedEx Home Delivery',                domestic: true,  international: false },
+  { directCode: 'FEDEX_EXPRESS_SAVER',             shipEngineCode: 'fedex_express_saver',                 identity: 'fedex:express_saver',             name: 'FedEx Express Saver',                domestic: true,  international: false },
+  { directCode: 'FEDEX_2_DAY',                     shipEngineCode: 'fedex_2day',                          identity: 'fedex:2day',                      name: 'FedEx 2Day',                         domestic: true,  international: false },
+  { directCode: 'FEDEX_2_DAY_AM',                  shipEngineCode: 'fedex_2day_am',                       identity: 'fedex:2day_am',                   name: 'FedEx 2Day A.M.',                    domestic: true,  international: false },
+  { directCode: 'STANDARD_OVERNIGHT',              shipEngineCode: 'fedex_standard_overnight',            identity: 'fedex:standard_overnight',        name: 'FedEx Standard Overnight',           domestic: true,  international: false },
+  { directCode: 'PRIORITY_OVERNIGHT',              shipEngineCode: 'fedex_priority_overnight',            identity: 'fedex:priority_overnight',        name: 'FedEx Priority Overnight',           domestic: true,  international: false },
+  { directCode: 'FIRST_OVERNIGHT',                 shipEngineCode: 'fedex_first_overnight',               identity: 'fedex:first_overnight',           name: 'FedEx First Overnight',              domestic: true,  international: false },
+  { directCode: 'FEDEX_GROUND_ECONOMY',            shipEngineCode: 'fedex_ground_economy',                identity: 'fedex:ground_economy',            name: 'FedEx Ground Economy',               domestic: true,  international: false },
+  // International
+  { directCode: 'INTERNATIONAL_ECONOMY',           shipEngineCode: 'fedex_international_economy',         identity: 'fedex:intl_economy',              name: 'FedEx International Economy',        domestic: false, international: true },
+  { directCode: 'INTERNATIONAL_PRIORITY',          shipEngineCode: 'fedex_international_priority',        identity: 'fedex:intl_priority',             name: 'FedEx International Priority',       domestic: false, international: true },
+  { directCode: 'INTERNATIONAL_FIRST',             shipEngineCode: 'fedex_international_first',           identity: 'fedex:intl_first',                name: 'FedEx International First',          domestic: false, international: true },
+  { directCode: 'FEDEX_INTERNATIONAL_GROUND',      shipEngineCode: 'fedex_international_ground',          identity: 'fedex:intl_ground',               name: 'FedEx International Ground',         domestic: false, international: true },
+  { directCode: 'INTERNATIONAL_PRIORITY_EXPRESS',   shipEngineCode: 'fedex_international_priority_express', identity: 'fedex:intl_priority_express',    name: 'FedEx International Priority Express', domestic: false, international: true },
 ]
 
 // ─── Indexes ─────────────────────────────────────────────────────────────────

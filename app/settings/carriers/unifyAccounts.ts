@@ -154,15 +154,13 @@ function buildUnifiedServices(
 ): UnifiedService[] {
   const serviceMap = new Map<string, UnifiedService>()
 
-  // Add Direct services (from enabled list, or full catalog if no enabled list)
+  // Add all Direct services from the full catalog.
+  // Service selection is managed at the app level via selected_services,
+  // not at the connection level via enabledServices (legacy).
   if (directConn && (network === 'ups' || network === 'fedex')) {
     const catalog = DIRECT_SERVICE_CATALOG[network]
-    const enabledSet = new Set(directConn.enabledServices || [])
-    const useEnabled = enabledSet.size > 0
 
     for (const svc of catalog) {
-      if (useEnabled && !enabledSet.has(svc.code)) continue
-
       const identity = getServiceIdentity(
         network === 'ups' ? `ups-direct:${svc.code}` : `fedex-direct:${svc.code}`,
       )

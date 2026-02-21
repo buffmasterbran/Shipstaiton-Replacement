@@ -829,30 +829,24 @@ export async function getDirectCarrierServices(): Promise<Array<{
 
   const upsConns: StoredConnection[] = Array.isArray(connections.ups) ? connections.ups : []
   for (const conn of upsConns) {
-    if (conn.status !== 'connected' || !conn.enabledServices?.length) continue
+    if (conn.status !== 'connected') continue
     result.push({
       carrierId: conn.id,
       carrierCode: 'ups-direct',
       carrierName: `UPS Direct - ${conn.nickname}`,
-      services: conn.enabledServices.map(code => {
-        const svc = UPS_SERVICES.find(s => s.code === code)
-        return { code, name: svc?.name || `UPS ${code}` }
-      }),
+      services: UPS_SERVICES.map(svc => ({ code: svc.code, name: svc.name })),
       connection: conn,
     })
   }
 
   const fedexConns: StoredConnection[] = Array.isArray(connections.fedex) ? connections.fedex : []
   for (const conn of fedexConns) {
-    if (conn.status !== 'connected' || !conn.enabledServices?.length) continue
+    if (conn.status !== 'connected') continue
     result.push({
       carrierId: conn.id,
       carrierCode: 'fedex-direct',
       carrierName: `FedEx Direct - ${conn.nickname}`,
-      services: conn.enabledServices.map(code => {
-        const svc = FEDEX_SERVICES.find(s => s.code === code)
-        return { code, name: svc?.name || `FedEx ${code}` }
-      }),
+      services: FEDEX_SERVICES.map(svc => ({ code: svc.code, name: svc.name })),
       connection: conn,
     })
   }

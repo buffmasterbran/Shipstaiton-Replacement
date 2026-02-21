@@ -27,6 +27,7 @@ interface TokenCacheEntry {
 // ─── FedEx Service Catalog (domestic only, no LTL) ──────────────────────────
 
 export const FEDEX_SERVICES = [
+  // Domestic
   { code: 'FEDEX_GROUND', name: 'FedEx Ground', domestic: true, international: false },
   { code: 'GROUND_HOME_DELIVERY', name: 'FedEx Home Delivery', domestic: true, international: false },
   { code: 'FEDEX_EXPRESS_SAVER', name: 'FedEx Express Saver', domestic: true, international: false },
@@ -36,6 +37,12 @@ export const FEDEX_SERVICES = [
   { code: 'PRIORITY_OVERNIGHT', name: 'FedEx Priority Overnight', domestic: true, international: false },
   { code: 'FIRST_OVERNIGHT', name: 'FedEx First Overnight', domestic: true, international: false },
   { code: 'FEDEX_GROUND_ECONOMY', name: 'FedEx Ground Economy', domestic: true, international: false },
+  // International
+  { code: 'INTERNATIONAL_ECONOMY', name: 'FedEx International Economy', domestic: false, international: true },
+  { code: 'INTERNATIONAL_PRIORITY', name: 'FedEx International Priority', domestic: false, international: true },
+  { code: 'INTERNATIONAL_FIRST', name: 'FedEx International First', domestic: false, international: true },
+  { code: 'FEDEX_INTERNATIONAL_GROUND', name: 'FedEx International Ground', domestic: false, international: true },
+  { code: 'INTERNATIONAL_PRIORITY_EXPRESS', name: 'FedEx International Priority Express', domestic: false, international: true },
 ] as const
 
 export type FedExServiceCode = typeof FEDEX_SERVICES[number]['code']
