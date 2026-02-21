@@ -1,15 +1,19 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { ShipEngineCarrier, CarrierService, CarrierTab } from './types'
-import {
-  classifyCarriers,
-  getServiceBreakdown,
-  getBillingLabel,
-  getCarrierIcon,
-} from './helpers'
+import type {
+  ShipEngineCarrier,
+  DirectConnections,
+  UnifiedAccount,
+  UnifiedService,
+  CarrierTab,
+} from './types'
+import { unifyAccounts } from './unifyAccounts'
+import AccountTab from './AccountTab'
 import ConnectCarrierModal from './ConnectCarrierModal'
 import CarrierSettingsModal from './CarrierSettingsModal'
+
+// ─── Selected service format (persisted to AppSetting) ───────────────────────
 
 interface SelectedService {
   carrierId: string
@@ -20,17 +24,25 @@ interface SelectedService {
   accountNickname?: string | null
   domestic?: boolean
   international?: boolean
+  // Unified routing fields
+  identity?: string
+  directConnectionId?: string
+  directCode?: string
+  fallbackCarrierId?: string
+  fallbackServiceCode?: string
+  fallbackCarrierCode?: string
 }
 
-const serviceKey = (carrierId: string, serviceCode: string, domestic: boolean, international: boolean) =>
-  `${carrierId}:${serviceCode}:${domestic ? 'd' : ''}${international ? 'i' : ''}`
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function CarriersPage() {
   const [carriers, setCarriers] = useState<ShipEngineCarrier[]>([])
+  const [directConnections, setDirectConnections] = useState<DirectConnections>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<CarrierTab>('our-accounts')
-  const [expandedCarrier, setExpandedCarrier] = useState<string | null>(null)
+
+  const [accounts, setAccounts] = useState<UnifiedAccount[]>([])
+  const [activeTab, setActiveTab] = useState<CarrierTab>('')
 
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([])
   const [savedServices, setSavedServices] = useState<SelectedService[]>([])
@@ -39,70 +51,40 @@ export default function CarriersPage() {
   const [settingsCarrier, setSettingsCarrier] = useState<ShipEngineCarrier | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
 
+  const [showHelper, setShowHelper] = useState(false)
+  const [globalEStatus, setGlobalEStatus] = useState<{ configured: boolean; guidPrefix: string | null } | null>(null)
+  const [showGlobalEPopover, setShowGlobalEPopover] = useState(false)
+
   const hasChanges = JSON.stringify(selectedServices) !== JSON.stringify(savedServices)
 
-  useEffect(() => {
-    fetchCarriers()
-    fetchSelectedServices()
-  }, [])
+  // ── Data loading ─────────────────────────────────────────────────────────
 
-  // Auto-merge nicknames + domestic/international flags from ShipEngine carrier data
-  useEffect(() => {
-    if (carriers.length === 0 || savedServices.length === 0) return
-    const nicknameMap = new Map<string, string | null>()
-    const scopeMap = new Map<string, { domestic: boolean; international: boolean }>()
-    for (const c of carriers) {
-      nicknameMap.set(c.carrier_id, c.nickname || null)
-      if (c.services) {
-        for (const svc of c.services) {
-          scopeMap.set(`${c.carrier_id}:${svc.service_code}`, { domestic: svc.domestic, international: svc.international })
-        }
-      }
-    }
-    let needsUpdate = false
-    const merged = savedServices.map(svc => {
-      let updated = svc
-      const nickname = nicknameMap.get(svc.carrierId)
-      if (nickname !== undefined && svc.accountNickname !== nickname) {
-        needsUpdate = true
-        updated = { ...updated, accountNickname: nickname }
-      }
-      const scope = scopeMap.get(`${svc.carrierId}:${svc.serviceCode}`)
-      if (scope && (svc.domestic !== scope.domestic || svc.international !== scope.international)) {
-        needsUpdate = true
-        updated = { ...updated, domestic: scope.domestic, international: scope.international }
-      }
-      return updated
-    })
-    if (needsUpdate) {
-      setSelectedServices(merged)
-      setSavedServices(merged)
-      fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'selected_services', value: { services: merged } }),
-      }).catch(err => console.error('Auto-save merge failed:', err))
-    }
-  }, [carriers, savedServices])
-
-  const fetchCarriers = async () => {
+  const fetchCarriers = useCallback(async () => {
     try {
-      setLoading(true)
-      setError(null)
       const response = await fetch('/api/shipengine/carriers?includeServices=true')
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to fetch carriers')
-      setCarriers(data.carriers || [])
+      return data.carriers || []
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to load carriers'
       console.error('Error fetching carriers:', err)
       setError(message)
-    } finally {
-      setLoading(false)
+      return []
     }
-  }
+  }, [])
 
-  const fetchSelectedServices = async () => {
+  const fetchDirectConnections = useCallback(async () => {
+    try {
+      const response = await fetch('/api/carriers/direct')
+      const data = await response.json()
+      return data.connections || {}
+    } catch (err) {
+      console.error('Error fetching direct connections:', err)
+      return {}
+    }
+  }, [])
+
+  const fetchSelectedServices = useCallback(async () => {
     try {
       const response = await fetch('/api/settings')
       const data = await response.json()
@@ -116,7 +98,52 @@ export default function CarriersPage() {
     } catch (err) {
       console.error('Error fetching selected services:', err)
     }
-  }
+  }, [])
+
+  const fetchGlobalEStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/carriers/global-e/status')
+      const data = await res.json()
+      setGlobalEStatus(data)
+    } catch {
+      setGlobalEStatus({ configured: false, guidPrefix: null })
+    }
+  }, [])
+
+  const loadAll = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const [seCarriers, dConns] = await Promise.all([
+      fetchCarriers(),
+      fetchDirectConnections(),
+    ])
+    fetchGlobalEStatus()
+    setCarriers(seCarriers)
+    setDirectConnections(dConns)
+    const unified = unifyAccounts(seCarriers, dConns)
+    setAccounts(unified)
+    if (unified.length > 0 && !activeTab) {
+      setActiveTab(unified[0].id)
+    }
+    setLoading(false)
+  }, [fetchCarriers, fetchDirectConnections, activeTab])
+
+  useEffect(() => {
+    loadAll()
+    fetchSelectedServices()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-unify when carriers or direct connections change
+  useEffect(() => {
+    const unified = unifyAccounts(carriers, directConnections)
+    setAccounts(unified)
+    // If active tab was removed, select first
+    if (unified.length > 0 && !unified.find(a => a.id === activeTab)) {
+      setActiveTab(unified[0].id)
+    }
+  }, [carriers, directConnections]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Save ───────────────────────────────────────────────────────────────
 
   const saveSelection = async () => {
     try {
@@ -139,93 +166,137 @@ export default function CarriersPage() {
     }
   }
 
-  const disconnectCarrier = async (carrierId: string, carrierCode: string) => {
+  // ── Service toggle / select helpers ────────────────────────────────────
+
+  const selectedIdentitiesForAccount = useCallback(
+    (account: UnifiedAccount): Set<string> => {
+      const set = new Set<string>()
+      for (const svc of selectedServices) {
+        if (svc.identity) set.add(svc.identity)
+      }
+      return set
+    },
+    [selectedServices],
+  )
+
+  const buildSelectedService = (account: UnifiedAccount, svc: UnifiedService): SelectedService => {
+    const preferDirect = svc.paths.includes('direct') && svc.directConnectionId && svc.directCode
+    const carrierNetworkUpper = account.carrierNetwork.toUpperCase()
+
+    if (preferDirect) {
+      // Direct is primary; ShipEngine is fallback
+      return {
+        carrierId: svc.directConnectionId!,
+        carrierCode: `${account.carrierNetwork}-direct`,
+        carrierName: `${carrierNetworkUpper} Direct - ${account.direct?.nickname || account.nickname}`,
+        serviceCode: `${account.carrierNetwork}-direct:${svc.directCode}`,
+        serviceName: svc.displayName,
+        accountNickname: account.direct?.nickname || account.nickname,
+        domestic: svc.domestic,
+        international: svc.international,
+        identity: svc.identity,
+        directConnectionId: svc.directConnectionId,
+        directCode: svc.directCode,
+        fallbackCarrierId: svc.shipEngineCarrierId || undefined,
+        fallbackServiceCode: svc.shipEngineServiceCode || undefined,
+        fallbackCarrierCode: svc.shipEngineCarrierCode || account.shipEngine?.carrier_code || undefined,
+      }
+    }
+
+    // ShipEngine only
+    return {
+      carrierId: svc.shipEngineCarrierId || '',
+      carrierCode: svc.shipEngineCarrierCode || account.shipEngine?.carrier_code || account.carrierNetwork,
+      carrierName: svc.shipEngineCarrierName || account.shipEngine?.friendly_name || account.nickname,
+      serviceCode: svc.shipEngineServiceCode || '',
+      serviceName: svc.displayName,
+      accountNickname: svc.shipEngineCarrierName || account.shipEngine?.nickname || account.nickname,
+      domestic: svc.domestic,
+      international: svc.international,
+      identity: svc.identity,
+    }
+  }
+
+  const toggleServiceForAccount = (account: UnifiedAccount, svc: UnifiedService) => {
+    setSelectedServices(prev => {
+      const exists = prev.some(s => s.identity === svc.identity)
+      if (exists) {
+        return prev.filter(s => s.identity !== svc.identity)
+      }
+      return [...prev, buildSelectedService(account, svc)]
+    })
+  }
+
+  const selectAllForAccount = (account: UnifiedAccount) => {
+    setSelectedServices(prev => {
+      const otherIdentities = new Set(account.services.map(s => s.identity))
+      const withoutAccount = prev.filter(s => !s.identity || !otherIdentities.has(s.identity))
+      const allNew = account.services.map(svc => buildSelectedService(account, svc))
+      return [...withoutAccount, ...allNew]
+    })
+  }
+
+  const deselectAllForAccount = (account: UnifiedAccount) => {
+    const identities = new Set(account.services.map(s => s.identity))
+    setSelectedServices(prev => prev.filter(s => !s.identity || !identities.has(s.identity)))
+  }
+
+  const batchSelectForAccount = (account: UnifiedAccount, svcs: UnifiedService[]) => {
+    setSelectedServices(prev => {
+      const existingIds = new Set(prev.map(s => s.identity).filter(Boolean))
+      const newEntries = svcs
+        .filter(svc => !existingIds.has(svc.identity))
+        .map(svc => buildSelectedService(account, svc))
+      return [...prev, ...newEntries]
+    })
+  }
+
+  const batchDeselectIdentities = (identities: string[]) => {
+    const idSet = new Set(identities)
+    setSelectedServices(prev => prev.filter(s => !s.identity || !idSet.has(s.identity)))
+  }
+
+  // ── Carrier management callbacks ───────────────────────────────────────
+
+  const handleDirectConnectionUpdated = useCallback(async () => {
+    const dConns = await fetchDirectConnections()
+    setDirectConnections(dConns)
+  }, [fetchDirectConnections])
+
+  const handleDisconnectShipEngine = useCallback(async (carrierId: string, carrierCode: string) => {
     if (!confirm('Are you sure you want to disconnect this carrier? This cannot be undone.')) return
     try {
       setDisconnecting(carrierId)
       const response = await fetch(
         `/api/shipengine/carriers/connect?carrier_name=${carrierCode}&carrier_id=${carrierId}`,
-        { method: 'DELETE' }
+        { method: 'DELETE' },
       )
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to disconnect')
-      // Remove from selected services and refresh
-      setSelectedServices((prev) => prev.filter((s) => s.carrierId !== carrierId))
-      setSavedServices((prev) => prev.filter((s) => s.carrierId !== carrierId))
-      await fetchCarriers()
+      // Remove services for this carrier and refresh
+      setSelectedServices(prev => prev.filter(s => s.carrierId !== carrierId))
+      setSavedServices(prev => prev.filter(s => s.carrierId !== carrierId))
+      const seCarriers = await fetchCarriers()
+      setCarriers(seCarriers)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to disconnect'
       alert(message)
     } finally {
       setDisconnecting(null)
     }
+  }, [fetchCarriers])
+
+  const handleRefresh = async () => {
+    await loadAll()
   }
 
-  const isSelected = useCallback(
-    (carrierId: string, serviceCode: string, domestic: boolean, international: boolean) => {
-      return selectedServices.some((s) => {
-        if (s.carrierId !== carrierId || s.serviceCode !== serviceCode) return false
-        if (s.domestic !== undefined) return s.domestic === domestic && s.international === international
-        return true
-      })
-    },
-    [selectedServices]
-  )
+  // ── Active account ─────────────────────────────────────────────────────
 
-  const toggleService = (carrier: ShipEngineCarrier, service: CarrierService) => {
-    const key = serviceKey(carrier.carrier_id, service.service_code, service.domestic, service.international)
-    setSelectedServices((prev) => {
-      const exists = prev.some(
-        (s) => serviceKey(s.carrierId, s.serviceCode, !!s.domestic, !!s.international) === key
-      )
-      if (exists) {
-        return prev.filter(
-          (s) => serviceKey(s.carrierId, s.serviceCode, !!s.domestic, !!s.international) !== key
-        )
-      }
-      return [
-        ...prev,
-        {
-          carrierId: carrier.carrier_id,
-          carrierCode: carrier.carrier_code,
-          carrierName: carrier.friendly_name,
-          accountNickname: carrier.nickname || null,
-          serviceCode: service.service_code,
-          serviceName: service.name,
-          domestic: service.domestic,
-          international: service.international,
-        },
-      ]
-    })
-  }
+  const activeAccount = accounts.find(a => a.id === activeTab)
+  const normalAccounts = accounts.filter(a => !a.isMarketplace)
+  const marketplaceAccounts = accounts.filter(a => a.isMarketplace)
 
-  const selectAllForCarrier = (carrier: ShipEngineCarrier) => {
-    if (!carrier.services) return
-    setSelectedServices((prev) => {
-      const withoutCarrier = prev.filter((s) => s.carrierId !== carrier.carrier_id)
-      const all = carrier.services!.map((svc) => ({
-        carrierId: carrier.carrier_id,
-        carrierCode: carrier.carrier_code,
-        carrierName: carrier.friendly_name,
-        accountNickname: carrier.nickname || null,
-        serviceCode: svc.service_code,
-        serviceName: svc.name,
-        domestic: svc.domestic,
-        international: svc.international,
-      }))
-      return [...withoutCarrier, ...all]
-    })
-  }
-
-  const deselectAllForCarrier = (carrierId: string) => {
-    setSelectedServices((prev) => prev.filter((s) => s.carrierId !== carrierId))
-  }
-
-  const selectedCountForCarrier = (carrierId: string) =>
-    selectedServices.filter((s) => s.carrierId === carrierId).length
-
-  const { own, managed } = classifyCarriers(carriers)
-  const displayedCarriers = activeTab === 'our-accounts' ? own : managed
+  // ── RENDER ─────────────────────────────────────────────────────────────
 
   return (
     <div className="p-8">
@@ -237,8 +308,62 @@ export default function CarriersPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {globalEStatus && (
+            <div className="relative">
+              <button
+                onClick={() => setShowGlobalEPopover(!showGlobalEPopover)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                  globalEStatus.configured
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    : 'border-gray-300 bg-gray-50 text-gray-500 hover:bg-gray-100'
+                }`}
+              >
+                <span>🌍</span>
+                Global-E
+                <span className={`w-1.5 h-1.5 rounded-full ${globalEStatus.configured ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+              </button>
+              {showGlobalEPopover && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowGlobalEPopover(false)} />
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-50">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                        <span>🌍</span> Global-E
+                      </h4>
+                      {globalEStatus.configured ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Configured
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600">
+                          Not Configured
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      International shipping partner &amp; merchant of record. Handles duties, taxes, and label generation for international orders.
+                    </p>
+                    {globalEStatus.configured && globalEStatus.guidPrefix && (
+                      <div className="mt-2 flex items-center gap-2 text-xs">
+                        <span className="text-gray-500">GUID:</span>
+                        <span className="font-mono text-gray-700">{globalEStatus.guidPrefix}</span>
+                      </div>
+                    )}
+                    {!globalEStatus.configured && (
+                      <p className="mt-2 text-[10px] text-gray-400">
+                        Set <code className="bg-gray-100 px-1 rounded">GLOBAL_E_GUID</code> in environment variables to enable.
+                      </p>
+                    )}
+                    <p className="mt-2 text-[10px] text-amber-600 font-medium">
+                      Not yet tested — awaiting first international order
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <button
-            onClick={fetchCarriers}
+            onClick={handleRefresh}
             disabled={loading}
             className="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50 text-sm"
           >
@@ -251,6 +376,51 @@ export default function CarriersPage() {
             + Add Carrier Account
           </button>
         </div>
+      </div>
+
+      {/* Connection types helper */}
+      <div className="mb-4">
+        <button
+          onClick={() => setShowHelper(!showHelper)}
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          {showHelper ? 'Hide' : 'What do'} Direct, ShipEngine Connected, and ShipEngine Funded mean?
+        </button>
+        {showHelper && (
+          <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-100 text-amber-800">Direct</span>
+                <span className="text-xs font-semibold text-gray-800">Direct API</span>
+              </div>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Your carrier credentials hit the carrier API directly (UPS, FedEx). No middleman, no per-label fees.
+                Best rates and full control. Requires API credentials from the carrier developer portal.
+              </p>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-100 text-blue-800">ShipEngine</span>
+                <span className="text-xs font-semibold text-gray-800">Connected Account</span>
+              </div>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Your own carrier account connected through ShipEngine. Labels bill to your carrier account,
+                but ShipEngine charges a small per-label fee (~$0.05). Easy setup, no API credentials needed.
+              </p>
+            </div>
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-purple-100 text-purple-800">Funded</span>
+                <span className="text-xs font-semibold text-gray-800">ShipEngine Funded</span>
+              </div>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Carrier accounts owned and billed by ShipEngine / ShipStation. Postage is deducted from your
+                wallet balance. Typically used for USPS and discounted marketplace rates.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Selection summary bar */}
@@ -278,114 +448,97 @@ export default function CarriersPage() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Account-based Tabs */}
       <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => setActiveTab('our-accounts')}
-            className={`py-3 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'our-accounts'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Our Accounts
-            <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-              activeTab === 'our-accounts' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-            }`}>
-              {own.length}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('shipengine')}
-            className={`py-3 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'shipengine'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            ShipEngine
-            <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-              activeTab === 'shipengine' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-            }`}>
-              {managed.length}
-            </span>
-          </button>
+        <nav className="-mb-px flex space-x-6 overflow-x-auto">
+          {normalAccounts.map(acct => (
+            <button
+              key={acct.id}
+              onClick={() => setActiveTab(acct.id)}
+              className={`py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap flex items-center gap-2 ${
+                activeTab === acct.id
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <span>{acct.icon}</span>
+              <span>{acct.nickname}</span>
+              {acct.direct && acct.shipEngine && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-green-100 text-green-700">2 paths</span>
+              )}
+            </button>
+          ))}
+          {marketplaceAccounts.length > 0 && (
+            <>
+              <div className="border-l border-gray-300 mx-2 self-stretch" />
+              {marketplaceAccounts.map(acct => (
+                <button
+                  key={acct.id}
+                  onClick={() => setActiveTab(acct.id)}
+                  className={`py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap flex items-center gap-2 ${
+                    activeTab === acct.id
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <span>{acct.icon}</span>
+                  <span>{acct.nickname}</span>
+                </button>
+              ))}
+            </>
+          )}
         </nav>
       </div>
 
-      {/* Content */}
+      {/* Tab Content */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="text-gray-500">Loading carriers from ShipEngine...</div>
+          <div className="text-gray-500">Loading carriers...</div>
         </div>
       ) : error ? (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-800 font-semibold">Error loading carriers</p>
           <p className="text-red-600 text-sm mt-1">{error}</p>
+          <button onClick={handleRefresh} className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm">Retry</button>
+        </div>
+      ) : accounts.length === 0 ? (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-12 text-center">
+          <p className="text-gray-500 text-lg">No carrier accounts found</p>
+          <p className="text-gray-400 text-sm mt-1">Connect a carrier via ShipEngine or add a Direct connection</p>
           <button
-            onClick={fetchCarriers}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm"
+            onClick={() => setShowConnectModal(true)}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
           >
-            Retry
+            Connect a Carrier Account
           </button>
         </div>
-      ) : displayedCarriers.length === 0 ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-12 text-center">
-          <p className="text-gray-500 text-lg">
-            {activeTab === 'our-accounts'
-              ? 'No direct carrier accounts found'
-              : 'No ShipEngine-managed carriers found'}
-          </p>
-          {activeTab === 'our-accounts' && (
-            <button
-              onClick={() => setShowConnectModal(true)}
-              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
-            >
-              Connect a Carrier Account
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {displayedCarriers.map((carrier) => (
-            <CarrierCard
-              key={carrier.carrier_id}
-              carrier={carrier}
-              expanded={expandedCarrier === carrier.carrier_id}
-              onToggle={() =>
-                setExpandedCarrier(
-                  expandedCarrier === carrier.carrier_id ? null : carrier.carrier_id
-                )
-              }
-              selectedCount={selectedCountForCarrier(carrier.carrier_id)}
-              isServiceSelected={isSelected}
-              onToggleService={toggleService}
-              onSelectAll={selectAllForCarrier}
-              onDeselectAll={deselectAllForCarrier}
-              onDisconnect={disconnectCarrier}
-              isDisconnecting={disconnecting === carrier.carrier_id}
-              onOpenSettings={() => setSettingsCarrier(carrier)}
-            />
-          ))}
-        </div>
-      )}
+      ) : activeAccount ? (
+        <AccountTab
+          key={activeAccount.id}
+          account={activeAccount}
+          selectedIdentities={selectedIdentitiesForAccount(activeAccount)}
+          onToggleService={(svc) => toggleServiceForAccount(activeAccount, svc)}
+          onBatchSelect={(svcs) => batchSelectForAccount(activeAccount, svcs)}
+          onBatchDeselect={(ids) => batchDeselectIdentities(ids)}
+          onSelectAll={() => selectAllForAccount(activeAccount)}
+          onDeselectAll={() => deselectAllForAccount(activeAccount)}
+          onDirectConnectionUpdated={handleDirectConnectionUpdated}
+          onDisconnectShipEngine={!activeAccount.isMarketplace ? handleDisconnectShipEngine : undefined}
+        />
+      ) : null}
 
       {/* Connect Carrier Modal */}
       <ConnectCarrierModal
         open={showConnectModal}
         onClose={() => setShowConnectModal(false)}
-        onSuccess={() => {
-          fetchCarriers()
-          fetchSelectedServices()
-        }}
+        onSuccess={() => { loadAll(); fetchSelectedServices() }}
       />
 
       {/* Carrier Settings Modal */}
       <CarrierSettingsModal
         carrier={settingsCarrier}
         onClose={() => setSettingsCarrier(null)}
-        onSaved={() => fetchCarriers()}
+        onSaved={() => loadAll()}
       />
 
       {/* Sticky save bar */}
@@ -397,9 +550,7 @@ export default function CarriersPage() {
             </span>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => {
-                  setSelectedServices([...savedServices])
-                }}
+                onClick={() => setSelectedServices([...savedServices])}
                 className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
               >
                 Discard
@@ -412,269 +563,6 @@ export default function CarriersPage() {
                 {saving ? 'Saving...' : 'Save Selection'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-
-const CarrierCard = ({
-  carrier,
-  expanded,
-  onToggle,
-  selectedCount,
-  isServiceSelected,
-  onToggleService,
-  onSelectAll,
-  onDeselectAll,
-  onDisconnect,
-  isDisconnecting,
-  onOpenSettings,
-}: {
-  carrier: ShipEngineCarrier
-  expanded: boolean
-  onToggle: () => void
-  selectedCount: number
-  isServiceSelected: (carrierId: string, serviceCode: string, domestic: boolean, international: boolean) => boolean
-  onToggleService: (carrier: ShipEngineCarrier, service: CarrierService) => void
-  onSelectAll: (carrier: ShipEngineCarrier) => void
-  onDeselectAll: (carrierId: string) => void
-  onDisconnect: (carrierId: string, carrierCode: string) => void
-  isDisconnecting: boolean
-  onOpenSettings: () => void
-}) => {
-  const [serviceFilter, setServiceFilter] = useState<'all' | 'domestic' | 'international'>('all')
-  const [jsonService, setJsonService] = useState<CarrierService | null>(null)
-  const breakdown = getServiceBreakdown(carrier.services)
-  const billing = getBillingLabel(carrier)
-  const icon = getCarrierIcon(carrier.carrier_code)
-  const allSelected = breakdown.total > 0 && selectedCount === breakdown.total
-
-  const filteredServices = (carrier.services || []).filter((s) => {
-    if (serviceFilter === 'domestic') return s.domestic
-    if (serviceFilter === 'international') return s.international
-    return true
-  })
-
-  return (
-    <div className={`bg-white border-2 rounded-lg shadow-sm overflow-hidden transition-colors ${
-      selectedCount > 0 ? 'border-green-400' : 'border-gray-200'
-    }`}>
-      {/* Header */}
-      <div
-        className="p-5 cursor-pointer hover:bg-gray-50 transition-colors"
-        onClick={onToggle}
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <span className="text-2xl">{icon}</span>
-            <div>
-              <div className="flex items-center gap-3">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {carrier.friendly_name}
-                </h2>
-                {carrier.nickname && carrier.nickname !== carrier.friendly_name && (
-                  <span className="text-sm text-gray-500">({carrier.nickname})</span>
-                )}
-                {selectedCount > 0 && (
-                  <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs font-semibold rounded-full">
-                    {selectedCount}/{breakdown.total} selected
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5">
-                <span className="text-sm text-gray-500 font-mono">
-                  {carrier.carrier_id}
-                </span>
-                {carrier.account_number && (
-                  <span className="text-sm text-gray-500">
-                    Acct: <span className="font-mono">{carrier.account_number}</span>
-                  </span>
-                )}
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
-                    billing === 'Direct Account'
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  {billing}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-sm font-medium text-gray-900">
-                {breakdown.total} services
-              </div>
-              <div className="text-xs text-gray-500">
-                {breakdown.domestic} domestic · {breakdown.international} intl
-              </div>
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenSettings()
-              }}
-              className="px-2.5 py-1 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors"
-              title="Carrier settings"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onDisconnect(carrier.carrier_id, carrier.carrier_code)
-              }}
-              disabled={isDisconnecting}
-              className="px-2.5 py-1 text-xs text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-              title="Disconnect this carrier"
-            >
-              {isDisconnecting ? '...' : 'Disconnect'}
-            </button>
-            <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${
-                expanded ? 'rotate-180' : ''
-              }`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
-        </div>
-      </div>
-
-      {/* Expanded service list with checkboxes */}
-      {expanded && (
-        <div className="border-t border-gray-200 bg-gray-50 px-5 py-4">
-          {carrier.services && carrier.services.length > 0 ? (
-            <>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-gray-700">
-                  Select Services ({selectedCount}/{breakdown.total})
-                </h3>
-                <div className="flex items-center gap-3">
-                  {/* Filter toggle */}
-                  <div className="inline-flex rounded-md border border-gray-300 bg-white text-xs">
-                    {([
-                      { key: 'all' as const, label: 'All', count: breakdown.total },
-                      { key: 'domestic' as const, label: 'Domestic', count: breakdown.domestic },
-                      { key: 'international' as const, label: 'Intl', count: breakdown.international },
-                    ]).map((f) => (
-                      <button
-                        key={f.key}
-                        onClick={(e) => { e.stopPropagation(); setServiceFilter(f.key) }}
-                        className={`px-2.5 py-1 font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
-                          serviceFilter === f.key
-                            ? 'bg-blue-600 text-white'
-                            : 'text-gray-600 hover:bg-gray-100'
-                        }`}
-                      >
-                        {f.label} ({f.count})
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); allSelected ? onDeselectAll(carrier.carrier_id) : onSelectAll(carrier) }}
-                    className="text-xs font-medium text-blue-600 hover:text-blue-800"
-                  >
-                    {allSelected ? 'Deselect All' : 'Select All'}
-                  </button>
-                </div>
-              </div>
-              {filteredServices.length === 0 ? (
-                <p className="text-sm text-gray-500 py-4 text-center">
-                  No {serviceFilter} services for this carrier.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                  {filteredServices.map((service) => {
-                    const checked = isServiceSelected(carrier.carrier_id, service.service_code, service.domestic, service.international)
-                    return (
-                      <div
-                        key={`${service.service_code}-${service.domestic ? 'dom' : 'intl'}`}
-                        onClick={() => onToggleService(carrier, service)}
-                        className={`flex items-center gap-3 bg-white rounded border-2 px-3 py-2.5 cursor-pointer transition-colors ${
-                          checked
-                            ? 'border-green-400 bg-green-50'
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          readOnly
-                          className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500 cursor-pointer shrink-0"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium text-gray-900 truncate">
-                            {service.name}
-                          </div>
-                          <div className="text-xs text-gray-400 font-mono truncate">
-                            {service.service_code}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {service.domestic && (
-                            <span className="w-2 h-2 rounded-full bg-green-400" title="Domestic" />
-                          )}
-                          {service.international && (
-                            <span className="w-2 h-2 rounded-full bg-blue-400" title="International" />
-                          )}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setJsonService(service) }}
-                            className="ml-1 px-1.5 py-0.5 text-[10px] font-mono text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                            title="View JSON"
-                          >
-                            {'{ }'}
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-gray-500 py-2">
-              No services loaded for this carrier.
-            </p>
-          )}
-        </div>
-      )}
-
-      {jsonService && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => setJsonService(null)}
-        >
-          <div
-            className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h3 className="text-sm font-semibold text-gray-800">{jsonService.name}</h3>
-              <button
-                onClick={() => setJsonService(null)}
-                className="text-gray-400 hover:text-gray-600 text-lg leading-none"
-              >
-                &times;
-              </button>
-            </div>
-            <pre className="p-4 text-xs font-mono text-gray-700 bg-gray-50 overflow-auto max-h-[60vh]">
-              {JSON.stringify(jsonService, null, 2)}
-            </pre>
           </div>
         </div>
       )}

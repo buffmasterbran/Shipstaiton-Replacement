@@ -34,4 +34,53 @@ export interface ClassifiedCarriers {
   managed: ShipEngineCarrier[]
 }
 
-export type CarrierTab = 'our-accounts' | 'shipengine'
+export type CarrierTab = string
+
+// ─── Unified Account types ───────────────────────────────────────────────────
+
+export type CarrierNetwork = 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
+
+export interface UnifiedService {
+  identity: string                    // normalised key, e.g. "ups:ground"
+  displayName: string
+  domestic: boolean
+  international: boolean
+  directCode?: string                 // raw Direct code, e.g. "03"
+  directConnectionId?: string         // UUID of the Direct connection
+  shipEngineServiceCode?: string      // e.g. "ups_ground"
+  shipEngineCarrierId?: string        // ShipEngine carrier_id
+  shipEngineCarrierCode?: string      // e.g. "ups" or "fedex_walleted"
+  shipEngineCarrierName?: string      // human-readable carrier name
+  paths: ('direct' | 'shipengine')[]
+}
+
+export interface UnifiedAccount {
+  id: string                          // e.g. "ups:0V2R99" or "se:se-12345"
+  carrierNetwork: CarrierNetwork
+  accountNumber: string | null
+  nickname: string
+  icon: string
+  direct?: DirectConnectionConfig
+  shipEngine?: ShipEngineCarrier      // primary SE carrier (for 1:1 accounts)
+  shipEngineCarriers?: ShipEngineCarrier[] // multiple SE carriers (for merged marketplace tab)
+  isMarketplace: boolean
+  services: UnifiedService[]
+}
+
+export interface DirectConnectionConfig {
+  id: string
+  nickname: string
+  clientId: string
+  clientSecret: string
+  accountNumber: string
+  sandbox: boolean
+  status: 'connected' | 'error' | 'untested'
+  lastTestedAt?: string
+  lastError?: string
+  enabledServices?: string[]
+}
+
+export interface DirectConnections {
+  ups?: DirectConnectionConfig[]
+  fedex?: DirectConnectionConfig[]
+}

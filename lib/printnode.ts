@@ -187,8 +187,14 @@ export async function submitPrintJob(
 export async function submitPrintJobBase64(
   printerId: number,
   title: string,
-  base64Pdf: string
+  base64Content: string,
+  mimeType: string = 'application/pdf',
 ): Promise<number> {
+  // PrintNode accepts: pdf_base64, raw_base64, png_base64, gif_base64
+  let pnContentType = 'pdf_base64'
+  if (mimeType === 'image/png' || mimeType === 'png') pnContentType = 'png_base64'
+  else if (mimeType === 'image/gif' || mimeType === 'gif') pnContentType = 'raw_base64'
+
   const res = await fetch('https://api.printnode.com/printjobs', {
     method: 'POST',
     headers: {
@@ -198,8 +204,8 @@ export async function submitPrintJobBase64(
     body: JSON.stringify({
       printerId,
       title,
-      contentType: 'pdf_base64',
-      content: base64Pdf,
+      contentType: pnContentType,
+      content: base64Content,
       source: 'E-Com Batch Tool',
     }),
   })

@@ -1,5 +1,12 @@
 import type { PrismaClient } from '@prisma/client'
 import { matchSkuToSize, type ProductSize } from './products'
+import {
+  isDirectCarrier,
+  parseDirectServiceCode,
+  getDirectRate,
+  type DirectCarrier,
+} from '@/lib/shipping/provider-router'
+import { getServiceIdentity } from '@/lib/shipping/service-map'
 
 const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY
 const SHIPENGINE_RATES_URL = 'https://api.shipengine.com/v1/rates'
@@ -326,94 +333,160 @@ export async function shopRates(
       return { success: false, error: 'Invalid ship-to address: missing required fields' }
     }
 
-    // Extract carrier IDs and service codes from rate shopper profile
-    const carrierIds = Array.from(new Set(rateShopper.services.map(s => s.carrierId)))
-    const serviceCodes = rateShopper.services.map(s => s.serviceCode)
+    // Split services into ShipEngine vs direct carrier
+    const shipEngineServices = rateShopper.services.filter(s => !isDirectCarrier(s.carrierCode))
+    const directServices = rateShopper.services.filter(s => isDirectCarrier(s.carrierCode))
 
-    if (carrierIds.length === 0) {
+    const carrierIds = Array.from(new Set(shipEngineServices.map(s => s.carrierId)))
+    const serviceCodes = shipEngineServices.map(s => s.serviceCode)
+
+    if (carrierIds.length === 0 && directServices.length === 0) {
       return { success: false, error: 'No carriers configured in rate shopper profile' }
     }
 
-    // Build the rate request
-    const shipToCountry = normalizeCountryCode(shipTo.country)
-    const shipFromCountry = normalizeCountryCode(shipFrom.country)
+    // Fetch rates in parallel: ShipEngine + direct carriers
+    const ratePromises: Promise<any[]>[] = []
 
-    const rateRequest = {
-      shipment: {
-        validate_address: 'no_validation',
-        ship_to: {
-          name: shipTo.name || 'Customer',
-          address_line1: shipTo.street1,
-          address_line2: shipTo.street2,
-          city_locality: shipTo.city,
-          state_province: normalizeStateCode(shipTo.state, shipToCountry),
-          postal_code: shipTo.postalCode,
-          country_code: shipToCountry,
-          address_residential_indicator: shipTo.residential ? 'yes' : 'no',
-          phone: shipTo.phone || '',
-        },
-        ship_from: {
-          name: shipFrom.name || 'Warehouse',
-          company_name: shipFrom.company,
-          address_line1: shipFrom.street1,
-          address_line2: shipFrom.street2,
-          city_locality: shipFrom.city,
-          state_province: normalizeStateCode(shipFrom.state, shipFromCountry),
-          postal_code: shipFrom.postalCode,
-          country_code: shipFromCountry,
-          phone: shipFrom.phone || '',
-        },
-        packages: [{
-          weight: {
-            value: weightLbs,
-            unit: 'pound',
+    // ShipEngine rates
+    if (carrierIds.length > 0 && SHIPENGINE_API_KEY) {
+      const shipToCountry = normalizeCountryCode(shipTo.country)
+      const shipFromCountry = normalizeCountryCode(shipFrom.country)
+
+      const rateRequest = {
+        shipment: {
+          validate_address: 'no_validation',
+          ship_to: {
+            name: shipTo.name || 'Customer',
+            address_line1: shipTo.street1,
+            address_line2: shipTo.street2,
+            city_locality: shipTo.city,
+            state_province: normalizeStateCode(shipTo.state, shipToCountry),
+            postal_code: shipTo.postalCode,
+            country_code: shipToCountry,
+            address_residential_indicator: shipTo.residential ? 'yes' : 'no',
+            phone: shipTo.phone || '',
           },
-          dimensions: {
-            length: dimensions.length,
-            width: dimensions.width,
-            height: dimensions.height,
-            unit: 'inch',
+          ship_from: {
+            name: shipFrom.name || 'Warehouse',
+            company_name: shipFrom.company,
+            address_line1: shipFrom.street1,
+            address_line2: shipFrom.street2,
+            city_locality: shipFrom.city,
+            state_province: normalizeStateCode(shipFrom.state, shipFromCountry),
+            postal_code: shipFrom.postalCode,
+            country_code: shipFromCountry,
+            phone: shipFrom.phone || '',
           },
-        }],
-      },
-      rate_options: {
-        carrier_ids: carrierIds,
-      },
+          packages: [{
+            weight: { value: weightLbs, unit: 'pound' },
+            dimensions: {
+              length: dimensions.length,
+              width: dimensions.width,
+              height: dimensions.height,
+              unit: 'inch',
+            },
+          }],
+        },
+        rate_options: { carrier_ids: carrierIds },
+      }
+
+      ratePromises.push(
+        fetch(SHIPENGINE_RATES_URL, {
+          method: 'POST',
+          headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify(rateRequest),
+        })
+          .then(async (response) => {
+            const data = await response.json()
+            if (!response.ok) return []
+            return (data.rate_response?.rates || [])
+              .filter((rate: any) => serviceCodes.includes(rate.service_code))
+              .map((rate: any) => ({
+                rateId: rate.rate_id,
+                carrierId: rate.carrier_id,
+                carrierCode: rate.carrier_code,
+                carrier: rate.carrier_friendly_name,
+                serviceCode: rate.service_code,
+                serviceName: rate.service_type,
+                price: rate.shipping_amount?.amount || 0,
+                currency: rate.shipping_amount?.currency || 'USD',
+                deliveryDays: rate.delivery_days,
+                estimatedDeliveryDate: rate.estimated_delivery_date,
+                attributes: rate.rate_attributes || [],
+              }))
+          })
+          .catch(() => [])
+      )
     }
 
-    // Call ShipEngine API
-    const response = await fetch(SHIPENGINE_RATES_URL, {
-      method: 'POST',
-      headers: {
-        'API-Key': SHIPENGINE_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(rateRequest),
-    })
+    // Direct carrier rates
+    if (directServices.length > 0) {
+      const directRatePromise = Promise.all(
+        directServices.map(async (svc) => {
+          const parsed = parseDirectServiceCode(svc.serviceCode)
+          if (!parsed) return null
 
-    const data = await response.json()
+          const result = await getDirectRate(
+            svc.carrierId,
+            parsed.carrierCode,
+            parsed.rawServiceCode,
+            {
+              city: shipTo.city,
+              state: shipTo.state,
+              postalCode: shipTo.postalCode,
+              country: shipTo.country || 'US',
+              residential: shipTo.residential,
+            },
+            {
+              city: shipFrom.city,
+              state: shipFrom.state,
+              postalCode: shipFrom.postalCode,
+              country: shipFrom.country || 'US',
+            },
+            weightLbs,
+            dimensions,
+          )
 
-    if (!response.ok) {
-      const errorMessage = data.message || data.errors?.[0]?.message || `ShipEngine error (${response.status})`
-      return { success: false, error: errorMessage, totalWeightLbs: weightLbs }
+          if (!result.success) return null
+
+          return {
+            rateId: null,
+            carrierId: result.carrierId,
+            carrierCode: result.carrierCode,
+            carrier: result.carrier,
+            serviceCode: result.serviceCode,
+            serviceName: result.serviceName,
+            price: result.price,
+            currency: result.currency,
+            deliveryDays: result.deliveryDays,
+            estimatedDeliveryDate: null,
+            attributes: [],
+          }
+        })
+      ).then(results => results.filter(Boolean))
+
+      ratePromises.push(directRatePromise as Promise<any[]>)
     }
 
-    // Filter rates to only include services from the rate shopper profile
-    let rates = (data.rate_response?.rates || [])
-      .filter((rate: any) => serviceCodes.includes(rate.service_code))
-      .map((rate: any) => ({
-        rateId: rate.rate_id,
-        carrierId: rate.carrier_id,
-        carrierCode: rate.carrier_code,
-        carrier: rate.carrier_friendly_name,
-        serviceCode: rate.service_code,
-        serviceName: rate.service_type,
-        price: rate.shipping_amount?.amount || 0,
-        currency: rate.shipping_amount?.currency || 'USD',
-        deliveryDays: rate.delivery_days,
-        estimatedDeliveryDate: rate.estimated_delivery_date,
-        attributes: rate.rate_attributes || [],
-      }))
+    const allRateArrays = await Promise.all(ratePromises)
+    let rates = allRateArrays.flat()
+
+    // Deduplicate by service identity — keep Direct rate over ShipEngine duplicate
+    const seenIdentities = new Map<string, any>()
+    for (const rate of rates) {
+      const identity = getServiceIdentity(rate.serviceCode)
+      const existing = seenIdentities.get(identity)
+      if (!existing) {
+        seenIdentities.set(identity, rate)
+      } else {
+        const existingIsDirect = isDirectCarrier(existing.carrierCode)
+        const currentIsDirect = isDirectCarrier(rate.carrierCode)
+        if (currentIsDirect && !existingIsDirect) {
+          seenIdentities.set(identity, rate)
+        }
+      }
+    }
+    rates = Array.from(seenIdentities.values())
 
     // Apply transit time restriction if set
     if (rateShopper.transitTimeRestriction && rateShopper.transitTimeRestriction !== 'no_restriction') {

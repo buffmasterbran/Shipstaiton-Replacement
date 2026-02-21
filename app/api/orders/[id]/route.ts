@@ -9,6 +9,22 @@ import {
 } from '@/lib/rate-shop'
 import { validateAddress, type AddressValidationResult } from '@/lib/address-validation'
 import { updateItemFulfillment, isNetSuiteConfigured } from '@/lib/netsuite'
+import { isDirectCarrier, parseDirectServiceCode, getDirectRate } from '@/lib/shipping/provider-router'
+
+/**
+ * Normalize carrier codes to their base network for comparison.
+ * "ups-direct" and "ups" are the same network; "fedex-direct" and "fedex" are the same.
+ * Used to detect when the actual shipping network changes (e.g. USPS → UPS).
+ */
+function getBaseCarrier(carrierCode: string | undefined): string | null {
+  if (!carrierCode) return null
+  const c = carrierCode.toLowerCase()
+  if (c.includes('ups')) return 'ups'
+  if (c.includes('fedex') || c.includes('fdx')) return 'fedex'
+  if (c.includes('usps') || c.includes('stamps') || c.includes('endicia')) return 'usps'
+  if (c.includes('dhl')) return 'dhl'
+  return c
+}
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -67,20 +83,50 @@ export async function PATCH(
       }
       updateData.rawPayload = rawPayload
 
-      // Validate via ShipEngine
+      // Validate via direct carrier or ShipEngine
+      const existingRate = order.preShoppedRate as any
       try {
-        addressValidation = await validateAddress({
-          name: address.name || existingShipTo.name || '',
-          company: address.company || existingShipTo.company || '',
-          street1: address.street1 || existingShipTo.street1 || '',
-          street2: address.street2 || existingShipTo.street2 || '',
-          city: address.city || existingShipTo.city || '',
-          state: address.state || existingShipTo.state || '',
-          postalCode: address.postalCode || existingShipTo.postalCode || '',
-          country: address.country || existingShipTo.country || 'US',
-        })
+        addressValidation = await validateAddress(
+          {
+            name: address.name || existingShipTo.name || '',
+            company: address.company || existingShipTo.company || '',
+            street1: address.street1 || existingShipTo.street1 || '',
+            street2: address.street2 || existingShipTo.street2 || '',
+            city: address.city || existingShipTo.city || '',
+            state: address.state || existingShipTo.state || '',
+            postalCode: address.postalCode || existingShipTo.postalCode || '',
+            country: address.country || existingShipTo.country || 'US',
+          },
+          existingRate?.carrierCode && existingRate?.carrierId
+            ? { carrierCode: existingRate.carrierCode, carrierId: existingRate.carrierId }
+            : undefined,
+        )
         updateData.addressValidated = addressValidation.status === 'verified'
         updateData.addressOverridden = false
+
+        // Auto-accepted: silently save the corrected address to the order
+        if (addressValidation.autoAccepted && addressValidation.matchedAddress) {
+          const m = addressValidation.matchedAddress
+          orderData = {
+            ...orderData,
+            shipTo: {
+              ...orderData.shipTo,
+              street1: m.street1 || orderData.shipTo.street1,
+              street2: m.street2 ?? orderData.shipTo.street2,
+              city: m.city || orderData.shipTo.city,
+              state: m.state || orderData.shipTo.state,
+              postalCode: m.postalCode || orderData.shipTo.postalCode,
+              country: m.country || orderData.shipTo.country,
+              residential: m.residential,
+            },
+          }
+          if (isArray) {
+            rawPayload = [orderData, ...rawPayload.slice(1)]
+          } else {
+            rawPayload = orderData
+          }
+          updateData.rawPayload = rawPayload
+        }
       } catch (err) {
         console.error('Address validation call failed:', err)
         updateData.addressValidated = false
@@ -141,20 +187,82 @@ export async function PATCH(
 
     // --- Carrier override ---
     if (carrier && typeof carrier === 'object') {
+      let ratePrice = 0
+      let rateDeliveryDays: number | null = null
+      let rateCurrency = 'USD'
+
+      // For direct carriers, immediately fetch the rate
+      if (isDirectCarrier(carrier.carrierCode) && carrier.serviceCode) {
+        const parsed = parseDirectServiceCode(carrier.serviceCode)
+        if (parsed) {
+          const currentPayload = updateData.rawPayload || rawPayload
+          const currentOrderData = Array.isArray(currentPayload) ? currentPayload[0] : currentPayload
+          const st = currentOrderData?.shipTo || {}
+          const currentBox = (updateData.suggestedBox || order.suggestedBox) as any
+          const dims = currentBox?.lengthInches
+            ? { length: currentBox.lengthInches, width: currentBox.widthInches, height: currentBox.heightInches }
+            : { length: 6, width: 6, height: 6 }
+          const wt = updateData.shippedWeight ?? order.shippedWeight ?? 1
+
+          const defaultLoc = await getDefaultLocation(prisma)
+          const rateResult = await getDirectRate(
+            carrier.carrierId,
+            parsed.carrierCode,
+            parsed.rawServiceCode,
+            {
+              city: st.city || '',
+              state: st.state || '',
+              postalCode: st.postalCode || st.zip || '',
+              country: st.country || 'US',
+              residential: st.residential !== false,
+            },
+            {
+              city: defaultLoc?.city || '',
+              state: defaultLoc?.state || '',
+              postalCode: defaultLoc?.postalCode || '',
+              country: defaultLoc?.country || 'US',
+            },
+            wt,
+            dims,
+          )
+
+          if (rateResult.success) {
+            ratePrice = rateResult.price
+            rateDeliveryDays = rateResult.deliveryDays
+            rateCurrency = rateResult.currency
+          }
+        }
+      }
+
       updateData.preShoppedRate = {
         carrierId: carrier.carrierId || '',
         carrierCode: carrier.carrierCode || '',
         carrier: carrier.carrier || '',
         serviceCode: carrier.serviceCode || '',
         serviceName: carrier.serviceName || '',
-        price: 0,
-        currency: 'USD',
-        deliveryDays: null,
+        price: ratePrice,
+        currency: rateCurrency,
+        deliveryDays: rateDeliveryDays,
         rateId: null,
+        fallbackCarrierId: carrier.fallbackCarrierId || null,
+        fallbackServiceCode: carrier.fallbackServiceCode || null,
+        fallbackCarrierCode: carrier.fallbackCarrierCode || null,
       }
       updateData.rateShopStatus = 'SUCCESS'
       updateData.rateShopError = null
       updateData.rateFetchedAt = new Date()
+
+      // Invalidate address validation when the carrier network changes
+      // (e.g. USPS → UPS, FedEx → USPS) since different carriers have
+      // different address rules (PO boxes, residential, etc.)
+      const existingRate = order.preShoppedRate as any
+      const oldBase = getBaseCarrier(existingRate?.carrierCode)
+      const newBase = getBaseCarrier(carrier.carrierCode)
+      if (oldBase && newBase && oldBase !== newBase && order.addressValidated) {
+        console.log(`[Order PATCH] Carrier network changed: ${oldBase} → ${newBase}, invalidating address validation`)
+        updateData.addressValidated = false
+        updateData.addressOverridden = false
+      }
     }
 
     // --- Retry NetSuite push ---

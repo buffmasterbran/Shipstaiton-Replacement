@@ -40,6 +40,12 @@ export interface CarrierService {
   accountNickname?: string | null
   domestic?: boolean
   international?: boolean
+  identity?: string
+  directConnectionId?: string
+  directCode?: string
+  fallbackCarrierId?: string
+  fallbackServiceCode?: string
+  fallbackCarrierCode?: string
 }
 
 export interface SkuPattern {

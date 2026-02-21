@@ -439,7 +439,18 @@ export default function OrderDialog({ isOpen, onClose, order, rawPayload, orderL
       } else {
         const svc = carrierServices.find(s => s.serviceCode === serviceCode)
         if (!svc) { setSaving(false); return }
-        body = { carrier: { carrierId: svc.carrierId, carrierCode: svc.carrierCode, carrier: svc.carrierName, serviceCode: svc.serviceCode, serviceName: svc.serviceName } }
+        body = {
+          carrier: {
+            carrierId: svc.carrierId,
+            carrierCode: svc.carrierCode,
+            carrier: svc.carrierName,
+            serviceCode: svc.serviceCode,
+            serviceName: svc.serviceName,
+            fallbackCarrierId: svc.fallbackCarrierId,
+            fallbackServiceCode: svc.fallbackServiceCode,
+            fallbackCarrierCode: svc.fallbackCarrierCode,
+          },
+        }
       }
 
       const res = await fetch(`/api/orders/${orderLog.id}`, {

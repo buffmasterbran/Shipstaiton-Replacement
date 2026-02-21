@@ -1,7 +1,14 @@
 import { prisma } from '@/lib/prisma'
-import { submitPrintJob } from '@/lib/printnode'
+import { submitPrintJob, submitPrintJobBase64 } from '@/lib/printnode'
 import { updateItemFulfillment, revertItemFulfillment, isNetSuiteConfigured } from '@/lib/netsuite'
 import { shopRates, getDefaultRateShopper, type ShipToAddress } from '@/lib/rate-shop'
+import {
+  isDirectCarrier,
+  parseDirectServiceCode,
+  createDirectLabel,
+  voidDirectLabel,
+  type DirectShipmentRequest,
+} from '@/lib/shipping/provider-router'
 
 const SHIPENGINE_API_KEY = process.env.SHIPENGINE_API_KEY
 const SHIPENGINE_LABELS_URL = 'https://api.shipengine.com/v1/labels'
@@ -131,93 +138,187 @@ export async function createLabel(params: CreateLabelParams): Promise<LabelResul
     return { success: false, error: 'Ship-to address is incomplete', printStatus: 'not_printed', netsuiteUpdated: false }
   }
 
-  if (!SHIPENGINE_API_KEY) {
-    return { success: false, error: 'ShipEngine API key not configured', printStatus: 'not_printed', netsuiteUpdated: false }
-  }
+  // 3. Route to direct carrier or ShipEngine
+  const directParsed = parseDirectServiceCode(rate.serviceCode)
+  const useDirectCarrier = directParsed && isDirectCarrier(rate.carrierCode)
 
-  // 3. Build ShipEngine label request
-  const shipToCountry = normalizeCountryCode(shipTo.country)
-  const shipFromCountry = normalizeCountryCode(location.country || undefined)
+  let trackingNumber = ''
+  let labelUrl = ''
+  let labelBase64 = ''
+  let labelFormat = 'pdf'
+  let labelCost = 0
+  let labelId = ''
+  let shipmentId = ''
+  let carrierCode = rate.carrierCode || ''
+  let carrierName = rate.carrier || carrierCode
+  let serviceName = rate.serviceName || rate.serviceCode || ''
 
-  const seRequest = {
-    shipment: {
-      service_code: rate.serviceCode,
-      carrier_id: rate.carrierId || undefined,
-      validate_address: 'no_validation',
-      ship_to: {
+  let useShipEngineFallback = false
+
+  if (useDirectCarrier && directParsed) {
+    // ── Direct Carrier Path (UPS Direct / FedEx Direct) ──
+    console.log(`[Label Service] Using direct carrier: ${rate.carrierCode} service ${directParsed.rawServiceCode}`)
+
+    const directShipment: DirectShipmentRequest = {
+      shipTo: {
         name: shipTo.name || 'Customer',
-        company_name: shipTo.company || undefined,
-        address_line1: shipTo.street1,
-        address_line2: shipTo.street2 || undefined,
-        city_locality: shipTo.city,
-        state_province: shipTo.state,
-        postal_code: shipTo.postalCode,
-        country_code: shipToCountry,
-        phone: shipTo.phone || undefined,
-        address_residential_indicator: 'yes',
+        company: shipTo.company,
+        street1: shipTo.street1,
+        street2: shipTo.street2,
+        city: shipTo.city,
+        state: shipTo.state,
+        postalCode: shipTo.postalCode,
+        country: normalizeCountryCode(shipTo.country),
+        phone: shipTo.phone,
+        residential: shipTo.residential !== false,
       },
-      ship_from: {
+      shipFrom: {
         name: location.name,
-        company_name: location.company || undefined,
-        address_line1: location.addressLine1,
-        address_line2: location.addressLine2 || undefined,
-        city_locality: location.city,
-        state_province: location.state,
-        postal_code: location.postalCode,
-        country_code: shipFromCountry,
+        company: location.company || undefined,
+        street1: location.addressLine1,
+        street2: location.addressLine2 || undefined,
+        city: location.city,
+        state: location.state,
+        postalCode: location.postalCode,
+        country: normalizeCountryCode(location.country || undefined),
         phone: location.phone || undefined,
-        address_residential_indicator: 'no',
       },
-      packages: [{
-        weight: { value: order.shippedWeight, unit: 'pound' },
-        dimensions: {
-          length: box.lengthInches,
-          width: box.widthInches,
-          height: box.heightInches,
-          unit: 'inch',
-        },
-        label_messages: {
-          reference1: order.orderNumber,
-        },
-      }],
-      label_format: 'pdf',
-    },
-  }
-
-  // 4. Call ShipEngine
-  let seData: any
-  try {
-    const res = await fetch(SHIPENGINE_LABELS_URL, {
-      method: 'POST',
-      headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify(seRequest),
-    })
-    seData = await res.json()
-    if (!res.ok) {
-      const errMsg = seData.errors?.map((e: any) => e.message).join('; ') || seData.message || 'ShipEngine label creation failed'
-      console.error('[Label Service] ShipEngine error:', errMsg)
-      return { success: false, error: errMsg, printStatus: 'not_printed', netsuiteUpdated: false }
+      weight: order.shippedWeight!,
+      dimensions: { length: box.lengthInches, width: box.widthInches, height: box.heightInches },
+      serviceCode: directParsed.rawServiceCode,
+      orderNumber: order.orderNumber,
     }
-  } catch (e: any) {
-    return { success: false, error: e.message || 'Network error calling ShipEngine', printStatus: 'not_printed', netsuiteUpdated: false }
+
+    const directResult = await createDirectLabel(
+      rate.carrierId,
+      directParsed.carrierCode,
+      directParsed.rawServiceCode,
+      directShipment,
+    )
+
+    if (!directResult.success) {
+      // Silent fallback: if ShipEngine fallback info exists, retry via ShipEngine
+      if (rate.fallbackServiceCode && rate.fallbackCarrierId && SHIPENGINE_API_KEY) {
+        console.log(`[Label Service] Direct carrier failed (${directResult.error}), falling back to ShipEngine`)
+        rate = {
+          ...rate,
+          carrierId: rate.fallbackCarrierId,
+          carrierCode: rate.fallbackCarrierCode || '',
+          serviceCode: rate.fallbackServiceCode,
+        }
+        useShipEngineFallback = true
+      } else {
+        console.error('[Label Service] Direct carrier error:', directResult.error)
+        return { success: false, error: directResult.error || 'Direct carrier label creation failed', printStatus: 'not_printed', netsuiteUpdated: false }
+      }
+    } else {
+      trackingNumber = directResult.trackingNumber || ''
+      labelBase64 = directResult.labelBase64 || ''
+      labelFormat = (directResult.labelFormat || 'GIF').toLowerCase()
+      labelCost = directResult.labelCost || 0
+      shipmentId = directResult.shipmentId || ''
+      carrierName = directResult.carrier || carrierName
+      serviceName = directResult.serviceName || serviceName
+    }
   }
 
-  const trackingNumber = seData.tracking_number || ''
-  const labelUrl = seData.label_download?.pdf || seData.label_download?.href || ''
-  const labelCost = seData.shipment_cost?.amount || 0
-  const labelId = seData.label_id || ''
-  const shipmentId = seData.shipment_id || ''
-  const carrierCode = seData.carrier_code || rate.carrierCode || ''
-  const carrierName = rate.carrier || carrierCode
-  const serviceName = rate.serviceName || rate.serviceCode || ''
+  if (!useDirectCarrier || useShipEngineFallback) {
+    // ── ShipEngine Path (primary or fallback) ──
+    if (!SHIPENGINE_API_KEY) {
+      return { success: false, error: 'ShipEngine API key not configured', printStatus: 'not_printed', netsuiteUpdated: false }
+    }
 
-  // 5. Try printing
+    const shipToCountry = normalizeCountryCode(shipTo.country)
+    const shipFromCountry = normalizeCountryCode(location.country || undefined)
+
+    const seRequest = {
+      shipment: {
+        service_code: rate.serviceCode,
+        carrier_id: rate.carrierId || undefined,
+        validate_address: 'no_validation',
+        ship_to: {
+          name: shipTo.name || 'Customer',
+          company_name: shipTo.company || undefined,
+          address_line1: shipTo.street1,
+          address_line2: shipTo.street2 || undefined,
+          city_locality: shipTo.city,
+          state_province: shipTo.state,
+          postal_code: shipTo.postalCode,
+          country_code: shipToCountry,
+          phone: shipTo.phone || undefined,
+          address_residential_indicator: 'yes',
+        },
+        ship_from: {
+          name: location.name,
+          company_name: location.company || undefined,
+          address_line1: location.addressLine1,
+          address_line2: location.addressLine2 || undefined,
+          city_locality: location.city,
+          state_province: location.state,
+          postal_code: location.postalCode,
+          country_code: shipFromCountry,
+          phone: location.phone || undefined,
+          address_residential_indicator: 'no',
+        },
+        packages: [{
+          weight: { value: order.shippedWeight, unit: 'pound' },
+          dimensions: {
+            length: box.lengthInches,
+            width: box.widthInches,
+            height: box.heightInches,
+            unit: 'inch',
+          },
+          label_messages: {
+            reference1: order.orderNumber,
+          },
+        }],
+        label_format: 'pdf',
+      },
+    }
+
+    let seData: any
+    try {
+      const res = await fetch(SHIPENGINE_LABELS_URL, {
+        method: 'POST',
+        headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(seRequest),
+      })
+      seData = await res.json()
+      if (!res.ok) {
+        const errMsg = seData.errors?.map((e: any) => e.message).join('; ') || seData.message || 'ShipEngine label creation failed'
+        console.error('[Label Service] ShipEngine error:', errMsg)
+        return { success: false, error: errMsg, printStatus: 'not_printed', netsuiteUpdated: false }
+      }
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Network error calling ShipEngine', printStatus: 'not_printed', netsuiteUpdated: false }
+    }
+
+    if (useShipEngineFallback) {
+      console.log('[Label Service] ShipEngine fallback succeeded')
+    }
+
+    trackingNumber = seData.tracking_number || ''
+    labelUrl = seData.label_download?.pdf || seData.label_download?.href || ''
+    labelCost = seData.shipment_cost?.amount || 0
+    labelId = seData.label_id || ''
+    shipmentId = seData.shipment_id || ''
+    carrierCode = seData.carrier_code || rate.carrierCode || ''
+    carrierName = rate.carrier || carrierCode
+    serviceName = rate.serviceName || rate.serviceCode || ''
+  }
+
+  // 4. Try printing
   let printStatus: LabelResult['printStatus'] = 'not_printed'
   let printJobId: number | undefined
 
-  if (printerId && labelUrl) {
+  if (printerId && (labelUrl || labelBase64)) {
     try {
-      printJobId = await submitPrintJob(printerId, `Label: ${order.orderNumber}`, labelUrl)
+      if (labelBase64) {
+        const contentType = labelFormat === 'png' ? 'image/png' : labelFormat === 'gif' ? 'image/gif' : 'application/pdf'
+        printJobId = await submitPrintJobBase64(printerId, `Label: ${order.orderNumber}`, labelBase64, contentType)
+      } else {
+        printJobId = await submitPrintJob(printerId, `Label: ${order.orderNumber}`, labelUrl)
+      }
       printStatus = 'sent'
     } catch (e: any) {
       console.error('[Label Service] Print failed:', e.message)
@@ -270,15 +371,18 @@ export async function createLabel(params: CreateLabelParams): Promise<LabelResul
   }
 
   // 7. Update OrderLog with all statuses
+  // For direct carriers, store a data URI so the label can be reprinted
+  const storedLabelUrl = labelUrl || (labelBase64 ? `data:image/${labelFormat};base64,${labelBase64}` : '')
+
   await prisma.orderLog.update({
     where: { id: orderId },
     data: {
       trackingNumber,
       carrier: carrierName,
-      labelUrl,
+      labelUrl: storedLabelUrl,
       labelCost,
-      labelId,
-      shipmentId,
+      labelId: labelId || shipmentId,
+      shipmentId: shipmentId || labelId,
       shippedAt: new Date(),
       status: 'SHIPPED',
       printStatus,
@@ -299,15 +403,15 @@ export async function createLabel(params: CreateLabelParams): Promise<LabelResul
     data: {
       orderLogId: orderId,
       action: 'LABEL_CREATED',
-      labelId,
-      shipmentId,
+      labelId: labelId || shipmentId,
+      shipmentId: shipmentId || labelId,
       trackingNumber,
       carrier: carrierName,
       serviceCode: rate.serviceCode,
       serviceName,
       labelCost,
-      labelUrl,
-      labelFormat: 'pdf',
+      labelUrl: storedLabelUrl,
+      labelFormat: labelFormat || 'pdf',
       printJobId: printJobId ? BigInt(printJobId) : null,
       printStatus,
       netsuiteUpdated,
@@ -319,7 +423,7 @@ export async function createLabel(params: CreateLabelParams): Promise<LabelResul
   return {
     success: true,
     trackingNumber,
-    labelUrl,
+    labelUrl: storedLabelUrl,
     labelCost,
     carrier: carrierName,
     serviceName,
@@ -356,24 +460,42 @@ export async function voidLabel(orderId: string, userName: string, reason?: stri
     }
   }
 
-  if (!SHIPENGINE_API_KEY) return { success: false, error: 'ShipEngine API key not configured' }
+  // Determine if this was a direct carrier label
+  const rate = order.preShoppedRate as any
+  const directParsed = rate?.serviceCode ? parseDirectServiceCode(rate.serviceCode) : null
+  const isDirect = directParsed && isDirectCarrier(rate?.carrierCode)
 
-  // Call ShipEngine void
-  console.log(`[Void Label] Calling ShipEngine PUT /v1/labels/${order.labelId}/void`)
-  try {
-    const res = await fetch(`https://api.shipengine.com/v1/labels/${order.labelId}/void`, {
-      method: 'PUT',
-      headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
-    })
-    const data = await res.json()
-    console.log(`[Void Label] ShipEngine response: ${res.status}`, JSON.stringify(data))
-    if (!res.ok || data.approved === false) {
-      console.log('[Void Label] ShipEngine rejected void')
-      return { success: false, error: data.message || 'ShipEngine rejected the void request' }
+  if (isDirect && directParsed) {
+    console.log(`[Void Label] Voiding via direct carrier: ${rate.carrierCode}`)
+    const voidResult = await voidDirectLabel(
+      rate.carrierId,
+      directParsed.carrierCode,
+      order.shipmentId || order.labelId || '',
+      order.trackingNumber || '',
+    )
+    if (!voidResult.success) {
+      console.log('[Void Label] Direct carrier rejected void:', voidResult.error)
+      return { success: false, error: voidResult.error || 'Direct carrier rejected the void request' }
     }
-  } catch (e: any) {
-    console.error('[Void Label] ShipEngine fetch error:', e.message)
-    return { success: false, error: e.message || 'Failed to void label with ShipEngine' }
+  } else {
+    if (!SHIPENGINE_API_KEY) return { success: false, error: 'ShipEngine API key not configured' }
+
+    console.log(`[Void Label] Calling ShipEngine PUT /v1/labels/${order.labelId}/void`)
+    try {
+      const res = await fetch(`https://api.shipengine.com/v1/labels/${order.labelId}/void`, {
+        method: 'PUT',
+        headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
+      })
+      const data = await res.json()
+      console.log(`[Void Label] ShipEngine response: ${res.status}`, JSON.stringify(data))
+      if (!res.ok || data.approved === false) {
+        console.log('[Void Label] ShipEngine rejected void')
+        return { success: false, error: data.message || 'ShipEngine rejected the void request' }
+      }
+    } catch (e: any) {
+      console.error('[Void Label] ShipEngine fetch error:', e.message)
+      return { success: false, error: e.message || 'Failed to void label with ShipEngine' }
+    }
   }
 
   // Try to revert NetSuite IF
@@ -538,82 +660,164 @@ export async function prepurchaseLabel(orderId: string, locationId: string): Pro
     return { success: false, error: 'Ship-to address is incomplete' }
   }
 
-  if (!SHIPENGINE_API_KEY) return { success: false, error: 'ShipEngine API key not configured' }
+  const directParsed = parseDirectServiceCode(rate.serviceCode)
+  const useDirectCarrier = directParsed && isDirectCarrier(rate.carrierCode)
 
-  console.log(`${tag} #${order.orderNumber} calling ShipEngine: ${rate.carrierCode}/${rate.serviceCode} ${order.shippedWeight}lbs ${box.lengthInches}x${box.widthInches}x${box.heightInches} → ${shipTo.city}, ${shipTo.state} ${shipTo.postalCode}`)
+  let trackingNumber = ''
+  let labelUrl = ''
+  let labelCost = 0
+  let labelId = ''
+  let shipmentId = ''
+  let carrierName = rate.carrier || rate.carrierCode || ''
+  let serviceName = rate.serviceName || rate.serviceCode || ''
+  let labelFormat = 'pdf'
 
-  const shipToCountry = normalizeCountryCode(shipTo.country)
-  const shipFromCountry = normalizeCountryCode(location.country || undefined)
+  let useShipEngineFallback = false
 
-  const seRequest = {
-    shipment: {
-      service_code: rate.serviceCode,
-      carrier_id: rate.carrierId || undefined,
-      validate_address: 'no_validation',
-      ship_to: {
+  if (useDirectCarrier && directParsed) {
+    console.log(`${tag} #${order.orderNumber} using direct carrier: ${rate.carrierCode} service ${directParsed.rawServiceCode}`)
+
+    const directShipment: DirectShipmentRequest = {
+      shipTo: {
         name: shipTo.name || 'Customer',
-        company_name: shipTo.company || undefined,
-        address_line1: shipTo.street1,
-        address_line2: shipTo.street2 || undefined,
-        city_locality: shipTo.city,
-        state_province: shipTo.state,
-        postal_code: shipTo.postalCode,
-        country_code: shipToCountry,
-        phone: shipTo.phone || undefined,
-        address_residential_indicator: 'yes',
+        company: shipTo.company,
+        street1: shipTo.street1,
+        street2: shipTo.street2,
+        city: shipTo.city,
+        state: shipTo.state,
+        postalCode: shipTo.postalCode,
+        country: normalizeCountryCode(shipTo.country),
+        phone: shipTo.phone,
+        residential: shipTo.residential !== false,
       },
-      ship_from: {
+      shipFrom: {
         name: location.name,
-        company_name: location.company || undefined,
-        address_line1: location.addressLine1,
-        address_line2: location.addressLine2 || undefined,
-        city_locality: location.city,
-        state_province: location.state,
-        postal_code: location.postalCode,
-        country_code: shipFromCountry,
+        company: location.company || undefined,
+        street1: location.addressLine1,
+        street2: location.addressLine2 || undefined,
+        city: location.city,
+        state: location.state,
+        postalCode: location.postalCode,
+        country: normalizeCountryCode(location.country || undefined),
         phone: location.phone || undefined,
-        address_residential_indicator: 'no',
       },
-      packages: [{
-        weight: { value: order.shippedWeight, unit: 'pound' },
-        dimensions: {
-          length: box.lengthInches, width: box.widthInches, height: box.heightInches,
-          unit: 'inch',
-        },
-        label_messages: { reference1: order.orderNumber },
-      }],
-      label_format: 'pdf',
-    },
-  }
-
-  const seStart = Date.now()
-  let seData: any
-  try {
-    const res = await fetch(SHIPENGINE_LABELS_URL, {
-      method: 'POST',
-      headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify(seRequest),
-    })
-    seData = await res.json()
-    console.log(`${tag} #${order.orderNumber} ShipEngine responded ${res.status} in ${Date.now() - seStart}ms`)
-    if (!res.ok) {
-      const errMsg = seData.errors?.map((e: any) => e.message).join('; ') || seData.message || 'ShipEngine label creation failed'
-      console.error(`${tag} #${order.orderNumber} ShipEngine error: ${errMsg}`)
-      return { success: false, error: errMsg }
+      weight: order.shippedWeight!,
+      dimensions: { length: box.lengthInches, width: box.widthInches, height: box.heightInches },
+      serviceCode: directParsed.rawServiceCode,
+      orderNumber: order.orderNumber,
     }
-  } catch (e: any) {
-    console.error(`${tag} #${order.orderNumber} ShipEngine network error after ${Date.now() - seStart}ms: ${e.message}`)
-    return { success: false, error: e.message || 'Network error calling ShipEngine' }
+
+    const directResult = await createDirectLabel(
+      rate.carrierId,
+      directParsed.carrierCode,
+      directParsed.rawServiceCode,
+      directShipment,
+    )
+
+    if (!directResult.success) {
+      if (rate.fallbackServiceCode && rate.fallbackCarrierId && SHIPENGINE_API_KEY) {
+        console.log(`${tag} #${order.orderNumber} Direct failed (${directResult.error}), falling back to ShipEngine`)
+        rate = {
+          ...rate,
+          carrierId: rate.fallbackCarrierId,
+          carrierCode: rate.fallbackCarrierCode || '',
+          serviceCode: rate.fallbackServiceCode,
+        }
+        useShipEngineFallback = true
+      } else {
+        console.error(`${tag} #${order.orderNumber} Direct carrier error: ${directResult.error}`)
+        return { success: false, error: directResult.error || 'Direct carrier label creation failed' }
+      }
+    } else {
+      trackingNumber = directResult.trackingNumber || ''
+      labelFormat = (directResult.labelFormat || 'GIF').toLowerCase()
+      labelUrl = directResult.labelBase64
+        ? `data:image/${labelFormat};base64,${directResult.labelBase64}`
+        : ''
+      labelCost = directResult.labelCost || 0
+      shipmentId = directResult.shipmentId || ''
+      carrierName = directResult.carrier || carrierName
+      serviceName = directResult.serviceName || serviceName
+    }
   }
 
-  const trackingNumber = seData.tracking_number || ''
-  const labelUrl = seData.label_download?.pdf || seData.label_download?.href || ''
-  const labelCost = seData.shipment_cost?.amount || 0
-  const labelId = seData.label_id || ''
-  const shipmentId = seData.shipment_id || ''
-  const carrierCode = seData.carrier_code || rate.carrierCode || ''
-  const carrierName = rate.carrier || carrierCode
-  const serviceName = rate.serviceName || rate.serviceCode || ''
+  if (!useDirectCarrier || useShipEngineFallback) {
+    if (!SHIPENGINE_API_KEY) return { success: false, error: 'ShipEngine API key not configured' }
+
+    console.log(`${tag} #${order.orderNumber} calling ShipEngine: ${rate.carrierCode}/${rate.serviceCode} ${order.shippedWeight}lbs ${box.lengthInches}x${box.widthInches}x${box.heightInches} → ${shipTo.city}, ${shipTo.state} ${shipTo.postalCode}`)
+
+    const shipToCountry = normalizeCountryCode(shipTo.country)
+    const shipFromCountry = normalizeCountryCode(location.country || undefined)
+
+    const seRequest = {
+      shipment: {
+        service_code: rate.serviceCode,
+        carrier_id: rate.carrierId || undefined,
+        validate_address: 'no_validation',
+        ship_to: {
+          name: shipTo.name || 'Customer',
+          company_name: shipTo.company || undefined,
+          address_line1: shipTo.street1,
+          address_line2: shipTo.street2 || undefined,
+          city_locality: shipTo.city,
+          state_province: shipTo.state,
+          postal_code: shipTo.postalCode,
+          country_code: shipToCountry,
+          phone: shipTo.phone || undefined,
+          address_residential_indicator: 'yes',
+        },
+        ship_from: {
+          name: location.name,
+          company_name: location.company || undefined,
+          address_line1: location.addressLine1,
+          address_line2: location.addressLine2 || undefined,
+          city_locality: location.city,
+          state_province: location.state,
+          postal_code: location.postalCode,
+          country_code: shipFromCountry,
+          phone: location.phone || undefined,
+          address_residential_indicator: 'no',
+        },
+        packages: [{
+          weight: { value: order.shippedWeight, unit: 'pound' },
+          dimensions: {
+            length: box.lengthInches, width: box.widthInches, height: box.heightInches,
+            unit: 'inch',
+          },
+          label_messages: { reference1: order.orderNumber },
+        }],
+        label_format: 'pdf',
+      },
+    }
+
+    const seStart = Date.now()
+    let seData: any
+    try {
+      const res = await fetch(SHIPENGINE_LABELS_URL, {
+        method: 'POST',
+        headers: { 'API-Key': SHIPENGINE_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(seRequest),
+      })
+      seData = await res.json()
+      console.log(`${tag} #${order.orderNumber} ShipEngine responded ${res.status} in ${Date.now() - seStart}ms`)
+      if (!res.ok) {
+        const errMsg = seData.errors?.map((e: any) => e.message).join('; ') || seData.message || 'ShipEngine label creation failed'
+        console.error(`${tag} #${order.orderNumber} ShipEngine error: ${errMsg}`)
+        return { success: false, error: errMsg }
+      }
+    } catch (e: any) {
+      console.error(`${tag} #${order.orderNumber} ShipEngine network error after ${Date.now() - seStart}ms: ${e.message}`)
+      return { success: false, error: e.message || 'Network error calling ShipEngine' }
+    }
+
+    trackingNumber = seData.tracking_number || ''
+    labelUrl = seData.label_download?.pdf || seData.label_download?.href || ''
+    labelCost = seData.shipment_cost?.amount || 0
+    labelId = seData.label_id || ''
+    shipmentId = seData.shipment_id || ''
+    carrierName = rate.carrier || seData.carrier_code || rate.carrierCode || ''
+    serviceName = rate.serviceName || rate.serviceCode || ''
+  }
 
   console.log(`${tag} #${order.orderNumber} saving to DB: status=SHIPPED labelPrepurchased=true tracking=${trackingNumber}`)
   await prisma.orderLog.update({
@@ -623,8 +827,8 @@ export async function prepurchaseLabel(orderId: string, locationId: string): Pro
       carrier: carrierName,
       labelUrl,
       labelCost,
-      labelId,
-      shipmentId,
+      labelId: labelId || shipmentId,
+      shipmentId: shipmentId || labelId,
       shippedAt: new Date(),
       status: 'SHIPPED',
       printStatus: 'not_printed',
@@ -637,15 +841,15 @@ export async function prepurchaseLabel(orderId: string, locationId: string): Pro
     data: {
       orderLogId: orderId,
       action: 'LABEL_CREATED',
-      labelId,
-      shipmentId,
+      labelId: labelId || shipmentId,
+      shipmentId: shipmentId || labelId,
       trackingNumber,
       carrier: carrierName,
       serviceCode: rate.serviceCode,
       serviceName,
       labelCost,
       labelUrl,
-      labelFormat: 'pdf',
+      labelFormat,
       printStatus: 'not_printed',
       netsuiteUpdated: false,
       netsuiteError: 'Skipped: prepurchased at pick-complete (pending scan station)',
@@ -685,13 +889,21 @@ export async function fulfillPrepurchasedLabel(params: {
     return { success: false, error: 'Order does not have a prepurchased label', printStatus: 'not_printed', netsuiteUpdated: false }
   }
 
-  // Print the existing label
+  // Print the existing label (handle both URLs and data URIs)
   let printStatus: FulfillResult['printStatus'] = 'not_printed'
   let printJobId: number | undefined
 
   if (printerId && order.labelUrl) {
     try {
-      printJobId = await submitPrintJob(printerId, `Label: ${order.orderNumber}`, order.labelUrl)
+      if (order.labelUrl.startsWith('data:')) {
+        const base64Match = order.labelUrl.match(/^data:[^;]+;base64,(.+)$/)
+        const contentType = order.labelUrl.match(/^data:([^;]+)/)?.[1] || 'image/gif'
+        if (base64Match) {
+          printJobId = await submitPrintJobBase64(printerId, `Label: ${order.orderNumber}`, base64Match[1], contentType)
+        }
+      } else {
+        printJobId = await submitPrintJob(printerId, `Label: ${order.orderNumber}`, order.labelUrl)
+      }
       printStatus = 'sent'
     } catch (e: any) {
       console.error('[Fulfill] Print failed:', e.message)
@@ -779,7 +991,16 @@ export async function reprintLabel(orderId: string, printerId: number, userName:
   if (!order.labelUrl) return { success: false, error: 'No label URL — cannot reprint' }
 
   try {
-    const printJobId = await submitPrintJob(printerId, `Reprint: ${order.orderNumber}`, order.labelUrl)
+    let printJobId: number
+
+    if (order.labelUrl.startsWith('data:')) {
+      const base64Match = order.labelUrl.match(/^data:[^;]+;base64,(.+)$/)
+      const contentType = order.labelUrl.match(/^data:([^;]+)/)?.[1] || 'image/gif'
+      if (!base64Match) return { success: false, error: 'Invalid label data URI' }
+      printJobId = await submitPrintJobBase64(printerId, `Reprint: ${order.orderNumber}`, base64Match[1], contentType)
+    } else {
+      printJobId = await submitPrintJob(printerId, `Reprint: ${order.orderNumber}`, order.labelUrl)
+    }
 
     await prisma.shipmentLog.create({
       data: {
