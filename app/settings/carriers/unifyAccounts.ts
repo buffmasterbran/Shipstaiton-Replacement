@@ -9,8 +9,6 @@ import type {
 import { isShipEngineManaged } from './helpers'
 import {
   getServiceIdentity,
-  getDirectEquivalent,
-  getShipEngineEquivalent,
   detectCarrierNetwork,
   UPS_MAP,
   FEDEX_MAP,
@@ -42,83 +40,101 @@ function inferNetwork(carrierCode: string): CarrierNetwork {
 }
 
 /**
- * Merge ShipEngine carriers and Direct connections into a unified list of
- * carrier accounts, matched by carrier network + account number.
+ * Account-first unification.
+ *
+ * Tabs represent carrier *accounts* (identified by network + account number).
+ * Both ShipEngine carriers and Direct connections are attached to the matching
+ * account. Either source can create a tab on its own.
  */
 export function unifyAccounts(
   seCarriers: ShipEngineCarrier[],
   directConns: DirectConnections,
 ): UnifiedAccount[] {
-  const accounts: UnifiedAccount[] = []
-
-  // Separate marketplace carriers from own-account carriers
   const ownCarriers = seCarriers.filter(c => !isShipEngineManaged(c))
   const marketplaceCarriers = seCarriers.filter(c => isShipEngineManaged(c))
 
-  // Track which ShipEngine carriers have been matched to a Direct connection
-  const matchedSEIds = new Set<string>()
+  // ─── 1. Collect every (network, accountNumber) pair into a Map ───────────
 
-  // ─── Match Direct connections to ShipEngine carriers ────────────────────────
+  interface AccountBucket {
+    network: CarrierNetwork
+    accountNumber: string          // normalized (uppercased, trimmed)
+    seCarrier?: ShipEngineCarrier
+    directConn?: DirectConnectionConfig
+  }
 
+  const buckets = new Map<string, AccountBucket>()
+
+  const makeKey = (network: CarrierNetwork, acctNum: string) =>
+    `${network}:${acctNum.trim().toUpperCase()}`
+
+  // From own-account ShipEngine carriers
+  for (const se of ownCarriers) {
+    const network = inferNetwork(se.carrier_code)
+    if (!se.account_number) {
+      // No account number — give it a unique key so it still gets a tab
+      const key = `se:${se.carrier_id}`
+      buckets.set(key, { network, accountNumber: '', seCarrier: se })
+      continue
+    }
+    const key = makeKey(network, se.account_number)
+    const existing = buckets.get(key)
+    if (existing) {
+      existing.seCarrier = se
+    } else {
+      buckets.set(key, { network, accountNumber: se.account_number.trim().toUpperCase(), seCarrier: se })
+    }
+  }
+
+  // From Direct connections
   const directEntries: Array<{ network: 'ups' | 'fedex'; conn: DirectConnectionConfig }> = [
     ...(directConns.ups || []).map(c => ({ network: 'ups' as const, conn: c })),
     ...(directConns.fedex || []).map(c => ({ network: 'fedex' as const, conn: c })),
   ]
 
   for (const { network, conn } of directEntries) {
-    // Try to find a matching ShipEngine carrier by network + account number
-    const matchedSE = ownCarriers.find(se => {
-      if (matchedSEIds.has(se.carrier_id)) return false
-      const seNetwork = inferNetwork(se.carrier_code)
-      if (seNetwork !== network) return false
-      // Match by account number (case-insensitive)
-      if (!se.account_number || !conn.accountNumber) return false
-      return se.account_number.toUpperCase() === conn.accountNumber.toUpperCase()
-    })
-
-    if (matchedSE) {
-      matchedSEIds.add(matchedSE.carrier_id)
+    if (!conn.accountNumber) {
+      const key = `direct:${conn.id}`
+      buckets.set(key, { network, accountNumber: '', directConn: conn })
+      continue
     }
+    const key = makeKey(network, conn.accountNumber)
+    const existing = buckets.get(key)
+    if (existing) {
+      existing.directConn = conn
+    } else {
+      buckets.set(key, { network, accountNumber: conn.accountNumber.trim().toUpperCase(), directConn: conn })
+    }
+  }
 
-    const nickname = conn.nickname || matchedSE?.nickname || matchedSE?.friendly_name || conn.accountNumber
-    const services = buildUnifiedServices(network, conn, matchedSE || undefined)
+  // ─── 2. Build one UnifiedAccount per bucket ──────────────────────────────
+
+  const accounts: UnifiedAccount[] = []
+
+  for (const [key, bucket] of Array.from(buckets.entries())) {
+    const { network, seCarrier, directConn } = bucket
+
+    const nickname = directConn?.nickname
+      || seCarrier?.nickname
+      || seCarrier?.friendly_name
+      || bucket.accountNumber
+      || 'Unknown'
+
+    const services = buildUnifiedServices(network, directConn, seCarrier)
 
     accounts.push({
-      id: `direct:${conn.id}`,
+      id: key,
       carrierNetwork: network,
-      accountNumber: conn.accountNumber || matchedSE?.account_number || null,
+      accountNumber: bucket.accountNumber || seCarrier?.account_number || directConn?.accountNumber || null,
       nickname: `${nickname} (${network.toUpperCase()})`,
       icon: getCarrierIcon(network),
-      direct: conn,
-      shipEngine: matchedSE || undefined,
+      direct: directConn,
+      shipEngine: seCarrier,
       isMarketplace: false,
       services,
     })
   }
 
-  // ─── Unmatched own-account ShipEngine carriers (no Direct counterpart) ─────
-
-  for (const se of ownCarriers) {
-    if (matchedSEIds.has(se.carrier_id)) continue
-
-    const network = inferNetwork(se.carrier_code)
-    const nickname = se.nickname || se.friendly_name || se.carrier_code
-    const services = buildUnifiedServices(network, undefined, se)
-
-    accounts.push({
-      id: `se:${se.carrier_id}`,
-      carrierNetwork: network,
-      accountNumber: se.account_number || null,
-      nickname: `${nickname} (${network.toUpperCase()})`,
-      icon: getCarrierIcon(network),
-      direct: undefined,
-      shipEngine: se,
-      isMarketplace: false,
-      services,
-    })
-  }
-
-  // ─── Marketplace / ShipEngine-funded carriers → single merged tab ─────────
+  // ─── 3. Marketplace / ShipEngine-funded carriers → single merged tab ─────
 
   if (marketplaceCarriers.length > 0) {
     const allMarketplaceServices: UnifiedService[] = []
