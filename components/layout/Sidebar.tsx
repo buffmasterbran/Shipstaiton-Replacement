@@ -88,6 +88,7 @@ const settingsNavItems = [
   { name: 'Printers', href: '/settings/printers', adminOnly: true },
   { name: 'Carts & Cells', href: '/settings/carts-cells', adminOnly: true },
   { name: 'Carriers', href: '/settings/carriers', adminOnly: true },
+  { name: 'Carrier Services', href: '/settings/carrier-services', adminOnly: true },
   { name: 'Locations', href: '/settings/locations', adminOnly: true },
   { name: 'Box Config', href: '/settings/box-config', adminOnly: true },
   { name: 'Shipping Rules', href: '/settings/rate-shopping', adminOnly: true },

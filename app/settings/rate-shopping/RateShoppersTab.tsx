@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Carrier, CarrierService, RateShopper } from './types'
-import { TRANSIT_TIME_OPTIONS } from './helpers'
+import { TRANSIT_TIME_OPTIONS, buildCarriersFromSelectedServices } from './helpers'
 
 export function RateShoppersTab() {
   const [rateShoppers, setRateShoppers] = useState<RateShopper[]>([])
@@ -47,32 +47,10 @@ export function RateShoppersTab() {
   async function fetchCarriers() {
     try {
       setLoadingCarriers(true)
-      const [carriersRes, settingsRes] = await Promise.all([
-        fetch('/api/shipengine/carriers?includeServices=true'),
-        fetch('/api/settings'),
-      ])
-      const carriersData = await carriersRes.json()
+      const settingsRes = await fetch('/api/settings')
       const settingsData = await settingsRes.json()
-
-      // Build set of selected service keys
-      const keys = new Set<string>()
-      const selectedSetting = settingsData.settings?.find((s: { key: string }) => s.key === 'selected_services')
-      if (selectedSetting?.value?.services) {
-        for (const svc of selectedSetting.value.services) {
-          keys.add(`${svc.carrierId}:${svc.serviceCode}`)
-        }
-      }
-
-      if (carriersRes.ok && carriersData.carriers) {
-        const filtered = (carriersData.carriers as Carrier[])
-          .map((carrier) => ({
-            ...carrier,
-            services: (carrier.services || []).filter(
-              (s) => keys.size === 0 || keys.has(`${carrier.carrier_id}:${s.service_code}`)
-            ),
-          }))
-          .filter((carrier) => carrier.services.length > 0)
-        setCarriers(filtered)
+      if (settingsRes.ok && settingsData.settings) {
+        setCarriers(buildCarriersFromSelectedServices(settingsData.settings))
       }
     } catch (err) {
       console.error('Error fetching carriers:', err)

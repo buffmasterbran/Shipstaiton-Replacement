@@ -208,8 +208,9 @@ function buildUnifiedServices(
         if (!existing.paths.includes('shipengine')) {
           existing.paths.push('shipengine')
         }
-      } else {
-        // ShipEngine-only service
+      } else if (!directConn) {
+        // ShipEngine-only service -- only include when no Direct connection exists,
+        // otherwise these are SE extras with no Direct equivalent
         serviceMap.set(identity, {
           identity,
           displayName: svc.name,

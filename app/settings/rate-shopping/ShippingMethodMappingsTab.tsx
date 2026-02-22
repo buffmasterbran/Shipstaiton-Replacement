@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Carrier, RateShopper, ShippingMethodMapping } from './types'
+import { buildCarriersFromSelectedServices } from './helpers'
 
 export function ShippingMethodMappingsTab() {
   const [mappings, setMappings] = useState<ShippingMethodMapping[]>([])
@@ -65,34 +66,20 @@ export function ShippingMethodMappingsTab() {
   async function fetchCarriers() {
     try {
       setLoadingCarriers(true)
-      const [carriersRes, settingsRes] = await Promise.all([
-        fetch('/api/shipengine/carriers?includeServices=true'),
-        fetch('/api/settings'),
-      ])
-      const carriersData = await carriersRes.json()
+      const settingsRes = await fetch('/api/settings')
       const settingsData = await settingsRes.json()
 
-      // Build set of selected service keys
-      const keys = new Set<string>()
-      const selectedSetting = settingsData.settings?.find((s: { key: string }) => s.key === 'selected_services')
-      if (selectedSetting?.value?.services) {
-        for (const svc of selectedSetting.value.services) {
-          keys.add(`${svc.carrierId}:${svc.serviceCode}`)
-        }
-      }
-      setSelectedServiceKeys(keys)
+      if (settingsRes.ok && settingsData.settings) {
+        const built = buildCarriersFromSelectedServices(settingsData.settings)
+        setCarriers(built)
 
-      if (carriersRes.ok && carriersData.carriers) {
-        // Filter carriers to only include selected services
-        const filtered = (carriersData.carriers as Carrier[])
-          .map((carrier) => ({
-            ...carrier,
-            services: (carrier.services || []).filter(
-              (s) => keys.size === 0 || keys.has(`${carrier.carrier_id}:${s.service_code}`)
-            ),
-          }))
-          .filter((carrier) => carrier.services.length > 0)
-        setCarriers(filtered)
+        const keys = new Set<string>()
+        for (const c of built) {
+          for (const s of c.services || []) {
+            keys.add(`${c.carrier_id}:${s.service_code}`)
+          }
+        }
+        setSelectedServiceKeys(keys)
       }
     } catch (err) {
       console.error('Error fetching carriers:', err)

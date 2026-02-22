@@ -1,4 +1,52 @@
-import { WeightRuleLocal } from './types'
+import { Carrier, WeightRuleLocal } from './types'
+
+interface SavedService {
+  carrierId: string
+  carrierCode: string
+  carrierName: string
+  serviceCode: string
+  serviceName: string
+  accountNickname?: string | null
+  domestic?: boolean
+  international?: boolean
+}
+
+/**
+ * Build Carrier[] directly from saved selected_services.
+ * This handles both Direct and ShipEngine services uniformly,
+ * avoiding the old pattern of cross-referencing against ShipEngine carriers
+ * which breaks for Direct connection services.
+ */
+export function buildCarriersFromSelectedServices(settings: Array<{ key: string; value: any }>): Carrier[] {
+  const selected = settings.find(s => s.key === 'selected_services')
+  const services: SavedService[] = selected?.value?.services || []
+  if (services.length === 0) return []
+
+  const byCarrier = new Map<string, { carrier: Omit<Carrier, 'services'>; services: NonNullable<Carrier['services']> }>()
+
+  for (const svc of services) {
+    let entry = byCarrier.get(svc.carrierId)
+    if (!entry) {
+      entry = {
+        carrier: {
+          carrier_id: svc.carrierId,
+          carrier_code: svc.carrierCode,
+          friendly_name: svc.accountNickname || svc.carrierName,
+        },
+        services: [],
+      }
+      byCarrier.set(svc.carrierId, entry)
+    }
+    entry.services.push({
+      service_code: svc.serviceCode,
+      name: svc.serviceName,
+      domestic: svc.domestic ?? true,
+      international: svc.international ?? false,
+    })
+  }
+
+  return Array.from(byCarrier.values()).map(e => ({ ...e.carrier, services: e.services }))
+}
 
 export const MAX_OZ = 400 // 25 lbs (visual bar max)
 export const CATCHALL_OZ = 99999 // Last segment catch-all upper bound
