@@ -247,7 +247,7 @@ export default function ConnectCarrierModal({ open, onClose, onSuccess }: Props)
           <div className="absolute inset-0 bg-gray-500 opacity-75" />
         </div>
 
-        <div className="bg-white rounded-lg text-left overflow-hidden shadow-xl w-full max-w-2xl">
+        <div className="relative z-10 bg-white rounded-lg text-left overflow-hidden shadow-xl w-full max-w-2xl">
           {/* Header */}
           <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <div className="flex items-center gap-3">

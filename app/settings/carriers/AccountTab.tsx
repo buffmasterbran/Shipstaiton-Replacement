@@ -402,14 +402,29 @@ export default function AccountTab({
                     Last tested: {new Date(direct.lastTestedAt).toLocaleDateString()} {new Date(direct.lastTestedAt).toLocaleTimeString()}
                   </div>
                 )}
-                <div className="flex items-center gap-2 pt-2">
+                <div className="flex items-center gap-2 pt-2 flex-wrap">
                   <button
                     onClick={() => setExpandCredentials(!expandCredentials)}
                     className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                   >
                     {expandCredentials ? 'Hide Credentials' : 'Edit Credentials'}
                   </button>
+                  {direct.status !== 'connected' && (
+                    <button
+                      onClick={handleTest}
+                      disabled={actionState.testing}
+                      className="px-3 py-1 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {actionState.testing ? <span className="flex items-center gap-2"><Spinner className="h-3 w-3" /> Testing...</span> : 'Test Connection'}
+                    </button>
+                  )}
                 </div>
+                {actionState.testResult && !expandCredentials && (
+                  <div className={`mt-3 border rounded-lg p-3 text-sm ${actionState.testResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <p className={`font-semibold text-xs ${actionState.testResult.success ? 'text-green-800' : 'text-red-800'}`}>{actionState.testResult.message}</p>
+                    {actionState.testResult.error && !actionState.testResult.success && <p className="mt-1 text-xs font-mono text-red-600 break-all">{actionState.testResult.error}</p>}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center py-4">
@@ -604,7 +619,7 @@ export default function AccountTab({
       )}
 
       {/* ── Section B: Test Suite (Direct only) ──────────────────────────── */}
-      {direct && direct.status === 'connected' && (
+      {direct && (
         <div className="border border-gray-200 rounded-xl overflow-hidden">
           <button onClick={() => setTestSuiteOpen(!testSuiteOpen)} className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors text-left">
             <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">API Test Suite</h4>
@@ -613,6 +628,11 @@ export default function AccountTab({
 
           {testSuiteOpen && (
             <div className="border-t border-gray-200 p-5 space-y-6">
+              {direct.status !== 'connected' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                  Connection is untested. Click <strong>Test Connection</strong> above first, then these tests will work against the live API.
+                </div>
+              )}
               {/* Address Validation */}
               <div className="space-y-3">
                 <h5 className="text-sm font-semibold text-gray-700">Address Validation</h5>

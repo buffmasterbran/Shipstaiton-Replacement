@@ -72,6 +72,11 @@ export async function GET(request: NextRequest) {
     const data = await response.json()
     let carriers = data.carriers || []
 
+    console.log(`[ShipEngine Carriers] Returned ${carriers.length} carriers:`)
+    for (const c of carriers) {
+      console.log(`  - ${c.carrier_code} | acct: ${c.account_number} | id: ${c.carrier_id} | "${c.nickname || c.friendly_name}" | funded: ${c.requires_funded_amount}`)
+    }
+
     // If requested, fetch services for each carrier
     if (includeServices) {
       carriers = await Promise.all(
