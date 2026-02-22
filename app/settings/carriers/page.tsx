@@ -168,11 +168,26 @@ export default function CarriersPage() {
 
   // ── Service toggle / select helpers ────────────────────────────────────
 
+  // Build the set of carrierIds that belong to a given account
+  const getAccountCarrierIds = (account: UnifiedAccount): Set<string> => {
+    const ids = new Set<string>()
+    if (account.direct?.id) ids.add(account.direct.id)
+    if (account.shipEngine?.carrier_id) ids.add(account.shipEngine.carrier_id)
+    if (account.shipEngineCarriers) {
+      for (const se of account.shipEngineCarriers) ids.add(se.carrier_id)
+    }
+    return ids
+  }
+
   const selectedIdentitiesForAccount = useCallback(
     (account: UnifiedAccount): Set<string> => {
+      const accountIds = getAccountCarrierIds(account)
       const set = new Set<string>()
       for (const svc of selectedServices) {
-        if (svc.identity) set.add(svc.identity)
+        if (!svc.identity) continue
+        if (accountIds.has(svc.carrierId) || accountIds.has(svc.directConnectionId || '')) {
+          set.add(svc.identity)
+        }
       }
       return set
     },
@@ -184,7 +199,6 @@ export default function CarriersPage() {
     const carrierNetworkUpper = account.carrierNetwork.toUpperCase()
 
     if (preferDirect) {
-      // Direct is primary; ShipEngine is fallback
       return {
         carrierId: svc.directConnectionId!,
         carrierCode: `${account.carrierNetwork}-direct`,
@@ -203,7 +217,6 @@ export default function CarriersPage() {
       }
     }
 
-    // ShipEngine only
     return {
       carrierId: svc.shipEngineCarrierId || '',
       carrierCode: svc.shipEngineCarrierCode || account.shipEngine?.carrier_code || account.carrierNetwork,
@@ -217,11 +230,17 @@ export default function CarriersPage() {
     }
   }
 
+  // Match a selected service to an account by carrierId
+  const belongsToAccount = (s: SelectedService, account: UnifiedAccount): boolean => {
+    const accountIds = getAccountCarrierIds(account)
+    return accountIds.has(s.carrierId) || accountIds.has(s.directConnectionId || '')
+  }
+
   const toggleServiceForAccount = (account: UnifiedAccount, svc: UnifiedService) => {
     setSelectedServices(prev => {
-      const exists = prev.some(s => s.identity === svc.identity)
+      const exists = prev.some(s => s.identity === svc.identity && belongsToAccount(s, account))
       if (exists) {
-        return prev.filter(s => s.identity !== svc.identity)
+        return prev.filter(s => !(s.identity === svc.identity && belongsToAccount(s, account)))
       }
       return [...prev, buildSelectedService(account, svc)]
     })
@@ -229,23 +248,26 @@ export default function CarriersPage() {
 
   const selectAllForAccount = (account: UnifiedAccount) => {
     setSelectedServices(prev => {
-      const otherIdentities = new Set(account.services.map(s => s.identity))
-      const withoutAccount = prev.filter(s => !s.identity || !otherIdentities.has(s.identity))
+      const withoutAccount = prev.filter(s => !belongsToAccount(s, account))
       const allNew = account.services.map(svc => buildSelectedService(account, svc))
       return [...withoutAccount, ...allNew]
     })
   }
 
   const deselectAllForAccount = (account: UnifiedAccount) => {
-    const identities = new Set(account.services.map(s => s.identity))
-    setSelectedServices(prev => prev.filter(s => !s.identity || !identities.has(s.identity)))
+    setSelectedServices(prev => prev.filter(s => !belongsToAccount(s, account)))
   }
 
   const batchSelectForAccount = (account: UnifiedAccount, svcs: UnifiedService[]) => {
     setSelectedServices(prev => {
-      const existingIds = new Set(prev.map(s => s.identity).filter(Boolean))
+      const accountIds = getAccountCarrierIds(account)
+      const existingForAccount = new Set(
+        prev.filter(s => accountIds.has(s.carrierId) || accountIds.has(s.directConnectionId || ''))
+            .map(s => s.identity)
+            .filter(Boolean)
+      )
       const newEntries = svcs
-        .filter(svc => !existingIds.has(svc.identity))
+        .filter(svc => !existingForAccount.has(svc.identity))
         .map(svc => buildSelectedService(account, svc))
       return [...prev, ...newEntries]
     })

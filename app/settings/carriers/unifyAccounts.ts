@@ -84,7 +84,7 @@ export function unifyAccounts(
     const services = buildUnifiedServices(network, conn, matchedSE || undefined)
 
     accounts.push({
-      id: `${network}:${conn.accountNumber || conn.id}`,
+      id: `direct:${conn.id}`,
       carrierNetwork: network,
       accountNumber: conn.accountNumber || matchedSE?.account_number || null,
       nickname: `${nickname} (${network.toUpperCase()})`,
